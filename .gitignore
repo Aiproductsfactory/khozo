@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.env
+*.log
+server/data/uploads/*
+!server/data/uploads/.gitkeep
+server/data/db.json
+
+# temp & generated artifacts
+.tmp/
+graphify-out/
+
+# python cache
+__pycache__/
+*.pyc

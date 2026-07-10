@@ -1,0 +1,23 @@
+{
+  "name": "khozo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Project Khozo - reunite missing children with their families. An initiative by Aegis School of Data Science.",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,web -c green,cyan \"npm run dev -w server\" \"npm run dev -w web\"",
+    "dev:server": "npm run dev -w server",
+    "dev:web": "npm run dev -w web",
+    "smoke:api": "node scripts/api-smoke.mjs",
+    "smoke:web-routes": "node scripts/web-route-guards.mjs",
+    "smoke:web-render": "node scripts/web-render-smoke.mjs",
+    "smoke:pwa": "node scripts/pwa-offline-smoke.mjs",
+    "start": "npm run dev"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
