@@ -8,6 +8,8 @@
     "web"
   ],
   "scripts": {
+    "build": "npm run build -w web",
+    "deploy": "npm run build && wrangler deploy",
     "dev": "concurrently -n server,web -c green,cyan \"npm run dev -w server\" \"npm run dev -w web\"",
     "dev:server": "npm run dev -w server",
     "dev:web": "npm run dev -w web",
@@ -18,6 +20,7 @@
     "start": "npm run dev"
   },
   "devDependencies": {
-    "concurrently": "^9.1.0"
+    "concurrently": "^10.0.3",
+    "wrangler": "^4.110.0"
   }
 }

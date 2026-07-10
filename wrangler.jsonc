@@ -1,0 +1,23 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "khozo",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-07-10",
+  "build": {
+    "command": "npm run build -w web",
+    "cwd": "."
+  },
+  "assets": {
+    "directory": "./web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": [
+      "/api/*"
+    ]
+  },
+  // Set API_ORIGIN as a Worker variable/secret in Cloudflare after hosting the Express API.
+  // Example value: https://api.example.gov
+  "observability": {
+    "enabled": true
+  }
+}

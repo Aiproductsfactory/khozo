@@ -44,6 +44,16 @@ npm run dev
 - Web app: http://localhost:5173
 - API:     http://localhost:4000
 
+## Deploy the web app to Cloudflare Workers
+
+The repository is an npm workspace, so deploy from the root with the checked-in Wrangler config:
+
+```bash
+npx wrangler deploy
+```
+
+Wrangler runs `npm run build -w web` automatically and uploads `web/dist`. The Express API must be hosted on a Node-capable service separately; set the Worker variable `API_ORIGIN` to that backend origin, without a trailing `/api` path.
+
 ### Demo logins (seeded)
 
 | Role        | Email                   | Password   |
