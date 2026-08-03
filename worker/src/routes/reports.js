@@ -212,22 +212,24 @@ app.get('/found/all', authRequired, passwordChangeRequired, requireRole(...REVIE
   const allReports = await listReports(c.env);
   const scopedFound = scopeFoundReports(user, allFound, allReports);
 
-  const enriched = await Promise.all(
-    scopedFound.map(async (f) => {
-      let matched = null;
-      if (f.matchedReportId) {
-        matched = await findReport(c.env, f.matchedReportId);
-      }
-      return {
-        ...f,
-        photoUrl: f.photoUrl || (f.photoFile ? `/api/reports/photo/${f.id}` : null),
-        matchedReport: matched ? {
-          ...matched,
-          photoUrl: matched.photoUrl || (matched.photoFile ? `/api/reports/photo/${matched.id}` : null),
-        } : null,
-      };
-    })
-  );
+  const reportsMap = new Map();
+  for (const r of allReports) {
+    if (r?.id) reportsMap.set(r.id, r);
+  }
+
+  const enriched = scopedFound.map((f) => {
+    const matched = f.matchedReportId ? reportsMap.get(f.matchedReportId) || null : null;
+    return {
+      ...f,
+      photoUrl: f.photoUrl || (f.photoFile ? `/api/reports/photo/${f.id}` : null),
+      matchedReport: matched
+        ? {
+            ...matched,
+            photoUrl: matched.photoUrl || (matched.photoFile ? `/api/reports/photo/${matched.id}` : null),
+          }
+        : null,
+    };
+  });
 
   return c.json({ foundReports: enriched });
 });
