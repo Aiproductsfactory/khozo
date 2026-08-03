@@ -27,5 +27,15 @@
   "devDependencies": {
     "concurrently": "^10.0.3",
     "wrangler": "^4.110.0"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.1.0",
+    "@supabase/supabase-js": "^2.112.0",
+    "bcryptjs": "^3.0.3",
+    "hono": "^4.12.34",
+    "jose": "^6.2.8",
+    "nanoid": "^6.0.1",
+    "pg": "^8.22.0",
+    "postgres": "^3.4.9"
   }
 }

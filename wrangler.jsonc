@@ -3,6 +3,9 @@
   "name": "khozo",
   "main": "worker/index.js",
   "compatibility_date": "2026-07-10",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "build": {
     "command": "npm run build -w web",
     "cwd": "."
@@ -17,6 +20,12 @@
   },
   // Set API_ORIGIN as a Worker variable/secret in Cloudflare after hosting the Express API.
   // Example value: https://api.example.gov
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "f8ebd8b17c5449288a5bdaefb9ac57cd"
+    }
+  ],
   "observability": {
     "enabled": true
   }

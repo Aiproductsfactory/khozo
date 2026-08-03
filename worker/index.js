@@ -1,33 +1,41 @@
+import { Hono } from 'hono';
+import { cors } from 'hono/cors';
+
+import authRoutes from './src/routes/auth.js';
+import reportRoutes from './src/routes/reports.js';
+import dashboardRoutes from './src/routes/dashboard.js';
+import grievanceRoutes from './src/routes/grievances.js';
+
+const app = new Hono();
+
+// Global CORS middleware
+app.use('*', cors());
+
+// Error handling
+app.onError((err, c) => {
+  console.error('[Worker Error]', err.stack || err.message || err);
+  return c.json({ error: err.message || 'Internal Server Error', stack: String(err.stack || '') }, 500);
+});
+
+// Healthcheck
+app.get('/api/health', (c) => c.json({ ok: true, service: 'khozo-worker-api' }));
+
+// Mount API routes
+app.route('/api/auth', authRoutes);
+app.route('/api/reports', reportRoutes);
+app.route('/api/dashboard', dashboardRoutes);
+app.route('/api/grievances', grievanceRoutes);
+
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
+    // If request is for /api/*, process with Hono app
     if (url.pathname.startsWith('/api/')) {
-      if (!env.API_ORIGIN) {
-        return Response.json({ error: 'API_ORIGIN is not configured for this Cloudflare Worker.' }, { status: 503 });
-      }
-
-      const cleanOrigin = env.API_ORIGIN.trim().replace(/^["']|["']$/g, '');
-      const upstreamUrl = new URL(cleanOrigin);
-      const targetUrl = new URL(url.pathname + url.search, upstreamUrl);
-
-      const modifiedHeaders = new Headers(request.headers);
-      modifiedHeaders.set('bypass-tunnel-reminder', 'true');
-
-      const init = {
-        method: request.method,
-        headers: modifiedHeaders,
-        redirect: 'follow',
-      };
-
-      if (!['GET', 'HEAD'].includes(request.method.toUpperCase())) {
-        init.body = request.body;
-      }
-
-      const proxyReq = new Request(targetUrl.toString(), init);
-      return fetch(proxyReq);
+      return app.fetch(request, env, ctx);
     }
 
+    // Otherwise serve static web assets directly from Cloudflare ASSETS binding
     return env.ASSETS.fetch(request);
   },
 };
