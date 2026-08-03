@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
-import { StatusBadge, timeAgo } from '../lib.jsx';
+import { ProtectedImage, StatusBadge, timeAgo } from '../lib.jsx';
 import { useAuth } from '../auth.jsx';
 
 const CWC_OUTCOMES = [
@@ -134,11 +134,22 @@ export default function FoundReports() {
 
               {/* Match Card Gauge */}
               <div className="mt-4 rounded-xl border border-indigo-100 bg-gradient-to-r from-indigo-50/40 to-slate-50 p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-600">Biometric Candidate Match</span>
-                    <p className="text-base font-bold text-gray-900 capitalize">{matched ? matched.childName : 'No strong match'}</p>
-                    {matched && <p className="text-xs text-gray-500">Case #{matched.id} • {matched.address || matched.district}</p>}
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    {matched && (
+                      <div className="h-12 w-12 rounded-lg bg-indigo-100 overflow-hidden shrink-0 border border-indigo-200">
+                        <ProtectedImage
+                          src={matched.photoUrl || `/api/reports/photo/${matched.id}`}
+                          alt={matched.childName}
+                          className="h-full w-full object-cover"
+                        />
+                      </div>
+                    )}
+                    <div>
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-600">Biometric Candidate Match</span>
+                      <p className="text-base font-bold text-gray-900 capitalize">{matched ? matched.childName : 'No strong match'}</p>
+                      {matched && <p className="text-xs text-gray-500">Case #{matched.id} • {matched.address || matched.district}</p>}
+                    </div>
                   </div>
                   <div className="text-right">
                     <div className={`inline-flex items-center gap-1 text-2xl font-extrabold ${scorePct >= 80 ? 'text-emerald-600' : scorePct >= 60 ? 'text-amber-600' : 'text-gray-400'}`}>
@@ -287,24 +298,26 @@ export default function FoundReports() {
             <div className="grid grid-cols-2 gap-4">
               <div className="text-center">
                 <span className="text-xs font-semibold text-gray-600 block mb-2">Field Sighting Photo</span>
-                <div className="aspect-square rounded-xl bg-slate-100 border flex items-center justify-center text-slate-400 text-xs">
-                  {compareModal.sighting.photoUrl ? (
-                    <img src={compareModal.sighting.photoUrl} alt="Sighting" className="h-full w-full object-cover rounded-xl" />
-                  ) : (
-                    <span>Field Sighting Image</span>
-                  )}
+                <div className="aspect-square rounded-xl bg-slate-100 border flex items-center justify-center text-slate-400 text-xs overflow-hidden">
+                  <ProtectedImage
+                    src={compareModal.sighting.photoUrl || (compareModal.sighting.id ? `/api/reports/photo/${compareModal.sighting.id}` : null)}
+                    alt="Sighting"
+                    className="h-full w-full object-cover rounded-xl"
+                    fallback={<span>Field Sighting Image</span>}
+                  />
                 </div>
                 <p className="mt-2 text-xs font-medium text-gray-700">{compareModal.sighting.foundLocation}</p>
               </div>
 
               <div className="text-center">
                 <span className="text-xs font-semibold text-indigo-600 block mb-2">Missing Child Record</span>
-                <div className="aspect-square rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-400 text-xs">
-                  {compareModal.matched.photoUrl ? (
-                    <img src={compareModal.matched.photoUrl} alt="Missing Child" className="h-full w-full object-cover rounded-xl" />
-                  ) : (
-                    <span>Missing Child Record Image</span>
-                  )}
+                <div className="aspect-square rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-400 text-xs overflow-hidden">
+                  <ProtectedImage
+                    src={compareModal.matched.photoUrl || (compareModal.matched.id ? `/api/reports/photo/${compareModal.matched.id}` : null)}
+                    alt="Missing Child"
+                    className="h-full w-full object-cover rounded-xl"
+                    fallback={<span>Missing Child Record Image</span>}
+                  />
                 </div>
                 <p className="mt-2 text-xs font-bold text-gray-900">{compareModal.matched.childName}</p>
               </div>

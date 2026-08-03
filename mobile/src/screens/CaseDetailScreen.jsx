@@ -1,9 +1,9 @@
-import React from 'react';
-import { Image, Linking, StyleSheet, View } from 'react-native';
+import React, { useState } from 'react';
+import { Image, Linking, Pressable, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRoute } from '@react-navigation/native';
 
-import { Badge, Banner, Button, Card, Divider, Screen, SectionHeader, Skeleton, Text } from '../components';
+import { Badge, Banner, Button, Card, Divider, ImageViewerModal, Screen, SectionHeader, Skeleton, Text } from '../components';
 import { useAsync } from '../hooks/useAsync';
 import { useProtectedImage } from '../hooks/useProtectedImage';
 import { officerApi } from '../services/api';
@@ -32,6 +32,7 @@ export default function CaseDetailScreen() {
   const { params } = useRoute();
   const { token } = useAuth();
   const reportId = params?.reportId || params?.report?.id;
+  const [showFullImage, setShowFullImage] = useState(false);
 
   const detail = useAsync(
     () => (token && reportId ? officerApi.report(token, reportId).then((r) => r?.report) : Promise.resolve(null)),
@@ -69,12 +70,14 @@ export default function CaseDetailScreen() {
       <Card>
         <View style={[styles.head, { gap: theme.spacing.lg }]}>
           {photo.uri ? (
-            <Image
-              source={{ uri: photo.uri }}
-              style={[styles.photo, { borderRadius: theme.radius.md, backgroundColor: theme.colors.surfaceSunken }]}
-              resizeMode="cover"
-              accessibilityLabel={`Photo of ${report.childName}`}
-            />
+            <Pressable accessibilityRole="button" accessibilityLabel="View full photo" onPress={() => setShowFullImage(true)}>
+              <Image
+                source={{ uri: photo.uri }}
+                style={[styles.photo, { borderRadius: theme.radius.md, backgroundColor: theme.colors.surfaceSunken }]}
+                resizeMode="cover"
+                accessibilityLabel={`Photo of ${report.childName}`}
+              />
+            </Pressable>
           ) : (
             <View style={[styles.photo, styles.photoEmpty, { borderRadius: theme.radius.md, backgroundColor: theme.colors.primarySoft }]}>
               <Text variant="title" color={theme.colors.primarySoftText}>
@@ -169,6 +172,12 @@ export default function CaseDetailScreen() {
       />
 
       <View style={{ height: theme.spacing.xxl }} />
+      <ImageViewerModal
+        visible={showFullImage}
+        imageUri={photo.uri}
+        title={report.childName}
+        onClose={() => setShowFullImage(false)}
+      />
     </Screen>
   );
 }

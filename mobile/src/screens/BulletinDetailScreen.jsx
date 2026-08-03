@@ -1,9 +1,9 @@
-import React from 'react';
-import { Image, Linking, StyleSheet, View } from 'react-native';
+import React, { useState } from 'react';
+import { Image, Linking, Pressable, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 
-import { Banner, Button, Card, Divider, Screen, Text } from '../components';
+import { Banner, Button, Card, Divider, ImageViewerModal, Screen, Text } from '../components';
 import { useProtectedImage } from '../hooks/useProtectedImage';
 import { useTheme } from '../theme';
 import { formatDate, initialsOf, joinPlace } from '../utils/format';
@@ -30,6 +30,7 @@ export default function BulletinDetailScreen() {
   const bulletin = params?.bulletin;
   const photoPath = bulletin?.photoUrl || (bulletin?.id ? `/api/reports/photo/${bulletin.id}` : null);
   const { uri: imageUri } = useProtectedImage(photoPath, null);
+  const [showFullImage, setShowFullImage] = useState(false);
 
   if (!bulletin) {
     return (
@@ -56,11 +57,13 @@ export default function BulletinDetailScreen() {
     >
       <View style={styles.header}>
         {imageUri ? (
-          <Image
-            source={{ uri: imageUri }}
-            style={[styles.avatar, { borderRadius: theme.radius.lg }]}
-            resizeMode="cover"
-          />
+          <Pressable accessibilityRole="button" accessibilityLabel="View full size photo" onPress={() => setShowFullImage(true)}>
+            <Image
+              source={{ uri: imageUri }}
+              style={[styles.avatar, { borderRadius: theme.radius.lg }]}
+              resizeMode="cover"
+            />
+          </Pressable>
         ) : (
           <View style={[styles.avatar, { backgroundColor: theme.colors.primarySoft, borderRadius: theme.radius.pill }]}>
             <Text variant="display" color={theme.colors.primarySoftText}>
@@ -105,6 +108,12 @@ export default function BulletinDetailScreen() {
       />
 
       <View style={{ height: theme.spacing.xxl }} />
+      <ImageViewerModal
+        visible={showFullImage}
+        imageUri={imageUri}
+        title={bulletin.childName}
+        onClose={() => setShowFullImage(false)}
+      />
     </Screen>
   );
 }

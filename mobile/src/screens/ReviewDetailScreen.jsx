@@ -1,9 +1,9 @@
 import React, { useCallback, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Linking, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Linking, Pressable, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 
-import { Badge, Banner, Button, Card, Divider, Screen, SectionHeader, Text, TextField } from '../components';
+import { Badge, Banner, Button, Card, Divider, ImageViewerModal, Screen, SectionHeader, Text, TextField } from '../components';
 import { useProtectedImage } from '../hooks/useProtectedImage';
 import { officerApi } from '../services/api';
 import { useAuth } from '../services/auth';
@@ -102,18 +102,21 @@ export default function ReviewDetailScreen() {
   const matched = sighting.matchedReport;
   const decided = !['pending_review', 'no_match', 'referred_cwc'].includes(sighting.status);
   const photo = useProtectedImage(sighting.photoUrl, token);
+  const [showFullImage, setShowFullImage] = useState(false);
 
   return (
     <Screen edges={{ top: false, bottom: false }}>
       {sighting.photoUrl ? (
         <View style={[styles.photo, styles.photoEmpty, { borderRadius: theme.radius.lg, backgroundColor: theme.colors.surfaceSunken, overflow: 'hidden' }]}>
           {photo.uri ? (
-            <Image
-              source={{ uri: photo.uri }}
-              style={StyleSheet.absoluteFill}
-              resizeMode="cover"
-              accessibilityLabel="Sighting photo submitted by the reporter"
-            />
+            <Pressable accessibilityRole="button" accessibilityLabel="View full photo" style={StyleSheet.absoluteFill} onPress={() => setShowFullImage(true)}>
+              <Image
+                source={{ uri: photo.uri }}
+                style={StyleSheet.absoluteFill}
+                resizeMode="cover"
+                accessibilityLabel="Sighting photo submitted by the reporter"
+              />
+            </Pressable>
           ) : photo.error ? (
             <>
               <Ionicons name="image-outline" size={28} color={theme.colors.textMuted} />
@@ -255,6 +258,12 @@ export default function ReviewDetailScreen() {
       )}
 
       <View style={{ height: theme.spacing.xxl }} />
+      <ImageViewerModal
+        visible={showFullImage}
+        imageUri={photo.uri}
+        title={sighting.foundLocation || 'Sighting Photo'}
+        onClose={() => setShowFullImage(false)}
+      />
     </Screen>
   );
 }

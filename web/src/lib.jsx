@@ -134,3 +134,41 @@ export function Avatar({ name, src, size = 40 }) {
     </div>
   );
 }
+
+export function ProtectedImage({ src, alt, className, style, fallback }) {
+  const [objectUrl, setObjectUrl] = useState(null);
+
+  useEffect(() => {
+    if (!src) {
+      setObjectUrl(null);
+      return undefined;
+    }
+    if (src.startsWith('data:')) {
+      setObjectUrl(src);
+      return undefined;
+    }
+    let alive = true;
+    let nextUrl = null;
+    const apiPath = src.startsWith('/api') ? src.slice(4) : src;
+    api.blob(apiPath)
+      .then((blob) => {
+        if (!alive) return;
+        nextUrl = URL.createObjectURL(blob);
+        setObjectUrl(nextUrl);
+      })
+      .catch(() => {
+        if (alive) setObjectUrl(null);
+      });
+    return () => {
+      alive = false;
+      if (nextUrl) URL.revokeObjectURL(nextUrl);
+    };
+  }, [src]);
+
+  if (!objectUrl) {
+    return fallback || null;
+  }
+
+  return <img src={objectUrl} alt={alt || ''} className={className} style={style} />;
+}
+

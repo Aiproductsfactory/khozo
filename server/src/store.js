@@ -668,15 +668,26 @@ export function updateUser(id, patch) {
 }
 
 // --- Reports (missing children / FIRs) ---
-export const listReports = () => db.reports;
-export const findReport = (id) => db.reports.find((r) => r.id === id);
+export const listReports = () =>
+  db.reports.map((r) => ({
+    ...r,
+    photoUrl: r.photoUrl || (r.photoFile ? `/api/reports/photo/${r.id}` : null),
+  }));
+export const findReport = (id) => {
+  const r = db.reports.find((item) => item.id === id);
+  if (!r) return null;
+  return {
+    ...r,
+    photoUrl: r.photoUrl || (r.photoFile ? `/api/reports/photo/${r.id}` : null),
+  };
+};
 export function addReport(report) {
   db.reports.unshift(report);
   persistRow('reports', report);
   return report;
 }
 export function updateReport(id, patch) {
-  const r = findReport(id);
+  const r = db.reports.find((item) => item.id === id);
   if (!r) return null;
   Object.assign(r, patch);
   persistRow('reports', r);
@@ -684,15 +695,26 @@ export function updateReport(id, patch) {
 }
 
 // --- Found reports (public uploads) ---
-export const listFoundReports = () => db.foundReports;
-export const findFoundReport = (id) => db.foundReports.find((f) => f.id === id);
+export const listFoundReports = () =>
+  db.foundReports.map((f) => ({
+    ...f,
+    photoUrl: f.photoUrl || (f.photoFile ? `/api/reports/photo/${f.id}` : null),
+  }));
+export const findFoundReport = (id) => {
+  const f = db.foundReports.find((item) => item.id === id);
+  if (!f) return null;
+  return {
+    ...f,
+    photoUrl: f.photoUrl || (f.photoFile ? `/api/reports/photo/${f.id}` : null),
+  };
+};
 export function addFoundReport(fr) {
   db.foundReports.unshift(fr);
   persistRow('found_reports', fr);
   return fr;
 }
 export function updateFoundReport(id, patch) {
-  const f = findFoundReport(id);
+  const f = db.foundReports.find((item) => item.id === id);
   if (!f) return null;
   Object.assign(f, patch);
   persistRow('found_reports', f);
