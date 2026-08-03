@@ -1,5 +1,5 @@
 import React, { useCallback } from 'react';
-import { Linking, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
+import { Image, Linking, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Badge, Banner, Button, Card, EmptyState, SectionHeader, Skeleton, Text } from '../components';
 import { useAsync } from '../hooks/useAsync';
+import { useProtectedImage } from '../hooks/useProtectedImage';
 import { officerApi, publicApi } from '../services/api';
 import { roleLabel, useAuth } from '../services/auth';
 import { HELPLINES } from '../services/config';
@@ -293,34 +294,11 @@ export default function HomeScreen() {
           ) : (
             <View style={{ gap: theme.spacing.md }}>
               {recent.map((item) => (
-                <Pressable
+                <RecentBulletinRow
                   key={item.id}
-                  accessibilityRole="button"
+                  item={item}
                   onPress={() => navigation.navigate('BulletinDetail', { bulletin: item })}
-                  style={({ pressed }) => [
-                    styles.bulletinRow,
-                    {
-                      backgroundColor: pressed ? theme.colors.surfaceSunken : theme.colors.surface,
-                      borderColor: theme.colors.border,
-                      borderRadius: theme.radius.lg,
-                      padding: theme.spacing.lg,
-                      gap: theme.spacing.md,
-                    },
-                  ]}
-                >
-                  <View style={[styles.bulletinAvatar, { backgroundColor: theme.colors.primarySoft, borderRadius: theme.radius.md }]}>
-                    <Ionicons name="person" size={20} color={theme.colors.primarySoftText} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text variant="bodyStrong" numberOfLines={1}>
-                      {item.childName}
-                    </Text>
-                    <Text variant="small" tone="muted" numberOfLines={1}>
-                      {ageBandLabel(null, item.age)} · {joinPlace(item.district, item.state)}
-                    </Text>
-                  </View>
-                  <Badge label={relativeTime(item.publishedAt)} tone="neutral" />
-                </Pressable>
+                />
               ))}
               <Button
                 label="See all bulletins"
@@ -359,6 +337,51 @@ function ScreenBody({ children, refreshing, onRefresh, insets }) {
     >
       {children}
     </ScrollView>
+  );
+}
+
+function RecentBulletinRow({ item, onPress }) {
+  const theme = useTheme();
+  const photoPath = item.photoUrl || (item.id ? `/api/reports/photo/${item.id}` : null);
+  const { uri: imageUri } = useProtectedImage(photoPath, null);
+
+  return (
+    <Pressable
+      key={item.id}
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.bulletinRow,
+        {
+          backgroundColor: pressed ? theme.colors.surfaceSunken : theme.colors.surface,
+          borderColor: theme.colors.border,
+          borderRadius: theme.radius.lg,
+          padding: theme.spacing.lg,
+          gap: theme.spacing.md,
+        },
+      ]}
+    >
+      {imageUri ? (
+        <Image
+          source={{ uri: imageUri }}
+          style={[styles.bulletinAvatar, { borderRadius: theme.radius.md }]}
+          resizeMode="cover"
+        />
+      ) : (
+        <View style={[styles.bulletinAvatar, { backgroundColor: theme.colors.primarySoft, borderRadius: theme.radius.md }]}>
+          <Ionicons name="person" size={20} color={theme.colors.primarySoftText} />
+        </View>
+      )}
+      <View style={{ flex: 1 }}>
+        <Text variant="bodyStrong" numberOfLines={1}>
+          {item.childName}
+        </Text>
+        <Text variant="small" tone="muted" numberOfLines={1}>
+          {ageBandLabel(null, item.age)} · {joinPlace(item.district, item.state)}
+        </Text>
+      </View>
+      <Badge label={relativeTime(item.publishedAt)} tone="neutral" />
+    </Pressable>
   );
 }
 

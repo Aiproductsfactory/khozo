@@ -4,15 +4,8 @@ import { Directory, File, Paths } from 'expo-file-system';
 import { getApiBaseUrl } from '../services/config';
 
 /**
- * Loads a jurisdiction-protected photo from the Khozo API.
- *
- * `<Image source={{ uri, headers }}>` does not reliably send the bearer token on
- * Android here, so the bytes are fetched explicitly and handed to the Image as a
- * data URI.
- *
- * The download has to land on disk to attach request headers, but the file is
- * deleted as soon as it has been read: the app tells users that case records and
- * child identities are never cached on the phone, and that must stay true.
+ * Loads a photo from the Khozo API.
+ * Supports both protected jurisdiction photos (with Bearer token) and public bulletin photos.
  */
 export function useProtectedImage(photoPath, token) {
   const [uri, setUri] = useState(null);
@@ -20,7 +13,7 @@ export function useProtectedImage(photoPath, token) {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!photoPath || !token) {
+    if (!photoPath) {
       setUri(null);
       return undefined;
     }
@@ -36,8 +29,9 @@ export function useProtectedImage(photoPath, token) {
         if (!dir.exists) dir.create({ intermediates: true });
         scratch = new File(dir, `${String(photoPath).replace(/\W+/g, '_')}.img`);
 
+        const headers = token ? { Authorization: `Bearer ${token}` } : {};
         const file = await File.downloadFileAsync(`${getApiBaseUrl()}${photoPath}`, scratch, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers,
           idempotent: true,
         });
         const base64 = await file.base64();
@@ -48,7 +42,7 @@ export function useProtectedImage(photoPath, token) {
         try {
           if (scratch?.exists) scratch.delete();
         } catch {
-          // A leftover scratch file is cleaned up on the next load or uninstall.
+          // Scratch cleanup
         }
         if (!cancelled) setLoading(false);
       }

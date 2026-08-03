@@ -95,8 +95,18 @@ export default function Bulletins() {
                 {rows.map((row) => (
                   <tr key={row.id} className="border-b border-black/5 last:border-0">
                     <td className="px-4 py-3">
-                      <p className="font-semibold capitalize">{row.publicName || row.childName}</p>
-                      <p className="text-xs text-gray-400">{row.gender || 'Gender under review'} / {row.ageBand ? `approx. ${row.ageBand}` : `age ${row.age ?? '-'}`}</p>
+                      <div className="flex items-center gap-3">
+                        <img
+                          src={`/api/reports/photo/${row.id}`}
+                          alt={row.childName || 'Missing child'}
+                          className="h-10 w-10 rounded-lg object-cover bg-gray-100 ring-1 ring-black/5"
+                          onError={(e) => { e.target.style.display = 'none'; }}
+                        />
+                        <div>
+                          <p className="font-semibold capitalize">{row.publicName || row.childName}</p>
+                          <p className="text-xs text-gray-400">{row.gender || 'Gender under review'} / {row.ageBand ? `approx. ${row.ageBand}` : `age ${row.age ?? '-'}`}</p>
+                        </div>
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-gray-600">{row.statusLabel || row.status}</td>
                     <td className="px-4 py-3 text-gray-600">{row.lastSeen || [row.district, row.state].filter(Boolean).join(', ') || '-'}</td>

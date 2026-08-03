@@ -1,17 +1,21 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { FlatList, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
+import { Image, FlatList, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Badge, Banner, Button, EmptyState, SkeletonCard, Text, TextField } from '../components';
 import { useAsync } from '../hooks/useAsync';
+import { useProtectedImage } from '../hooks/useProtectedImage';
 import { publicApi } from '../services/api';
 import { useTheme } from '../theme';
 import { formatDate, initialsOf, joinPlace, relativeTime } from '../utils/format';
 
 function BulletinCard({ item, onPress }) {
   const theme = useTheme();
+  const photoPath = item.photoUrl || (item.id ? `/api/reports/photo/${item.id}` : null);
+  const { uri: imageUri } = useProtectedImage(photoPath, null);
+
   return (
     <Pressable
       accessibilityRole="button"
@@ -29,11 +33,19 @@ function BulletinCard({ item, onPress }) {
         theme.shadow.card,
       ]}
     >
-      <View style={[styles.avatar, { backgroundColor: theme.colors.primarySoft, borderRadius: theme.radius.md }]}>
-        <Text variant="heading" color={theme.colors.primarySoftText}>
-          {initialsOf(item.childName)}
-        </Text>
-      </View>
+      {imageUri ? (
+        <Image
+          source={{ uri: imageUri }}
+          style={[styles.avatar, { borderRadius: theme.radius.md }]}
+          resizeMode="cover"
+        />
+      ) : (
+        <View style={[styles.avatar, { backgroundColor: theme.colors.primarySoft, borderRadius: theme.radius.md }]}>
+          <Text variant="heading" color={theme.colors.primarySoftText}>
+            {initialsOf(item.childName)}
+          </Text>
+        </View>
+      )}
       <View style={{ flex: 1 }}>
         <Text variant="bodyStrong" numberOfLines={1}>
           {item.childName}

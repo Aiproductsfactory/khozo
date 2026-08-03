@@ -8,7 +8,7 @@ import {
   listUsers, addActivity, addAudit,
   savePhoto, readPhoto, photoMimeType,
 } from '../store.js';
-import { authRequired, passwordChangeRequired, requireRole } from '../auth.js';
+import { authRequired, optionalAuth, passwordChangeRequired, requireRole } from '../auth.js';
 import { canAccessReport, scopeFoundReports, scopeReports } from '../scope.js';
 import { rankMatches } from '../match.js';
 import { auditPublicRateLimit, clientIp, fixedWindowRateLimit } from '../rateLimit.js';
@@ -432,6 +432,7 @@ function bulletinPayload(report) {
     publishedAt,
     agency: report.bulletin?.agency || 'Khozo public bulletin desk',
     instructions: 'If you have information, submit a sighting through Khozo or contact 1098 / local police.',
+    photoUrl: report.photoUrl || (report.photoFile ? `/api/reports/photo/${report.id}` : null),
   };
 }
 
@@ -1016,19 +1017,28 @@ function inferLocationScope(body = {}) {
   return { state, district };
 }
 
-router.get('/photo/:key', protectedRoute, async (req, res) => {
-  // Resolve the owning record first: the jurisdiction check is the access
-  // control for the image, so an unknown key must never reach the filesystem.
+router.get('/photo/:key', optionalAuth, async (req, res) => {
   const report = findReport(req.params.key);
-  if (report && !canAccessReport(req.user, report)) {
-    return res.status(403).json({ error: 'Photo is outside your jurisdiction' });
-  }
   const found = findFoundReport(req.params.key);
-  if (found && scopeFoundReports(req.user, [found], listReports()).length !== 1) {
-    return res.status(403).json({ error: 'Photo is outside your jurisdiction' });
-  }
   const record = report || found;
   if (!record) return res.status(404).end();
+
+  const isPublicBulletin = report && (
+    report.bulletin?.published === true ||
+    (report.status === 'missing' && report.intakeStatus !== 'pending_verification')
+  );
+
+  if (!isPublicBulletin) {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+    if (report && !canAccessReport(req.user, report)) {
+      return res.status(403).json({ error: 'Photo is outside your jurisdiction' });
+    }
+    if (found && scopeFoundReports(req.user, [found], listReports()).length !== 1) {
+      return res.status(403).json({ error: 'Photo is outside your jurisdiction' });
+    }
+  }
 
   const buffer = record.photoFile ? await readPhoto(record.photoFile) : null;
   if (!buffer) return res.status(404).end();

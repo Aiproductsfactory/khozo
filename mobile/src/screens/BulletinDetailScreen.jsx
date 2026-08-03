@@ -1,9 +1,10 @@
 import React from 'react';
-import { Linking, StyleSheet, View } from 'react-native';
+import { Image, Linking, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 
 import { Banner, Button, Card, Divider, Screen, Text } from '../components';
+import { useProtectedImage } from '../hooks/useProtectedImage';
 import { useTheme } from '../theme';
 import { formatDate, initialsOf, joinPlace } from '../utils/format';
 
@@ -27,6 +28,8 @@ export default function BulletinDetailScreen() {
   const navigation = useNavigation();
   const { params } = useRoute();
   const bulletin = params?.bulletin;
+  const photoPath = bulletin?.photoUrl || (bulletin?.id ? `/api/reports/photo/${bulletin.id}` : null);
+  const { uri: imageUri } = useProtectedImage(photoPath, null);
 
   if (!bulletin) {
     return (
@@ -52,11 +55,19 @@ export default function BulletinDetailScreen() {
       }
     >
       <View style={styles.header}>
-        <View style={[styles.avatar, { backgroundColor: theme.colors.primarySoft, borderRadius: theme.radius.pill }]}>
-          <Text variant="display" color={theme.colors.primarySoftText}>
-            {initialsOf(bulletin.childName)}
-          </Text>
-        </View>
+        {imageUri ? (
+          <Image
+            source={{ uri: imageUri }}
+            style={[styles.avatar, { borderRadius: theme.radius.lg }]}
+            resizeMode="cover"
+          />
+        ) : (
+          <View style={[styles.avatar, { backgroundColor: theme.colors.primarySoft, borderRadius: theme.radius.pill }]}>
+            <Text variant="display" color={theme.colors.primarySoftText}>
+              {initialsOf(bulletin.childName)}
+            </Text>
+          </View>
+        )}
         <Text variant="title" style={{ marginTop: theme.spacing.lg, textAlign: 'center' }}>
           {bulletin.childName}
         </Text>
