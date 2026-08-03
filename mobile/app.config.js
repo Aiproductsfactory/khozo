@@ -8,19 +8,17 @@
  *   KHOZO_ENV=pilot       -> cleartext allowed, for a LAN/USB backend on a field network
  *
  * Build with:
- *   KHOZO_ENV=production KHOZO_API_URL=https://api.khozo.org npx expo prebuild -p android
+ *   KHOZO_ENV=production KHOZO_API_URL=https://khozo.swastik-kumar.workers.dev npx expo prebuild -p android
  */
 
-const ENV = process.env.KHOZO_ENV || 'pilot';
+const ENV = process.env.KHOZO_ENV || 'production';
 const IS_PRODUCTION = ENV === 'production';
 
-// Play requires a new, higher versionCode for every upload. Bump VERSION_CODE
-// (or set KHOZO_VERSION_CODE in CI) on each release; `version` is what users see.
 const VERSION = '1.0.0';
 const VERSION_CODE = Number(process.env.KHOZO_VERSION_CODE || 1);
 
 const API_URL =
-  process.env.KHOZO_API_URL || (IS_PRODUCTION ? 'https://api.khozo.org' : 'http://192.168.1.8:4000');
+  process.env.KHOZO_API_URL || 'https://khozo.swastik-kumar.workers.dev';
 
 if (IS_PRODUCTION && !API_URL.startsWith('https://')) {
   throw new Error(`Production builds require an HTTPS API URL, got: ${API_URL}`);
@@ -28,8 +26,6 @@ if (IS_PRODUCTION && !API_URL.startsWith('https://')) {
 
 export default {
   expo: {
-    // The launcher label is always "Khozo" — pilot and production builds are
-    // told apart by versionCode, not by a different name on the user's phone.
     name: 'Khozo',
     slug: 'khozo-mobile',
     version: VERSION,
@@ -59,8 +55,6 @@ export default {
         'android.permission.ACCESS_FINE_LOCATION',
         'android.permission.ACCESS_COARSE_LOCATION',
       ],
-      // Declared so the merged manifest cannot inherit them from a dependency:
-      // every permission has to be justified in the Play Console.
       blockedPermissions: [
         'android.permission.RECORD_AUDIO',
         'android.permission.READ_MEDIA_VIDEO',
@@ -110,14 +104,12 @@ export default {
         'expo-build-properties',
         {
           android: {
-            // Play rejects apps that send personal data over plaintext HTTP.
             usesCleartextTraffic: !IS_PRODUCTION,
             compileSdkVersion: 36,
             targetSdkVersion: 36,
             minSdkVersion: 24,
-            // Shrink + strip for release; keeps the AAB well under Play limits.
-            enableProguardInReleaseBuilds: IS_PRODUCTION,
-            enableShrinkResourcesInReleaseBuilds: IS_PRODUCTION,
+            enableProguardInReleaseBuilds: false,
+            enableShrinkResourcesInReleaseBuilds: false,
           },
         },
       ],

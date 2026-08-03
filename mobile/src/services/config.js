@@ -6,21 +6,22 @@ const STORAGE_KEY = 'khozo.apiBaseUrl';
 /**
  * Build-time default, set in app.json under `expo.extra.khozoApiUrl`.
  *
- * A phone cannot reach the dev machine's `localhost`, so this has to be a LAN
- * address (or a deployed origin). Users can override it in Settings without a
- * rebuild, which is what makes the app usable across different pilot networks.
+ * Defaults to the production Cloudflare Worker endpoint so APK builds connect out of the box.
+ * Users can override it in Settings without a rebuild.
  */
 export const DEFAULT_API_URL =
-  Constants.expoConfig?.extra?.khozoApiUrl || 'http://192.168.0.151:4000';
+  Constants.expoConfig?.extra?.khozoApiUrl || 'https://khozo.swastik-kumar.workers.dev';
 
 /**
  * Addresses tried once on first launch, in order, when the user has not set one.
- *
- * A pilot phone may be on the station Wi-Fi (LAN address), tethered to a laptop
- * over USB with `adb reverse` (localhost), or on an emulator (10.0.2.2). Probing
- * removes a manual setup step that field staff should never have to think about.
  */
-const CANDIDATE_URLS = [DEFAULT_API_URL, 'http://localhost:4000', 'http://10.0.2.2:4000'];
+const CANDIDATE_URLS = [
+  DEFAULT_API_URL,
+  'https://khozo.swastik-kumar.workers.dev',
+  'http://192.168.0.151:4000',
+  'http://localhost:4000',
+  'http://10.0.2.2:4000',
+];
 
 let currentBaseUrl = DEFAULT_API_URL;
 
@@ -78,8 +79,6 @@ export async function loadApiBaseUrl() {
     // Fall through to detection.
   }
 
-  // Probed together, not in sequence, so a cold start is never delayed by more
-  // than one timeout. Preference order still decides which winner is kept.
   const results = await Promise.all(CANDIDATE_URLS.map((candidate) => probe(candidate)));
   const winner = CANDIDATE_URLS.find((_, index) => results[index]);
   if (winner) {
@@ -88,15 +87,13 @@ export async function loadApiBaseUrl() {
     return currentBaseUrl;
   }
 
-  // Nothing answered - keep the default so Settings shows a sensible value and
-  // the screens surface their normal "cannot reach the server" state.
   currentBaseUrl = DEFAULT_API_URL;
   return currentBaseUrl;
 }
 
 export async function setApiBaseUrl(input) {
   const normalised = normaliseBaseUrl(input);
-  if (!isValidBaseUrl(normalised)) throw new Error('Enter a valid server address, for example http://192.168.0.151:4000');
+  if (!isValidBaseUrl(normalised)) throw new Error('Enter a valid server address, for example https://khozo.swastik-kumar.workers.dev');
   currentBaseUrl = normalised;
   await AsyncStorage.setItem(STORAGE_KEY, normalised);
   return normalised;
