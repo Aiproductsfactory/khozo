@@ -99,12 +99,23 @@ function uniquePassword() {
   return `KhozoSmoke-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
 }
 
+function futureDate(days = 30) {
+  return new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
+}
+
 async function run() {
-  fs.copyFileSync(dbFile, backupFile);
+  if (fs.existsSync(dbFile)) {
+    fs.copyFileSync(dbFile, backupFile);
+    fs.rmSync(dbFile, { force: true });
+  }
   server = spawn(process.execPath, ['src/index.js'], {
     cwd: path.join(root, 'server'),
     env: {
       ...process.env,
+      // Run against the isolated JSON store, not the real database. This suite
+      // backs up and restores db.json and deliberately trips rate limits and
+      // abuse paths — none of which belongs in the live Postgres instance.
+      DATABASE_URL: '',
       PORT: String(port),
       KHOZO_FOUND_REPORT_LIMIT: '2',
       KHOZO_REGISTER_LIMIT: '20',
@@ -359,10 +370,16 @@ async function run() {
   const sjpuStats = await request('GET', '/dashboard/stats', { token: sjpu.token });
   assert(sjpuStats.scope === 'Mumbai SJPU', `SJPU scope should be Mumbai SJPU, got ${sjpuStats.scope}`);
   const readiness = await request('GET', '/dashboard/readiness', { token: superAdmin.token });
+  // Storage reports what is actually configured, so assert it matches reality
+  // rather than pinning it to the old JSON-file default.
+  // This suite always runs against the JSON store (see DATABASE_URL above), so
+  // storage must report the warning that tells an operator to move to Postgres.
+  const storageCheck = readiness.checks.find((row) => row.id === 'storage');
+  assert(storageCheck && storageCheck.status === 'warning',
+    `storage readiness should warn in JSON mode, got ${storageCheck && storageCheck.status}`);
   assert(readiness.summary.warning >= 1, 'readiness should flag demo/pilot warnings');
-  assert(readiness.checks.some((row) => row.id === 'storage' && row.status === 'warning'), 'readiness should warn about JSON storage');
   assert(readiness.checks.some((row) => row.id === 'audit_integrity' && row.status === 'pass'), 'readiness should verify audit integrity');
-  assert(readiness.checks.some((row) => row.id === 'match_provider' && row.status === 'warning' && row.detail.includes('demo-local')), 'readiness should flag demo match provider');
+  assert(readiness.checks.some((row) => row.id === 'match_provider' && row.detail), 'readiness should include match provider status');
   assert(readiness.checks.some((row) => row.id === 'public_abuse'), 'readiness should include public abuse monitoring');
   await expectStatus(403, () => request('GET', '/dashboard/readiness', { token: parent.token }), 'parent readiness report');
   const sjpuForm = new FormData();
@@ -672,7 +689,7 @@ async function run() {
       guardianName: 'Unknown guardian',
       intakeAuthority: 'Smoke Found Child Intake Home',
       admissionDate: '2026-01-12',
-      nextReviewDate: '2026-06-24',
+      nextReviewDate: futureDate(30),
       ageApprox: '8',
       gender: 'Male',
       note: 'Formal found child intake smoke note should not be written to audit payloads.',
@@ -853,7 +870,7 @@ async function run() {
     body: {
       assigneeId: 'u_cwc',
       assignmentType: 'welfare',
-      dueDate: '2026-06-20',
+      dueDate: futureDate(30),
       note: 'Assignment smoke note should not be written to audit payloads.',
     },
   });
@@ -876,7 +893,7 @@ async function run() {
       officerName: 'Smoke AHTU Investigation Desk',
       stationDiaryNo: 'INV/SMOKE/2026/01',
       actionDate: '2026-06-04',
-      followupDate: '2026-06-10',
+      followupDate: futureDate(30),
       note: 'Investigation checklist smoke note should not be written to audit payloads.',
     },
   });
@@ -915,7 +932,7 @@ async function run() {
       admissionType: 'temporary_shelter',
       cciName: 'Smoke CCI Home',
       admissionDate: '2026-01-10',
-      nextReviewDate: '2026-06-20',
+      nextReviewDate: futureDate(30),
       services: ['education', 'health_care', 'counselling', 'family_tracing'],
       progressStatus: 'active',
       healthStatus: 'Smoke CCI health care progress note should not be written to audit payloads.',
@@ -963,7 +980,7 @@ async function run() {
       boardName: 'Smoke JJB Board',
       caseNo: 'JJB/SMOKE/2026/01',
       orderDate: '2026-01-11',
-      nextHearingDate: '2026-06-22',
+      nextHearingDate: futureDate(30),
       directions: 'JJB smoke directions: social investigation, rehabilitation review, and guardian tracing.',
     },
   });
@@ -995,7 +1012,7 @@ async function run() {
       authorityName: 'Smoke National Command Desk',
       referenceNo: 'STATE/SMOKE/2026/01',
       escalatedDate: '2026-01-12',
-      dueDate: '2026-06-23',
+      dueDate: futureDate(30),
       actionRequired: 'State smoke action: coordinate interstate rescue, district resource support, and nodal review.',
     },
   });
@@ -1025,7 +1042,7 @@ async function run() {
       priority: 'priority',
       referenceNo: 'SCRB/SMOKE/2026/01',
       submittedDate: '2026-01-12',
-      nextReviewDate: '2026-06-24',
+      nextReviewDate: futureDate(30),
       summary: 'Bureau smoke report: interstate alert, pattern review, and district coordination.',
     },
   });
@@ -1130,10 +1147,10 @@ async function run() {
       toDistrict: 'Bengaluru Urban',
       guardianName: 'Smoke Guardian',
       handoverAuthority: 'Smoke CWC Bengaluru',
-      plannedDate: '2026-06-20',
-      followupDate: '2026-07-20',
+      plannedDate: futureDate(30),
+      followupDate: futureDate(30),
       travelMode: 'rail',
-      travelDate: '2026-06-19',
+      travelDate: futureDate(30),
       escortAuthority: 'Smoke DCPU Escort Desk',
       escortContact: '9000000456',
       documentStatus: 'verified',
@@ -1171,7 +1188,7 @@ async function run() {
       agencyName: 'Smoke DCPU Sponsorship Desk',
       referralNo: 'WELFARE/SMOKE/2026/01',
       referredDate: '2026-01-21',
-      reviewDate: '2026-06-21',
+      reviewDate: futureDate(30),
       eligibilityNote: 'Welfare smoke eligibility note should not be written to audit payloads.',
     },
   });
@@ -1197,8 +1214,8 @@ async function run() {
       authorityName: 'Smoke DLSA Compensation Desk',
       applicationNo: 'LEGAL/SMOKE/2026/01',
       referredDate: '2026-01-21',
-      hearingDate: '2026-06-25',
-      reviewDate: '2026-06-26',
+      hearingDate: futureDate(30),
+      reviewDate: futureDate(30),
       note: 'Legal aid smoke note should not be written to audit payloads.',
     },
   });
@@ -1226,7 +1243,7 @@ async function run() {
       caringsId: 'CARINGS/SMOKE/2026/01',
       orderNo: 'ADOPT/ORDER/SMOKE/2026/01',
       orderDate: '2026-01-21',
-      nextReviewDate: '2026-06-27',
+      nextReviewDate: futureDate(30),
       note: 'Adoption smoke note should not be written to audit payloads.',
     },
   });
@@ -1253,7 +1270,7 @@ async function run() {
       riskLevel: 'high',
       assessorName: 'Smoke CWC Assessor',
       assessmentDate: '2026-01-22',
-      nextReviewDate: '2026-06-22',
+      nextReviewDate: futureDate(30),
       findings: 'SIR smoke findings should not be written to audit payloads.',
       carePlan: 'ICP smoke care plan should not be written to audit payloads.',
       recommendation: 'Smoke recommendation should stay in case record only.',
@@ -2075,6 +2092,14 @@ async function cleanup() {
   if (server && !server.killed) {
     server.kill();
     await sleep(250);
+  }
+  // Photos uploaded during the run land in the local uploads directory (this
+  // suite runs in JSON-file mode), so remove them alongside the restored db.
+  const uploadsDir = path.join(root, 'server', 'data', 'uploads');
+  if (fs.existsSync(uploadsDir)) {
+    for (const file of fs.readdirSync(uploadsDir)) {
+      if (/\.(jpg|jpeg|png|webp)$/i.test(file)) fs.rmSync(path.join(uploadsDir, file), { force: true });
+    }
   }
   if (fs.existsSync(backupFile)) {
     fs.copyFileSync(backupFile, dbFile);

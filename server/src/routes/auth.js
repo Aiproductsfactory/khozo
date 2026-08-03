@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { nanoid } from 'nanoid';
 import { findUserByEmail, addUser, addAudit, updateUser } from '../store.js';
@@ -33,17 +34,70 @@ function otpKey(phone) {
   return digits(phone);
 }
 
-function demoOtp(phone) {
-  const clean = otpKey(phone);
-  if (!clean) return '';
-  return clean.slice(-6).padStart(6, '0');
+/**
+ * Generates a one-time code.
+ *
+ * Must be unpredictable. This previously returned the last six digits of the
+ * caller's own phone number, which meant anyone who knew a number could compute
+ * its OTP and register an account against it — on a platform where a "parent"
+ * account can see a child's case.
+ */
+function generateOtp() {
+  return String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
 }
 
-router.post('/otp/start', registerLimit, (req, res) => {
+/**
+ * Delivers the code. Without a gateway configured there is no delivery channel,
+ * so production refuses rather than issuing a code nobody can receive — and
+ * that a caller might otherwise be able to guess.
+ */
+async function deliverOtp(phone, code) {
+  const gateway = process.env.KHOZO_SMS_GATEWAY_URL;
+  const apiKey = process.env.KHOZO_SMS_API_KEY;
+
+  if (!gateway || !apiKey) {
+    if (process.env.NODE_ENV === 'production') {
+      throw Object.assign(new Error('SMS gateway is not configured'), { statusCode: 503 });
+    }
+    console.warn(`[auth] no SMS gateway configured; OTP for ...${phone.slice(-4)} is ${code}`);
+    return { delivered: false, channel: 'console' };
+  }
+
+  const res = await fetch(gateway, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      to: phone,
+      message: `${code} is your Khozo verification code. It expires in 10 minutes. Never share it.`,
+    }),
+  });
+  if (!res.ok) throw Object.assign(new Error(`SMS gateway returned ${res.status}`), { statusCode: 502 });
+  return { delivered: true, channel: 'sms' };
+}
+
+router.post('/otp/start', registerLimit, async (req, res) => {
   const phone = otpKey(req.body?.phone);
   if (!/^\d{7,15}$/.test(phone)) return res.status(400).json({ error: 'Mobile number must be 7 to 15 digits' });
-  const code = demoOtp(phone);
+
+  const code = generateOtp();
   const expiresAt = Date.now() + OTP_TTL_MS;
+
+  let delivery;
+  try {
+    delivery = await deliverOtp(phone, code);
+  } catch (err) {
+    addAudit({
+      actorName: 'Public OTP portal',
+      actorRole: 'public',
+      action: 'auth.otp_delivery_failed',
+      targetType: 'otp',
+      summary: 'OTP could not be delivered',
+      metadata: { phoneSuffix: phone.slice(-4), reason: err.message },
+    });
+    return res.status(err.statusCode || 502).json({ error: 'Could not send the verification code. Please try again later.' });
+  }
+
+  // Stored only after delivery succeeds, so a failed send cannot leave a live code.
   otpStore.set(phone, { code, expiresAt, attempts: 0 });
   addAudit({
     actorName: 'Public OTP portal',
@@ -51,13 +105,14 @@ router.post('/otp/start', registerLimit, (req, res) => {
     action: 'auth.otp_started',
     targetType: 'otp',
     summary: 'Started public registration OTP verification',
-    metadata: { phoneSuffix: phone.slice(-4), expiresAt },
+    metadata: { phoneSuffix: phone.slice(-4), expiresAt, channel: delivery.channel },
   });
   res.json({
     ok: true,
     expiresAt,
-    delivery: 'demo_sms',
-    ...(process.env.NODE_ENV !== 'production' ? { demoOtp: code } : {}),
+    delivery: delivery.channel,
+    // Development convenience only — never reachable with NODE_ENV=production.
+    ...(process.env.NODE_ENV !== 'production' && !delivery.delivered ? { demoOtp: code } : {}),
   });
 });
 

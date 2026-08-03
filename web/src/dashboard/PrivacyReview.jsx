@@ -1,6 +1,19 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { fmtDate } from '../lib.jsx';
+import { useAuth } from '../auth.jsx';
+
+const PRIVACY_REVIEW_ROLES = ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'cwc', 'dcpu', 'state_nodal'];
+const PRIVACY_EXPORT_ROLES = ['super_admin', 'admin', 'state_nodal', 'crime_bureau'];
+const PRIVACY_ANONYMIZE_ROLES = ['super_admin', 'admin', 'state_nodal'];
+
+function defaultCapabilities(role) {
+  return {
+    canReview: PRIVACY_REVIEW_ROLES.includes(role),
+    canExport: PRIVACY_EXPORT_ROLES.includes(role),
+    canAnonymize: PRIVACY_ANONYMIZE_ROLES.includes(role),
+  };
+}
 
 const STATE_CLASS = {
   expired: 'bg-red-50 text-red-700 ring-red-600/20',
@@ -17,16 +30,18 @@ const STATE_LABEL = {
 };
 
 export default function PrivacyReview() {
+  const { user } = useAuth();
   const [rows, setRows] = useState([]);
-  const [capabilities, setCapabilities] = useState({ canReview: false, canExport: false, canAnonymize: false });
+  const [capabilities, setCapabilities] = useState(() => defaultCapabilities(user?.role));
   const [busyId, setBusyId] = useState('');
   const [exportData, setExportData] = useState(null);
   const [approvalForms, setApprovalForms] = useState({});
+  const [batchApprovalRef, setBatchApprovalRef] = useState('');
 
   const load = () => {
     api.get('/dashboard/privacy/retention').then((d) => {
       setRows(d.retention);
-      setCapabilities(d.capabilities || { canReview: false, canExport: false, canAnonymize: false });
+      if (d.capabilities) setCapabilities(d.capabilities);
     }).catch(() => {});
   };
 
@@ -35,7 +50,7 @@ export default function PrivacyReview() {
   const decide = async (row, decision) => {
     setBusyId(`${row.type}:${row.id}:${decision}`);
     try {
-      const approval = approvalForms[`${row.type}:${row.id}`] || { approvalType: 'privacy_officer', approvalReference: '', approvalNote: '' };
+      const approval = approvalForms[`${row.type}:${row.id}`] || { approvalType: 'privacy_officer', approvalReference: batchApprovalRef || '', approvalNote: '' };
       await api.post(`/dashboard/privacy/retention/${row.type}/${row.id}`, {
         decision,
         extendDays: row.type === 'report' ? 365 : 180,
@@ -51,7 +66,7 @@ export default function PrivacyReview() {
     const id = `${row.type}:${row.id}`;
     setApprovalForms((current) => ({
       ...current,
-      [id]: { approvalType: 'privacy_officer', approvalReference: '', approvalNote: '', ...(current[id] || {}), [key]: event.target.value },
+      [id]: { approvalType: 'privacy_officer', approvalReference: batchApprovalRef || '', approvalNote: '', ...(current[id] || {}), [key]: event.target.value },
     }));
   };
 
@@ -69,6 +84,23 @@ export default function PrivacyReview() {
       {capabilities.canExport && (
         <div className="flex justify-end">
           <button className="btn-ghost" onClick={exportReport}>Export privacy report</button>
+        </div>
+      )}
+
+      {capabilities.canAnonymize && (
+        <div className="card p-4 text-sm bg-gray-50/50">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="font-semibold text-gray-700">Anonymization authorization</p>
+              <p className="text-xs text-gray-500">Specify an approval or court order reference for anonymization decisions.</p>
+            </div>
+            <input
+              className="field py-1.5 text-xs max-w-xs"
+              placeholder="Approval/order reference"
+              value={batchApprovalRef}
+              onChange={(e) => setBatchApprovalRef(e.target.value)}
+            />
+          </div>
         </div>
       )}
 

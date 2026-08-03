@@ -34,6 +34,7 @@ export const DASHBOARD_NAV = [
   { to: '/app/mis', label: 'MIS report', icon: 'MIS', roles: OPERATIONAL_ROLES },
   { to: '/app/grievances', label: 'Grievances', icon: 'Help', roles: OPERATIONAL_ROLES },
   { to: '/app/network', label: 'Network', icon: 'Network', roles: NETWORK_ROLES },
+  { to: '/app/simulations', label: 'Simulations & Tests', icon: 'Test', roles: ['super_admin', 'admin'] },
 ];
 
 export const DASHBOARD_ROUTE_ROLES = {

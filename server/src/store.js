@@ -8,6 +8,11 @@ import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 
+import {
+  isPostgres, enqueueUpsert, hydrate, flushPending,
+  savePhotoBlob, readPhotoBlob, deletePhotoBlob, photoBlobStats,
+} from './db.js';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
@@ -18,8 +23,22 @@ fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 /** @type {{users:any[], reports:any[], foundReports:any[], grievances:any[], activity:any[], audit:any[]}} */
 let db = { users: [], reports: [], foundReports: [], grievances: [], activity: [], audit: [] };
 
+/**
+ * Persists the whole in-memory dataset.
+ *
+ * Retained for the JSON-file mode. Under Postgres the individual mutators queue
+ * per-row upserts instead, because rewriting every row on every save is exactly
+ * the behaviour the migration exists to remove.
+ */
 function persist() {
+  if (isPostgres) return;
   fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
+}
+
+/** Records a single changed row: per-row upsert on Postgres, whole-file otherwise. */
+function persistRow(table, record) {
+  if (isPostgres) enqueueUpsert(table, record);
+  else persist();
 }
 
 function stable(value) {
@@ -483,10 +502,61 @@ function seed() {
   ];
   normalizeAuditChain();
 
-  persist();
+  persistAll();
 }
 
-export function init() {
+/**
+ * Loads the dataset into memory.
+ *
+ * Async because Postgres hydration is; callers must await it before serving.
+ */
+export async function init() {
+  if (isPostgres) {
+    const loaded = await hydrate();
+    db = {
+      users: loaded.users || [],
+      reports: loaded.reports || [],
+      foundReports: loaded.foundReports || [],
+      grievances: loaded.grievances || [],
+      activity: loaded.activity || [],
+      audit: loaded.audit || [],
+    };
+    // An empty database is a first boot: seed it, which writes through to Postgres.
+    if (!db.users.length) {
+      seed();
+      return;
+    }
+    ensureStakeholderUsers();
+    ensureActivityScopes();
+    ensureSeedOwnership();
+    if (normalizeAuditChain()) {
+      // Rewritten chain rows cannot be re-inserted over the append-only trigger,
+      // so surface it rather than failing silently on every write.
+      console.warn('[store] audit chain required normalisation; existing Postgres rows are unchanged.');
+    }
+    return;
+  }
+  initFromFile();
+}
+
+/** Persists every in-memory row. Used when seeding into an empty database. */
+function persistAll() {
+  if (!isPostgres) return persist();
+  for (const [table, rows] of [
+    ['users', db.users],
+    ['reports', db.reports],
+    ['found_reports', db.foundReports],
+    ['grievances', db.grievances],
+    ['activity', db.activity],
+    ['audit', db.audit.slice().reverse()], // oldest first: the chain depends on order
+  ]) {
+    for (const row of rows) enqueueUpsert(table, row);
+  }
+}
+
+export { flushPending };
+
+function initFromFile() {
   if (fs.existsSync(DB_FILE)) {
     try {
       db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
@@ -514,6 +584,71 @@ export function init() {
 export const BASE_TOTAL_MISSING = 10468;
 export const BASE_TOTAL_FOUND = 4068;
 
+// --- Photos ---------------------------------------------------------------
+// Uploaded images are written to data/uploads so they survive a restart. Holding
+// them in memory loses every photo on redeploy and makes face matching against
+// existing cases impossible, because there is nothing left to compare with.
+
+const EXT_BY_MIME = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+
+/**
+ * Persists an uploaded image and returns the stored filename.
+ *
+ * Under Postgres the bytes go to `photo_blobs`; a host with an ephemeral
+ * filesystem would otherwise lose every case photo on redeploy. The local
+ * directory is used only when no database is configured.
+ */
+export async function savePhoto(key, buffer, mimetype) {
+  if (!buffer?.length) return null;
+  const filename = `${key}.${EXT_BY_MIME[mimetype] || 'jpg'}`;
+  if (isPostgres) {
+    await savePhotoBlob(filename, buffer, mimetype);
+    return filename;
+  }
+  fs.writeFileSync(path.join(UPLOAD_DIR, filename), buffer);
+  return filename;
+}
+
+/** Reads a stored image back as a Buffer, or null when it is gone. */
+export async function readPhoto(filename) {
+  if (!filename) return null;
+  // Guard against a stored name escaping the uploads directory.
+  const safe = path.basename(String(filename));
+  if (isPostgres) {
+    const blob = await readPhotoBlob(safe);
+    return blob?.buffer || null;
+  }
+  const target = path.join(UPLOAD_DIR, safe);
+  if (!fs.existsSync(target)) return null;
+  try {
+    return fs.readFileSync(target);
+  } catch {
+    return null;
+  }
+}
+
+/** Removes a stored image, used by the retention/anonymisation workflows. */
+export async function deletePhoto(filename) {
+  if (!filename) return false;
+  const safe = path.basename(String(filename));
+  if (isPostgres) return deletePhotoBlob(safe);
+  const target = path.join(UPLOAD_DIR, safe);
+  try {
+    if (fs.existsSync(target)) {
+      fs.unlinkSync(target);
+      return true;
+    }
+  } catch {
+    // Retention sweeps must not fail because one file is already gone.
+  }
+  return false;
+}
+
+export function photoMimeType(filename) {
+  const ext = path.extname(String(filename || '')).slice(1).toLowerCase();
+  return Object.keys(EXT_BY_MIME).find((mime) => EXT_BY_MIME[mime] === ext) || 'image/jpeg';
+}
+
 // --- Users ---
 export const findUserByEmail = (email) =>
   db.users.find((u) => u.email.toLowerCase() === String(email).toLowerCase());
@@ -521,14 +656,14 @@ export const findUserById = (id) => db.users.find((u) => u.id === id);
 export const listUsers = () => db.users;
 export function addUser(user) {
   db.users.push(user);
-  persist();
+  persistRow('users', user);
   return user;
 }
 export function updateUser(id, patch) {
   const user = findUserById(id);
   if (!user) return null;
   Object.assign(user, patch);
-  persist();
+  persistRow('users', user);
   return user;
 }
 
@@ -537,14 +672,14 @@ export const listReports = () => db.reports;
 export const findReport = (id) => db.reports.find((r) => r.id === id);
 export function addReport(report) {
   db.reports.unshift(report);
-  persist();
+  persistRow('reports', report);
   return report;
 }
 export function updateReport(id, patch) {
   const r = findReport(id);
   if (!r) return null;
   Object.assign(r, patch);
-  persist();
+  persistRow('reports', r);
   return r;
 }
 
@@ -553,14 +688,14 @@ export const listFoundReports = () => db.foundReports;
 export const findFoundReport = (id) => db.foundReports.find((f) => f.id === id);
 export function addFoundReport(fr) {
   db.foundReports.unshift(fr);
-  persist();
+  persistRow('found_reports', fr);
   return fr;
 }
 export function updateFoundReport(id, patch) {
   const f = findFoundReport(id);
   if (!f) return null;
   Object.assign(f, patch);
-  persist();
+  persistRow('found_reports', f);
   return f;
 }
 
@@ -569,23 +704,25 @@ export const listGrievances = () => db.grievances;
 export const findGrievance = (id) => db.grievances.find((g) => g.id === id);
 export function addGrievance(grievance) {
   db.grievances.unshift(grievance);
-  persist();
+  persistRow('grievances', grievance);
   return grievance;
 }
 export function updateGrievance(id, patch) {
   const g = findGrievance(id);
   if (!g) return null;
   Object.assign(g, patch);
-  persist();
+  persistRow('grievances', g);
   return g;
 }
 
 // --- Activity feed ---
 export const listActivity = () => db.activity;
 export function addActivity(entry) {
-  db.activity.unshift({ id: `a_${Date.now()}`, ts: Date.now(), ...entry });
+  const row = { id: `a_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, ts: Date.now(), ...entry };
+  db.activity.unshift(row);
+  // The in-memory feed stays short; Postgres keeps the full history.
   if (db.activity.length > 50) db.activity.length = 50;
-  persist();
+  persistRow('activity', row);
 }
 
 // --- Operational audit log ---
@@ -631,7 +768,9 @@ export function addAudit(entry) {
   };
   row.hash = auditHash(row, prevHash);
   db.audit.unshift(row);
-  if (db.audit.length > 500) db.audit.length = 500;
-  persist();
+  // Trimming the in-memory window would break the hash chain against Postgres,
+  // where the log is retained in full, so only the JSON-file mode caps it.
+  if (!isPostgres && db.audit.length > 500) db.audit.length = 500;
+  persistRow('audit', row);
   return row;
 }

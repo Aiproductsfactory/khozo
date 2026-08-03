@@ -5,6 +5,12 @@ import { findUserById } from './store.js';
 const SECRET = process.env.KHOZO_JWT_SECRET || 'khozo-dev-secret-change-me';
 const TOKEN_TTL = '7d';
 
+// A known signing secret lets anyone mint a valid super_admin token, so refuse to
+// start in production rather than silently accepting the development default.
+if (process.env.NODE_ENV === 'production' && !process.env.KHOZO_JWT_SECRET) {
+  throw new Error('KHOZO_JWT_SECRET must be set in production. Refusing to start with the development signing secret.');
+}
+
 // Role hierarchy from the proposal's access pyramid (higher number = more authority).
 export const ROLE_RANK = {
   super_admin: 4, // Govt of India / State Govt / Police Commissioner

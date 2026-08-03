@@ -6,6 +6,7 @@ import {
   listReports, addReport, findReport, updateReport,
   listFoundReports, addFoundReport, findFoundReport, updateFoundReport,
   listUsers, addActivity, addAudit,
+  savePhoto, readPhoto, photoMimeType,
 } from '../store.js';
 import { authRequired, passwordChangeRequired, requireRole } from '../auth.js';
 import { canAccessReport, scopeFoundReports, scopeReports } from '../scope.js';
@@ -45,6 +46,8 @@ const CASE_ASSIGN_ROLES = ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'dc
 const CASE_ASSIGNABLE_ROLES = ['police', 'sjpu', 'ahtu', 'dcrb', 'dlsa', 'cwc', 'dcpu', 'rpf', 'cci', 'saa', 'jjb', 'state_nodal', 'sara', 'crime_bureau', 'admin'];
 const INVESTIGATION_CHECKLIST_ROLES = ['police', 'sjpu', 'ahtu', 'dcrb', 'rpf', 'admin', 'super_admin', 'state_nodal', 'crime_bureau'];
 const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+/** Score at or above which a sighting is routed to police review. See use below. */
+const MATCH_REVIEW_THRESHOLD = Number(process.env.KHOZO_MATCH_REVIEW_THRESHOLD || 0.35);
 const CASE_ASSIGNMENT_TYPES = {
   investigation: 'Investigation owner',
   welfare: 'Welfare follow-up owner',
@@ -708,13 +711,20 @@ function caseHandoffPayload(report, actor, { targetSystem, purpose, includeOpera
   };
 }
 
-// In-memory photo cache keyed by report/found id -> data URL (kept light for the demo).
-const photoCache = new Map();
-function storePhoto(key, file) {
-  if (!file) return null;
-  const url = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
-  photoCache.set(key, url);
-  return `/api/reports/photo/${key}`;
+/**
+ * Persists an uploaded image and returns the URL the clients fetch it from.
+ *
+ * The stored filename is recorded on the record itself (`photoFile`) so the
+ * bytes can be found again after a restart - both to serve the photo and to
+ * compare it during face matching.
+ */
+async function storePhoto(key, file) {
+  if (!file) return { photoUrl: null, photoFile: null };
+  const photoFile = await savePhoto(key, file.buffer, file.mimetype);
+  return {
+    photoUrl: photoFile ? `/api/reports/photo/${key}` : null,
+    photoFile,
+  };
 }
 
 function norm(v) {
@@ -1006,9 +1016,9 @@ function inferLocationScope(body = {}) {
   return { state, district };
 }
 
-router.get('/photo/:key', protectedRoute, (req, res) => {
-  const url = photoCache.get(req.params.key);
-  if (!url) return res.status(404).end();
+router.get('/photo/:key', protectedRoute, async (req, res) => {
+  // Resolve the owning record first: the jurisdiction check is the access
+  // control for the image, so an unknown key must never reach the filesystem.
   const report = findReport(req.params.key);
   if (report && !canAccessReport(req.user, report)) {
     return res.status(403).json({ error: 'Photo is outside your jurisdiction' });
@@ -1017,9 +1027,12 @@ router.get('/photo/:key', protectedRoute, (req, res) => {
   if (found && scopeFoundReports(req.user, [found], listReports()).length !== 1) {
     return res.status(403).json({ error: 'Photo is outside your jurisdiction' });
   }
-  if (!report && !found) return res.status(404).end();
-  const [, meta, b64] = url.match(/^data:(.+);base64,(.+)$/) || [];
-  res.type(meta).send(Buffer.from(b64, 'base64'));
+  const record = report || found;
+  if (!record) return res.status(404).end();
+
+  const buffer = record.photoFile ? await readPhoto(record.photoFile) : null;
+  if (!buffer) return res.status(404).end();
+  res.type(photoMimeType(record.photoFile)).send(buffer);
 });
 
 // ---- Missing-child reports / FIRs -----------------------------------------
@@ -1104,7 +1117,7 @@ router.get('/', protectedRoute, (req, res) => {
 });
 
 // Register a missing child. Parents/NGOs file a report; police file a formal FIR.
-router.post('/', protectedRoute, requireRole(...REPORT_CREATE_ROLES), upload.single('photo'), (req, res) => {
+router.post('/', protectedRoute, requireRole(...REPORT_CREATE_ROLES), upload.single('photo'), async (req, res) => {
   const b = req.body || {};
   const validation = validateMissingReport(b, req.file);
   if (validation.errors) return res.status(400).json({ error: validation.errors[0], errors: validation.errors });
@@ -1159,7 +1172,7 @@ router.post('/', protectedRoute, requireRole(...REPORT_CREATE_ROLES), upload.sin
     hasIdentificationProfile: childProfile.hasIdentificationProfile,
     hasVulnerabilityProfile: childProfile.hasVulnerabilityProfile,
     dateOfMissing: b.dateOfMissing || new Date().toISOString(),
-    photoUrl: storePhoto(id, req.file),
+    ...(await storePhoto(id, req.file)),
     photoConsent: req.file ? true : isTruthy(b.photoConsent),
     dataPurpose: b.dataPurpose || 'missing_child_investigation',
     retentionUntil: retentionUntil(REPORT_PHOTO_RETENTION_DAYS),
@@ -1233,7 +1246,7 @@ router.get('/found/status/:id', publicSightingStatusLimit, (req, res) => {
 });
 
 // Public endpoint (no auth): citizen uploads a photo and gets a review-safe receipt.
-router.post('/found', upload.single('photo'), foundReportLimit, (req, res) => {
+router.post('/found', upload.single('photo'), foundReportLimit, async (req, res) => {
   const b = req.body || {};
   const validation = validateFoundReport(b, req.file);
   if (validation.errors) return res.status(400).json({ error: validation.errors[0], errors: validation.errors });
@@ -1244,14 +1257,25 @@ router.post('/found', upload.single('photo'), foundReportLimit, (req, res) => {
     return res.status(400).json({ error: 'Add a photo or enough sighting details to help CWC/Childline review the report' });
   }
   const id = `f_${nanoid(8)}`;
-  const matchResult = rankMatches(req.file?.buffer || null, {
+  const matchResult = await rankMatches(req.file?.buffer || null, {
     gender: b.gender,
     ageApprox: validation.ageApprox,
   });
   const { candidates, engine: matchEngine } = matchResult;
   const canRunMatch = !!req.file;
   const best = candidates[0];
-  const hasStrongMatch = canRunMatch && best && best.score >= 0.6;
+  // Calibrated against real Aarakshak output: photographs of the same person
+  // score 0.48-0.86, different people score below 0.07. 0.6 sat inside the
+  // genuine-match range and routed real matches away from police review.
+  // This only decides whether an officer is shown the candidate - a human still
+  // confirms - so it is set to catch matches, not to be conservative.
+  // Photo quality is recorded for the reviewer but deliberately does NOT gate
+  // routing. Gating on it was tried and rejected: the provider raises
+  // `low_detector_confidence` on plenty of genuine matches too, so the filter
+  // dropped a real one. Surfacing an extra face for a human to reject costs an
+  // officer a minute; suppressing a real match costs a child.
+  const lowQualityPhoto = Boolean(best?.lowQuality || best?.warnings?.length);
+  const hasStrongMatch = canRunMatch && best && best.score >= MATCH_REVIEW_THRESHOLD;
   const matchedScope = hasStrongMatch ? { state: best.report.state || null, district: best.report.district || null } : {};
   const locationScope = inferLocationScope(b);
   const confidentialReporter = isTruthy(b.confidentialReporter);
@@ -1260,7 +1284,7 @@ router.post('/found', upload.single('photo'), foundReportLimit, (req, res) => {
   const idProofNumberMasked = idProofType ? maskProofNumber(b.idProofNumber) : null;
   const fr = {
     id,
-    photoUrl: storePhoto(id, req.file),
+    ...(await storePhoto(id, req.file)),
     foundLocation: b.foundLocation || 'Unknown',
     lat: validation.lat,
     lng: validation.lng,
@@ -1280,6 +1304,8 @@ router.post('/found', upload.single('photo'), foundReportLimit, (req, res) => {
     state: matchedScope.state || locationScope.state,
     district: matchedScope.district || locationScope.district,
     matchedReportId: hasStrongMatch ? best.report.id : null,
+    photoQualityWarnings: best?.warnings?.length ? best.warnings : null,
+    lowQualityPhoto: lowQualityPhoto || null,
     matchScore: best ? best.score : 0,
     status: hasStrongMatch ? 'pending_review' : 'no_match',
     photoConsent: req.file ? true : isTruthy(b.photoConsent),

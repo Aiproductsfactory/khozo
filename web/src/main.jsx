@@ -27,6 +27,7 @@ import PrivacyReview from './dashboard/PrivacyReview.jsx';
 import MisReport from './dashboard/MisReport.jsx';
 import Grievances from './dashboard/Grievances.jsx';
 import CciRegister from './dashboard/CciRegister.jsx';
+import SimulationResults from './dashboard/SimulationResults.jsx';
 import { DASHBOARD_ROUTE_ROLES } from './dashboard/routes.js';
 
 const gated = (route, element) => (
@@ -65,6 +66,7 @@ const router = createBrowserRouter([
       { path: 'mis', element: gated('mis', <MisReport />) },
       { path: 'grievances', element: gated('grievances', <Grievances />) },
       { path: 'network', element: gated('network', <Network />) },
+      { path: 'simulations', element: <RequireRole roles={['super_admin', 'admin']}><SimulationResults /></RequireRole> },
     ],
   },
   { path: '*', element: <Navigate to="/" replace /> },

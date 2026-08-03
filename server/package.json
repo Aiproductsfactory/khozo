@@ -9,11 +9,14 @@
     "start": "node src/index.js"
   },
   "dependencies": {
+    "@aws-sdk/client-rekognition": "^3.1097.0",
+    "@supabase/supabase-js": "^2.111.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.2.0",
-    "nanoid": "^5.0.9"
+    "nanoid": "^5.0.9",
+    "pg": "^8.22.0"
   }
 }
