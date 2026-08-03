@@ -56,40 +56,7 @@ export default function SettingsScreen() {
 
   return (
     <Screen edges={{ top: false, bottom: false }}>
-      <SectionHeader title="Khozo server" />
-      <Card style={{ gap: theme.spacing.lg }}>
-        <TextField
-          label="Server address"
-          icon="server-outline"
-          placeholder="http://192.168.0.151:4000"
-          value={url}
-          onChangeText={(value) => {
-            setUrl(value);
-            setSaved(false);
-            setProbe(null);
-          }}
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType="url"
-          error={error}
-          hint="Use the address of the machine running the Khozo API. A phone cannot reach 'localhost' on your computer."
-        />
-
-        <View style={[styles.row, { gap: theme.spacing.md }]}>
-          <Button label="Test connection" variant="secondary" icon="pulse-outline" loading={testing} onPress={test} style={{ flex: 1 }} />
-          <Button label="Save" icon="checkmark" onPress={save} style={{ flex: 1 }} />
-        </View>
-
-        {probe ? <Banner tone={probe.ok ? 'success' : 'danger'} title={probe.ok ? 'Server reachable' : 'Could not connect'} message={probe.message} /> : null}
-        {saved && !probe ? <Banner tone="success" title="Saved" message={`Requests now go to ${getApiBaseUrl()}`} /> : null}
-
-        <Button label="Reset to default" variant="ghost" size="sm" onPress={reset} style={{ alignSelf: 'flex-start' }} />
-        <Text variant="small" tone="muted">
-          Default: {DEFAULT_API_URL}
-        </Text>
-      </Card>
-
-      <SectionHeader title="Connection" style={{ marginTop: theme.spacing.xl }} />
+      <SectionHeader title="Connection" />
       <Card padded={false}>
         <View style={[styles.statusRow, { padding: theme.spacing.lg, gap: theme.spacing.md }]}>
           <Ionicons name={online ? 'wifi' : 'cloud-offline'} size={20} color={online ? theme.colors.success : theme.colors.danger} />

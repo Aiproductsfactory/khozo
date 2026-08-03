@@ -106,17 +106,6 @@ export default function SignInScreen() {
         style={{ marginTop: theme.spacing.lg }}
       />
 
-      <Text variant="small" tone="muted" style={{ marginTop: theme.spacing.lg, textAlign: 'center' }}>
-        Connecting to {getApiBaseUrl()}
-      </Text>
-      <Button
-        label="Change server address"
-        variant="ghost"
-        size="sm"
-        onPress={() => navigation.navigate('Settings')}
-        style={{ alignSelf: 'center' }}
-      />
-
       <View style={{ height: theme.spacing.xxl }} />
     </Screen>
   );

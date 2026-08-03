@@ -16,6 +16,7 @@ function Nav() {
           <Link to="/services" className="hover:text-white">Services</Link>
           <Link to="/track-case" className="hover:text-white">Track case</Link>
           <Link to="/track-sighting" className="hover:text-white">Track sighting</Link>
+          <a href="https://github.com/swastikkumar-alt/khozo/releases/latest/download/khozo.apk" download className="hover:text-white flex items-center gap-1">📲 Get App</a>
         </div>
         <div className="flex items-center gap-3">
           {user ? (
@@ -71,9 +72,12 @@ function Hero() {
             <Link to="/register" className="btn px-6 py-3 text-base text-white ring-1 ring-white/40 hover:bg-white/10">
               My child is missing
             </Link>
+            <a href="https://github.com/swastikkumar-alt/khozo/releases/latest/download/khozo.apk" download className="btn px-6 py-3 text-base text-white bg-emerald-600 hover:bg-emerald-700 ring-1 ring-emerald-400/40">
+              📲 Download Mobile App (APK)
+            </a>
           </div>
           <p className="mt-5 text-sm text-white/70">
-            Free Android &amp; iOS apps · Web portal · Hosted by Aegis Knowledge Trust
+            Free Android app · Web portal · Hosted by Aegis Knowledge Trust
           </p>
         </div>
 
@@ -253,6 +257,9 @@ function CTA() {
           <Link to="/register" className="btn bg-white px-6 py-3 text-base text-khozo-dark hover:bg-khozo-light">
             Get started
           </Link>
+          <a href="https://github.com/swastikkumar-alt/khozo/releases/latest/download/khozo.apk" download className="btn px-6 py-3 text-base text-white bg-emerald-600 hover:bg-emerald-700 ring-1 ring-emerald-400/40">
+            📲 Download Android App
+          </a>
           <a href="mailto:partnerships@khozo.org" className="btn px-6 py-3 text-base text-white ring-1 ring-white/40 hover:bg-white/10">
             Talk to partnerships
           </a>

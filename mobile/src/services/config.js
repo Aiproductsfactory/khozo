@@ -9,26 +9,14 @@ const STORAGE_KEY = 'khozo.apiBaseUrl';
  * Defaults to the production Cloudflare Worker endpoint so APK builds connect out of the box.
  * Users can override it in Settings without a rebuild.
  */
-export const DEFAULT_API_URL =
-  Constants.expoConfig?.extra?.khozoApiUrl || 'https://khozo.swastik-kumar.workers.dev';
-
-/**
- * Addresses tried once on first launch, in order, when the user has not set one.
- */
-const CANDIDATE_URLS = [
-  DEFAULT_API_URL,
-  'https://khozo.swastik-kumar.workers.dev',
-  'http://192.168.0.151:4000',
-  'http://localhost:4000',
-  'http://10.0.2.2:4000',
-];
+export const DEFAULT_API_URL = 'https://khozo.swastik-kumar.workers.dev';
 
 let currentBaseUrl = DEFAULT_API_URL;
 
 /** Strips trailing slashes and a trailing `/api` so callers can pass either form. */
 export function normaliseBaseUrl(input) {
   const trimmed = String(input || '').trim().replace(/\s+/g, '');
-  if (!trimmed) return '';
+  if (!trimmed) return DEFAULT_API_URL;
   const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
   return withScheme.replace(/\/+$/, '').replace(/\/api$/i, '');
 }
@@ -45,50 +33,12 @@ export function isValidBaseUrl(input) {
 }
 
 export function getApiBaseUrl() {
-  return currentBaseUrl;
+  return DEFAULT_API_URL;
 }
 
-/** Returns true when `${url}/api/health` answers within `timeout` ms. */
-async function probe(url, timeout = 2500) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeout);
-  try {
-    const response = await fetch(`${url}/api/health`, { signal: controller.signal });
-    if (!response.ok) return false;
-    const payload = await response.json();
-    return payload?.ok === true;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/**
- * Resolves the server address at startup: a saved choice always wins, otherwise
- * the candidates are probed once and the first reachable one is remembered.
- */
 export async function loadApiBaseUrl() {
-  try {
-    const stored = await AsyncStorage.getItem(STORAGE_KEY);
-    if (stored && isValidBaseUrl(stored)) {
-      currentBaseUrl = normaliseBaseUrl(stored);
-      return currentBaseUrl;
-    }
-  } catch {
-    // Fall through to detection.
-  }
-
-  const results = await Promise.all(CANDIDATE_URLS.map((candidate) => probe(candidate)));
-  const winner = CANDIDATE_URLS.find((_, index) => results[index]);
-  if (winner) {
-    currentBaseUrl = winner;
-    await AsyncStorage.setItem(STORAGE_KEY, winner).catch(() => {});
-    return currentBaseUrl;
-  }
-
   currentBaseUrl = DEFAULT_API_URL;
-  return currentBaseUrl;
+  return DEFAULT_API_URL;
 }
 
 export async function setApiBaseUrl(input) {
