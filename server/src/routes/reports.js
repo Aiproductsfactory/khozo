@@ -1402,6 +1402,7 @@ router.get('/found/all', protectedRoute, requireRole(...REVIEW_ROLES), (req, res
           parentName: matched.parentName,
           parentPhone: matched.parentPhone,
           status: matched.status,
+          photoUrl: matched.photoUrl || (matched.photoFile ? `/api/reports/photo/${matched.id}` : null),
           retentionUntil: matched.retentionUntil,
           dataPurpose: matched.dataPurpose,
         } : null,

@@ -674,7 +674,15 @@ export const listReports = () =>
     photoUrl: r.photoUrl || (r.photoFile ? `/api/reports/photo/${r.id}` : null),
   }));
 export const findReport = (id) => {
-  const r = db.reports.find((item) => item.id === id);
+  if (!id) return null;
+  const target = String(id).trim();
+  const base = path.basename(target);
+  const r = db.reports.find(
+    (item) =>
+      item.id === target ||
+      item.photoFile === target ||
+      (item.photoFile && path.basename(item.photoFile) === base),
+  );
   if (!r) return null;
   return {
     ...r,
@@ -701,7 +709,15 @@ export const listFoundReports = () =>
     photoUrl: f.photoUrl || (f.photoFile ? `/api/reports/photo/${f.id}` : null),
   }));
 export const findFoundReport = (id) => {
-  const f = db.foundReports.find((item) => item.id === id);
+  if (!id) return null;
+  const target = String(id).trim();
+  const base = path.basename(target);
+  const f = db.foundReports.find(
+    (item) =>
+      item.id === target ||
+      item.photoFile === target ||
+      (item.photoFile && path.basename(item.photoFile) === base),
+  );
   if (!f) return null;
   return {
     ...f,
