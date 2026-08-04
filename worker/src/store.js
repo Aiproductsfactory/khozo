@@ -207,13 +207,13 @@ export async function verifyAuditChain(env) {
 }
 
 // Photo storage methods
-export async function savePhoto(env, filename, buffer, mime) {
-  await savePhotoBlob(env, filename, buffer, mime);
+export async function savePhoto(env, filename, buffer, mime, ctx) {
+  await savePhotoBlob(env, filename, buffer, mime, ctx);
   return filename;
 }
 
-export async function readPhoto(env, filename) {
-  const res = await readPhotoBlob(env, filename);
+export async function readPhoto(env, filename, ctx) {
+  const res = await readPhotoBlob(env, filename, ctx);
   return res ? res.buffer : null;
 }
 

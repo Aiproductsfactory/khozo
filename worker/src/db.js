@@ -1,9 +1,9 @@
-import { Client } from '@neondatabase/serverless';
+import pg from 'pg';
 
-export async function query(env, text, params) {
+export async function query(env, text, params, ctx) {
   let connectionString =
-    env?.DATABASE_URL ||
     env?.HYPERDRIVE?.connectionString ||
+    env?.DATABASE_URL ||
     process.env.DATABASE_URL ||
     '';
 
@@ -13,13 +13,24 @@ export async function query(env, text, params) {
     throw new Error('DATABASE_URL is not configured in Cloudflare Worker environment.');
   }
 
-  const client = new Client({ connectionString });
+  const isHyperdrive = connectionString.includes('hyperdrive.local');
+  const client = new pg.Client({
+    connectionString,
+    ssl: isHyperdrive ? false : { rejectUnauthorized: false },
+    connectionTimeoutMillis: 5000,
+  });
+
   await client.connect();
   try {
     const res = await client.query(text, params);
     return res;
   } finally {
-    await client.end().catch(() => {});
+    const endPromise = client.end().catch(() => {});
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(endPromise);
+    } else {
+      await endPromise;
+    }
   }
 }
 
@@ -75,37 +86,47 @@ function upsertSql(table, record) {
   };
 }
 
-export async function upsertRecord(env, table, record) {
+export async function upsertRecord(env, table, record, ctx) {
   if (!record?.id) return;
   const { text, values } = upsertSql(table, record);
-  await query(env, text, values);
+  await query(env, text, values, ctx);
 }
 
-export async function savePhotoBlob(env, key, buffer, mime) {
+export async function savePhotoBlob(env, key, buffer, mime, ctx) {
   await query(
     env,
     `insert into public.photo_blobs (key, mime, bytes, size_bytes)
      values ($1, $2, $3, $4)
      on conflict (key) do update set mime = excluded.mime, bytes = excluded.bytes, size_bytes = excluded.size_bytes`,
     [key, mime || 'image/jpeg', buffer, buffer.length],
+    ctx,
   );
   return true;
 }
 
-export async function readPhotoBlob(env, key) {
-  const { rows } = await query(env, 'select mime, bytes from public.photo_blobs where key = $1', [key]);
+export async function readPhotoBlob(env, key, ctx) {
+  const clean = String(key || '').trim();
+  const alt = clean.endsWith('.jpg') || clean.endsWith('.png') ? clean : `${clean}.jpg`;
+  const { rows } = await query(
+    env,
+    'select mime, bytes from public.photo_blobs where key = $1 or key = $2 limit 1',
+    [clean, alt],
+    ctx,
+  );
   return rows.length ? { mime: rows[0].mime, buffer: rows[0].bytes } : null;
 }
 
-export async function deletePhotoBlob(env, key) {
-  const { rowCount } = await query(env, 'delete from public.photo_blobs where key = $1', [key]);
+export async function deletePhotoBlob(env, key, ctx) {
+  const { rowCount } = await query(env, 'delete from public.photo_blobs where key = $1', [key], ctx);
   return rowCount > 0;
 }
 
-export async function photoBlobStats(env) {
+export async function photoBlobStats(env, ctx) {
   const { rows } = await query(
     env,
     'select count(*)::int as count, coalesce(sum(size_bytes),0)::bigint as total_bytes from public.photo_blobs',
+    [],
+    ctx,
   );
   return { count: rows[0].count, totalBytes: Number(rows[0].total_bytes) };
 }

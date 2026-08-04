@@ -23,42 +23,73 @@ const sightingSubmitLimit = fixedWindowRateLimit({
   onLimit: auditPublicRateLimit,
 });
 
-// Photo retrieval endpoint
+// Photo retrieval endpoint (cached at Cloudflare Edge)
 app.get('/photo/:key', optionalAuth, async (c) => {
-  const key = c.req.param('key');
-  const user = c.get('user');
+  try {
+    const key = c.req.param('key');
+    const urlString = c.req.url.split('?')[0];
 
-  const isMissingReportPhoto = key.startsWith('r_');
-  const isFoundReportPhoto = key.startsWith('f_');
+    try {
+      if (typeof caches !== 'undefined' && caches.default) {
+        const cached = await caches.default.match(urlString);
+        if (cached) return cached;
+      }
+    } catch {
+      // Ignore edge cache match error
+    }
 
-  if (isMissingReportPhoto) {
-    const report = await findReport(c.env, key);
-    if (report && report.bulletin?.published === true) {
-      // Published public bulletin photo
-    } else {
+    const user = c.get('user');
+    const cleanId = key.replace(/\.(jpg|jpeg|png|webp)$/i, '');
+
+    const isMissingReportPhoto = cleanId.startsWith('r_');
+    const isFoundReportPhoto = cleanId.startsWith('f_');
+
+    if (isMissingReportPhoto) {
+      const report = await findReport(c.env, cleanId);
+      if (report && report.bulletin?.published === true) {
+        // Published public bulletin photo
+      } else {
+        if (!user) return c.json({ error: 'Authentication required' }, 401);
+        if (report && !canAccessReport(user, report)) {
+          return c.json({ error: 'Access denied' }, 403);
+        }
+      }
+    } else if (isFoundReportPhoto) {
       if (!user) return c.json({ error: 'Authentication required' }, 401);
-      if (report && !canAccessReport(user, report)) {
+      const foundReport = await findFoundReport(c.env, cleanId);
+      if (foundReport && !['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'cwc', 'dcpu', 'rpf', 'cci', 'saa', 'jjb', 'state_nodal', 'sara', 'crime_bureau'].includes(user.role)) {
         return c.json({ error: 'Access denied' }, 403);
       }
     }
-  } else if (isFoundReportPhoto) {
-    if (!user) return c.json({ error: 'Authentication required' }, 401);
-    const foundReport = await findFoundReport(c.env, key);
-    if (foundReport && !['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'cwc', 'dcpu', 'rpf', 'cci', 'saa', 'jjb'].includes(user.role)) {
-      return c.json({ error: 'Access denied' }, 403);
+
+    const buf = await readPhoto(c.env, cleanId, c.executionCtx);
+    if (!buf) return c.json({ error: 'Photo not found' }, 404);
+
+    const mime = photoMimeType(key);
+    const arrayBuffer = buf.buffer instanceof ArrayBuffer
+      ? buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
+      : new Uint8Array(buf).buffer;
+
+    const response = new Response(arrayBuffer, {
+      headers: {
+        'Content-Type': mime,
+        'Cache-Control': 'public, max-age=31536000',
+        'Access-Control-Allow-Origin': '*',
+      },
+    });
+
+    try {
+      if (typeof caches !== 'undefined' && caches.default && c.executionCtx) {
+        c.executionCtx.waitUntil(caches.default.put(urlString, response.clone()));
+      }
+    } catch {
+      // Ignore edge cache put error
     }
+
+    return response;
+  } catch (e) {
+    return c.json({ error: e.message, stack: e.stack }, 500);
   }
-
-  const buf = await readPhoto(c.env, key);
-  if (!buf) return c.json({ error: 'Photo not found' }, 404);
-
-  const mime = photoMimeType(key);
-  return new Response(buf, {
-    headers: {
-      'Content-Type': mime,
-      'Cache-Control': 'public, max-age=86400',
-    },
-  });
 });
 
 // Public Bulletins
