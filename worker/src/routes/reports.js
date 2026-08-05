@@ -92,8 +92,7 @@ app.get('/photo/:key', optionalAuth, async (c) => {
   }
 });
 
-// Public Bulletins
-app.get('/bulletins', async (c) => {
+const handlePublicBulletins = async (c) => {
   const reports = await listReports(c.env);
   const published = reports.filter((r) => r.bulletin?.published === true && r.status !== 'found');
   return c.json({
@@ -114,9 +113,9 @@ app.get('/bulletins', async (c) => {
       contacts: r.contacts || [],
     })),
   });
-});
+};
 
-app.get('/bulletins/track/:id', async (c) => {
+const handlePublicTrack = async (c) => {
   const id = c.req.param('id');
   const report = await findReport(c.env, id);
   if (!report || !report.bulletin?.published) {
@@ -137,6 +136,70 @@ app.get('/bulletins/track/:id', async (c) => {
       firNo: report.firNo,
       status: report.status,
       bulletin: report.bulletin,
+    },
+  });
+};
+
+app.get('/bulletins', handlePublicBulletins);
+app.get('/public/bulletins', handlePublicBulletins);
+
+app.get('/bulletins/track/:id', handlePublicTrack);
+app.get('/public/bulletins/track/:id', handlePublicTrack);
+
+// Public Search
+app.get('/public/search', async (c) => {
+  const queryStr = (c.req.query('q') || '').toLowerCase().trim();
+  const stateStr = (c.req.query('state') || '').toLowerCase().trim();
+  const districtStr = (c.req.query('district') || '').toLowerCase().trim();
+  const genderStr = (c.req.query('gender') || '').toLowerCase().trim();
+
+  const reports = await listReports(c.env);
+  const published = reports.filter((r) => r.bulletin?.published === true);
+
+  const results = published.filter((r) => {
+    if (stateStr && (r.state || '').toLowerCase() !== stateStr) return false;
+    if (districtStr && (r.district || '').toLowerCase() !== districtStr) return false;
+    if (genderStr && (r.gender || '').toLowerCase() !== genderStr) return false;
+    if (queryStr) {
+      const matchName = (r.childName || '').toLowerCase().includes(queryStr);
+      const matchFir = (r.firNo || '').toLowerCase().includes(queryStr);
+      const matchLoc = (r.lastSeenLocation || '').toLowerCase().includes(queryStr);
+      return matchName || matchFir || matchLoc;
+    }
+    return true;
+  });
+
+  return c.json({
+    results: results.map((r) => ({
+      id: r.id,
+      childName: r.childName,
+      age: r.age,
+      gender: r.gender,
+      photoUrl: r.photoFile ? `/api/reports/photo/${r.id}` : null,
+      lastSeenLocation: r.lastSeenLocation,
+      lastSeenDate: r.lastSeenDate,
+      state: r.state,
+      district: r.district,
+      station: r.station,
+      firNo: r.firNo,
+      status: r.status,
+      bulletin: r.bulletin,
+    })),
+  });
+});
+
+// Public Status Lookup
+app.get('/public/status/:ref', async (c) => {
+  const ref = c.req.param('ref');
+  const reports = await listReports(c.env);
+  const match = reports.find((r) => r.id === ref || r.firNo === ref);
+  if (!match) return c.json({ error: 'Case reference not found' }, 404);
+  return c.json({
+    status: {
+      id: match.id,
+      firNo: match.firNo,
+      status: match.status,
+      updatedAt: match.anonymizedAt || Date.now(),
     },
   });
 });
