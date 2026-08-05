@@ -62,7 +62,7 @@ export default function Login() {
             dashboard.
           </p>
         </div>
-        <p className="text-sm text-white/70">Aegis School of Data Science · Data Science for Social Good</p>
+        <p className="text-sm text-white/70"><a href="https://aiproductsfactory.com" target="_blank" rel="noopener noreferrer" title="Visit AI Products factory website" className="font-semibold text-lime-200 underline hover:text-white transition-colors">AI Products factory</a> · Data Science for Social Good</p>
       </div>
 
       <div className="flex items-center justify-center p-6">

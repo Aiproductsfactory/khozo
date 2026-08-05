@@ -21,7 +21,7 @@ const registerLimit = fixedWindowRateLimit({
 
 const loginLimit = fixedWindowRateLimit({
   name: 'auth_login',
-  limit: 20,
+  limit: 60,
   key: (c) => clientIp(c),
   onLimit: auditPublicRateLimit,
 });

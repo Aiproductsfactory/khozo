@@ -43,8 +43,8 @@ function Hero() {
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,transparent,rgba(0,0,0,.35))]" />
       <div className="relative mx-auto grid max-w-7xl gap-12 px-6 pb-24 pt-36 lg:grid-cols-2 lg:items-center">
         <div>
-          <p className="inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1 text-xs font-semibold uppercase tracking-widest ring-1 ring-white/25">
-            Data Science for Social Good · Aegis School of Data Science
+          <p className="inline-flex items-center gap-2 rounded-full bg-white/15 px-3.5 py-1 text-xs font-semibold uppercase tracking-widest ring-1 ring-white/25">
+            Data Science for Social Good · <a href="https://aiproductsfactory.com" target="_blank" rel="noopener noreferrer" title="Visit AI Products factory" className="hover:underline text-lime-200 font-bold transition-all">AI Products factory</a>
           </p>
           <h1 className="mt-6 text-5xl font-extrabold leading-[1.05] tracking-tight sm:text-6xl">
             Your 1 click,
@@ -274,7 +274,7 @@ function Footer() {
     <footer className="bg-ink text-gray-400">
       <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-4 px-6 py-10 sm:flex-row">
         <Logo light />
-        <p className="text-sm">An initiative by Aegis School of Data Science, Mumbai — for social good.</p>
+        <p className="text-sm">An initiative by <a href="https://aiproductsfactory.com" target="_blank" rel="noopener noreferrer" title="Visit AI Products factory website" className="font-semibold text-white underline hover:text-lime-300 transition-colors">AI Products factory</a> — for social good.</p>
         <p className="text-sm">khozo.org · © {new Date().getFullYear()}</p>
       </div>
     </footer>

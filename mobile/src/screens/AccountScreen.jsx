@@ -148,8 +148,8 @@ export default function AccountScreen() {
           icon="information-circle-outline"
           iconTone="neutral"
           title="About Khozo"
-          subtitle="Version 1.0.0 · An Aegis School of Data Science initiative"
-          right={null}
+          subtitle="Version 1.0.0 · An AI Products factory initiative"
+          onPress={() => Linking.openURL('https://aiproductsfactory.com')}
         />
       </Card>
 
