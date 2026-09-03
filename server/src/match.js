@@ -206,8 +206,17 @@ async function compareFacesAarakshak(sourceBuf, targetBuf, attempt = 0) {
         clearTimeout(timer);
         return compareFacesAarakshak(sourceBuf, targetBuf, attempt + 1);
       }
+      const detail = await res.text().catch(() => '');
+      // "No detectable face" is an answer, not a failure: this pair cannot
+      // match. Returning null sent the caller to the next tier as though
+      // nothing had been checked.
+      if (/no detectable face|no_face|comparison_failed/i.test(detail)) {
+        return { score: 0, sourceFaces: 0, targetFaces: 0, warnings: ['no_face_detected'] };
+      }
       if (res.status === 401 || res.status === 403) {
         console.warn('[MatchEngine] Aarakshak rejected the API key — check AARAKSHAK_API_KEY.');
+      } else {
+        console.warn(`[MatchEngine] Aarakshak HTTP ${res.status}: ${detail.slice(0, 200)}`);
       }
       return null;
     }
@@ -329,6 +338,43 @@ export async function detectPerson(photoBuf) {
     reason: 'No face-detection provider answered; the photo has not been screened.',
     checkedAt: Date.now(),
   };
+}
+
+/**
+ * Asks each provider a question it must be able to answer, and reports what
+ * came back. See worker/src/match.js for why this exists; this is the Node
+ * build of the same probe. Never returns credentials.
+ */
+export async function probeMatchProviders(photoBuf) {
+  const results = [];
+
+  if (!AARAKSHAK_API_KEY) {
+    results.push({ provider: ENGINES.aarakshak.provider, ok: false, detail: 'AARAKSHAK_API_KEY is not set for this deployment.' });
+  } else {
+    const started = Date.now();
+    const answer = await compareFacesAarakshak(photoBuf, photoBuf);
+    const elapsedMs = Date.now() - started;
+    results.push(
+      answer
+        ? { provider: ENGINES.aarakshak.provider, ok: true, elapsedMs, detail: `answered, self-similarity ${answer.score}, faces ${answer.sourceFaces}` }
+        : { provider: ENGINES.aarakshak.provider, ok: false, elapsedMs, detail: 'No answer — see the server log for the status it returned.' }
+    );
+  }
+
+  if (!rekognitionClient) {
+    results.push({ provider: ENGINES.rekognition.provider, ok: false, detail: 'AWS credentials are not set for this deployment.' });
+  } else {
+    const started = Date.now();
+    const answer = await compareFacesAWS(photoBuf, photoBuf);
+    const elapsedMs = Date.now() - started;
+    results.push(
+      answer
+        ? { provider: ENGINES.rekognition.provider, ok: true, elapsedMs, detail: `answered, self-similarity ${answer.score}` }
+        : { provider: ENGINES.rekognition.provider, ok: false, elapsedMs, detail: 'No answer — check credentials, region and the Rekognition policy.' }
+    );
+  }
+
+  return results;
 }
 
 // ---- Orchestration ---------------------------------------------------------
@@ -462,18 +508,26 @@ export async function rankMatches(photoBuf, hints = {}) {
 
     // Rekognition alone, when Aarakshak did not answer. It is the confirming
     // engine, so its own verdict is held to the same bar it is used to apply.
+    //
+    // Rekognition having looked and found nothing is a different answer from
+    // nothing having looked, so this returns even when no candidate survives —
+    // falling through would report a completed comparison as an absent one.
     const viaRekognition = await rankWithProvider(compareFacesAWS, photoBuf, withPhotos);
     if (viaRekognition?.length) {
+      const confirmed = viaRekognition
+        .filter((c) => c.score >= REKOGNITION_CONFIRM_THRESHOLD)
+        .map((c) => ({ ...c, confirmed: true, secondOpinion: 'sole_engine' }));
       return {
-        candidates: viaRekognition
-          .filter((c) => c.score >= REKOGNITION_CONFIRM_THRESHOLD)
-          .map((c) => ({ ...c, confirmed: true, secondOpinion: 'sole_engine' })),
+        candidates: confirmed,
         engine: {
           ...ENGINES.rekognition,
-          comparedAgainst: withPhotos.length,
+          comparedAgainst: viaRekognition.length,
           elapsedMs: Date.now() - started,
           threshold: REKOGNITION_CONFIRM_THRESHOLD,
           corroborated: false,
+          note: confirmed.length
+            ? ENGINES.rekognition.note
+            : `Compared against ${viaRekognition.length} open case${viaRekognition.length === 1 ? '' : 's'}; none reached the confirmation threshold.`,
         },
       };
     }

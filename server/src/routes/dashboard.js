@@ -8,16 +8,18 @@ import {
   listAudit, verifyAuditChain, updateFoundReport, updateReport,
   addActivity, addAudit, addUser, findUserByEmail,
   listNotifications, markNotificationsRead,
+  readPhoto,
 } from '../store.js';
 import { isPostgres } from '../db.js';
 import { authRequired, passwordChangeRequired, publicUser, requireRole } from '../auth.js';
-import { matchEngineInfo } from '../match.js';
+import { matchEngineInfo, probeMatchProviders } from '../match.js';
 
 export default registerDashboardRoutes(Router(), {
   listReports, listFoundReports, listActivity, listUsers,
   listAudit, verifyAuditChain, updateFoundReport, updateReport,
   addActivity, addAudit, addUser, findUserByEmail,
   listNotifications, markNotificationsRead,
+  readPhoto, probeMatchProviders,
   isPostgres,
   authRequired, passwordChangeRequired, publicUser, requireRole,
   matchEngineInfo,

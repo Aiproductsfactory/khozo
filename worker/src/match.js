@@ -63,24 +63,72 @@ function rankWithHeuristic() {
   return [];
 }
 
+/**
+ * Builds a multipart/form-data body as one buffer, with an explicit boundary.
+ *
+ * The Workers runtime streams a `FormData` body with chunked transfer-encoding
+ * and no `Content-Length`. Aarakshak's parser answered that with HTTP 500 — the
+ * identical request from Node, which sends a measured body, returned a score.
+ * Building the bytes here gives the request a length and makes the two runtimes
+ * send the same thing.
+ */
+function multipartBody(parts) {
+  const boundary = `----khozo${crypto.randomBytes(16).toString('hex')}`;
+  const chunks = [];
+  for (const part of parts) {
+    const disposition = part.filename
+      ? `form-data; name="${part.name}"; filename="${part.filename}"`
+      : `form-data; name="${part.name}"`;
+    const headers =
+      `--${boundary}\r\nContent-Disposition: ${disposition}\r\n` +
+      (part.contentType ? `Content-Type: ${part.contentType}\r\n` : '') +
+      '\r\n';
+    chunks.push(Buffer.from(headers, 'utf8'));
+    chunks.push(Buffer.isBuffer(part.value) ? part.value : Buffer.from(String(part.value), 'utf8'));
+    chunks.push(Buffer.from('\r\n', 'utf8'));
+  }
+  chunks.push(Buffer.from(`--${boundary}--\r\n`, 'utf8'));
+  return { body: Buffer.concat(chunks), contentType: `multipart/form-data; boundary=${boundary}` };
+}
+
 async function compareFacesAarakshak(env, sourceBuf, targetBuf) {
   const apiKey = env?.AARAKSHAK_API_KEY || process.env.AARAKSHAK_API_KEY;
   if (!apiKey || !sourceBuf || !targetBuf) return null;
   const threshold = env?.AARAKSHAK_THRESHOLD || process.env.AARAKSHAK_THRESHOLD || '0.35';
 
   try {
-    const formData = new FormData();
-    formData.append('source_image', new Blob([sourceBuf], { type: 'image/jpeg' }), 'source.jpg');
-    formData.append('target_image', new Blob([targetBuf], { type: 'image/jpeg' }), 'target.jpg');
-    formData.append('threshold', threshold);
+    const { body, contentType } = multipartBody([
+      { name: 'source_image', filename: 'source.jpg', contentType: 'image/jpeg', value: Buffer.from(sourceBuf) },
+      { name: 'target_image', filename: 'target.jpg', contentType: 'image/jpeg', value: Buffer.from(targetBuf) },
+      { name: 'threshold', value: String(threshold) },
+    ]);
 
     const res = await fetch(AARAKSHAK_API_URL, {
       method: 'POST',
-      headers: { 'X-API-Key': apiKey },
-      body: formData,
+      headers: {
+        'X-API-Key': apiKey,
+        'Content-Type': contentType,
+      },
+      // A typed array is a fixed-length body, so the runtime sets Content-Length
+      // itself. Setting it by hand alongside a Node Buffer is the combination
+      // that produced a body the provider answered with HTTP 500.
+      body: new Uint8Array(body),
     });
 
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      // "No detectable face" is an answer, not a failure: this pair cannot
+      // match. Returning null here sent the caller to the next tier as though
+      // nothing had been checked — and, before the fallback was fixed, on to a
+      // scorer that invented a number.
+      if (/no detectable face|no_face|comparison_failed/i.test(detail)) {
+        return { score: 0, sourceFaces: 0, targetFaces: 0, warnings: ['no_face_detected'] };
+      }
+      // Logged, always. A provider that fails silently is indistinguishable
+      // from one that is working and finding nothing.
+      console.warn(`[WorkerMatchEngine] Aarakshak HTTP ${res.status}: ${detail.slice(0, 200)}`);
+      return null;
+    }
     const data = await res.json();
     const raw = data.score ?? data.similarity ?? data.match_confidence;
     if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
@@ -143,6 +191,21 @@ export async function detectPerson(env, photoBuf) {
     };
   }
 
+  // Rekognition second. Screening must not depend on one provider being up:
+  // when the primary was failing, every upload came back "unverified" and went
+  // to the super admin alone, which quietly turns the general alert off.
+  const viaRekognition = await compareFacesRekognition(env, photoBuf, photoBuf);
+  if (viaRekognition) {
+    const found = viaRekognition.warnings?.includes('no_face_detected') ? 0 : viaRekognition.sourceFaces;
+    return {
+      verdict: found > 0 ? 'person' : 'no_person',
+      faces: found,
+      warnings: viaRekognition.warnings || [],
+      provider: ENGINES.rekognition.provider,
+      checkedAt: Date.now(),
+    };
+  }
+
   return {
     verdict: 'unverified',
     faces: null,
@@ -150,6 +213,81 @@ export async function detectPerson(env, photoBuf) {
     reason: 'No face-detection provider answered; the photo has not been screened.',
     checkedAt: Date.now(),
   };
+}
+
+/**
+ * Asks each provider a question it must be able to answer, and reports what
+ * came back. Run from inside the deployment, because a provider reachable from
+ * a laptop can be unreachable from the Worker and the only symptom was matching
+ * quietly falling back to no result.
+ *
+ * Never returns credentials — status and message only.
+ */
+export async function probeMatchProviders(env, photoBuf) {
+  const results = [];
+
+  const aarakshakKey = env?.AARAKSHAK_API_KEY || process.env.AARAKSHAK_API_KEY;
+  if (!aarakshakKey) {
+    results.push({ provider: ENGINES.aarakshak.provider, ok: false, detail: 'AARAKSHAK_API_KEY is not set for this deployment.' });
+  } else {
+    const started = Date.now();
+    try {
+      const { body, contentType } = multipartBody([
+        { name: 'source_image', filename: 'a.jpg', contentType: 'image/jpeg', value: Buffer.from(photoBuf) },
+        { name: 'target_image', filename: 'b.jpg', contentType: 'image/jpeg', value: Buffer.from(photoBuf) },
+        { name: 'threshold', value: String(env?.AARAKSHAK_THRESHOLD || '0.35') },
+      ]);
+      const res = await fetch(AARAKSHAK_API_URL, {
+        method: 'POST',
+        headers: {
+          'X-API-Key': aarakshakKey,
+          'Content-Type': contentType,
+        },
+        body: new Uint8Array(body),
+      });
+      const text = await res.text().catch(() => '');
+      const elapsedMs = Date.now() - started;
+      if (!res.ok) {
+        results.push({ provider: ENGINES.aarakshak.provider, ok: false, status: res.status, elapsedMs, detail: text.slice(0, 300) });
+      } else {
+        let score = null;
+        try {
+          const data = JSON.parse(text);
+          score = data.score ?? data.similarity ?? data.match_confidence ?? null;
+        } catch {
+          // fall through to the unusable-body branch below
+        }
+        results.push(
+          typeof score === 'number'
+            ? { provider: ENGINES.aarakshak.provider, ok: true, elapsedMs, detail: `answered, self-similarity ${score}` }
+            : { provider: ENGINES.aarakshak.provider, ok: false, elapsedMs, detail: `HTTP 200 with no usable score: ${text.slice(0, 200)}` }
+        );
+      }
+    } catch (err) {
+      results.push({ provider: ENGINES.aarakshak.provider, ok: false, elapsedMs: Date.now() - started, detail: `${err.name}: ${err.message}` });
+    }
+  }
+
+  if (!rekognitionConfigured(env)) {
+    results.push({ provider: ENGINES.rekognition.provider, ok: false, detail: 'AWS credentials are not set for this deployment.' });
+  } else {
+    const started = Date.now();
+    const diagnostics = {};
+    const res = await compareFacesRekognition(env, photoBuf, photoBuf, diagnostics);
+    const elapsedMs = Date.now() - started;
+    results.push(
+      res
+        ? { provider: ENGINES.rekognition.provider, ok: true, elapsedMs, detail: `answered, self-similarity ${res.score}` }
+        : {
+            provider: ENGINES.rekognition.provider,
+            ok: false,
+            elapsedMs,
+            detail: diagnostics.detail || 'No answer — check credentials, region and the Rekognition policy.',
+          }
+    );
+  }
+
+  return results;
 }
 
 /**
@@ -274,29 +412,37 @@ export async function rankMatches(env, photoBuf, hints = {}, source = {}) {
       // Aarakshak did not answer. Rekognition alone, held to the same bar it is
       // used to apply as the confirming engine.
       if (rekognitionConfigured(env)) {
-        const viaRekognition = (
+        const answers = (
           await Promise.all(
             comparable.map(async ({ report, targetBuf }) => {
               const res = await compareFacesRekognition(env, photoBuf, targetBuf);
               return res === null ? null : { report, ...res };
             })
           )
-        )
-          .filter(Boolean)
-          .filter((c) => c.score >= confirmThreshold(env))
-          .sort((a, b) => b.score - a.score)
-          .slice(0, 5)
-          .map((c) => ({ ...c, confirmed: true, secondOpinion: 'sole_engine' }));
+        ).filter(Boolean);
 
-        if (viaRekognition.length) {
+        // Rekognition having looked and found nothing is a different answer
+        // from nothing having looked, and the reviewer needs to be told which.
+        // Returning the heuristic's "no biometric provider answered" here would
+        // report a completed comparison as an absent one.
+        if (answers.length) {
+          const confirmed = answers
+            .filter((c) => c.score >= confirmThreshold(env))
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 5)
+            .map((c) => ({ ...c, confirmed: true, secondOpinion: 'sole_engine' }));
+
           return {
-            candidates: viaRekognition,
+            candidates: confirmed,
             engine: {
               ...ENGINES.rekognition,
-              comparedAgainst: withPhotos.length,
+              comparedAgainst: answers.length,
               elapsedMs: Date.now() - started,
               threshold: confirmThreshold(env),
               corroborated: false,
+              note: confirmed.length
+                ? ENGINES.rekognition.note
+                : `Compared against ${answers.length} open case${answers.length === 1 ? '' : 's'}; none reached the confirmation threshold.`,
             },
           };
         }

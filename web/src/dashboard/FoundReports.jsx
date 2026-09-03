@@ -11,12 +11,43 @@ const CWC_OUTCOMES = [
   { id: 'duplicate_or_invalid', label: 'Duplicate / invalid' },
 ];
 
-const FILTERS = [
-  { id: 'needs_review', label: 'Needs review', match: (f) => ['pending_review', 'no_match', 'referred_cwc'].includes(f.status) },
-  { id: 'matched', label: 'Confirmed', match: (f) => ['matched', 'formalized_case', 'cwc_followup_complete'].includes(f.status) },
-  { id: 'closed', label: 'Rejected', match: (f) => f.status === 'rejected' },
-  { id: 'all', label: 'All', match: () => true },
-];
+/**
+ * The two views are different jobs, so they are different pages.
+ *
+ * *Matches* is a biometric decision: a face was compared to an open case and an
+ * officer confirms or rejects it. *Sightings* is intake: a report that matched
+ * nothing, needing welfare follow-up rather than identification. Mixed into one
+ * list, the handful that need a police decision were buried among the many that
+ * need a CWC one.
+ */
+const VIEWS = {
+  matches: {
+    title: 'Matches',
+    blurb:
+      'Sightings a face-comparison engine linked to an open case. A score is a prompt to look, never a decision — you confirm, and only then is a family contacted.',
+    belongs: (f) => Boolean(f.matchedReportId),
+    filters: [
+      { id: 'needs_review', label: 'Awaiting decision', match: (f) => f.status === 'pending_review' },
+      { id: 'matched', label: 'Confirmed', match: (f) => ['matched', 'formalized_case'].includes(f.status) },
+      { id: 'closed', label: 'Rejected', match: (f) => f.status === 'rejected' },
+      { id: 'all', label: 'All', match: () => true },
+    ],
+    empty: 'No sighting has been matched to an open case.',
+  },
+  sightings: {
+    title: 'Sightings',
+    blurb:
+      'Reports from the public that matched no open case. They are welfare intake — Childline and CWC follow-up — not identification decisions.',
+    belongs: (f) => !f.matchedReportId,
+    filters: [
+      { id: 'needs_review', label: 'Needs follow-up', match: (f) => ['no_match', 'referred_cwc'].includes(f.status) },
+      { id: 'matched', label: 'Actioned', match: (f) => ['cwc_followup_complete', 'formalized_case'].includes(f.status) },
+      { id: 'closed', label: 'Closed', match: (f) => f.status === 'rejected' },
+      { id: 'all', label: 'All', match: () => true },
+    ],
+    empty: 'No unmatched sightings are waiting.',
+  },
+};
 
 /**
  * Describes a score against the threshold the system actually routes on (0.35),
@@ -47,7 +78,8 @@ function screeningNote(screening) {
   return null;
 }
 
-export default function FoundReports() {
+export default function FoundReports({ view = 'matches' }) {
+  const config = VIEWS[view] || VIEWS.matches;
   const { user } = useAuth();
   const [rows, setRows] = useState([]);
   const [reportsById, setReportsById] = useState({});
@@ -58,6 +90,8 @@ export default function FoundReports() {
   const [filter, setFilter] = useState('needs_review');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // Photos an officer chose to see despite the screen holding them back.
+  const [revealed, setRevealed] = useState({});
 
   // A notification links to one sighting, so arriving from an alert has to land
   // on that card rather than on a list of twenty-five.
@@ -98,9 +132,12 @@ export default function FoundReports() {
     if (node) node.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [highlightId, rows]);
 
+  // Only the records this view is responsible for.
+  const scoped = useMemo(() => rows.filter(config.belongs), [rows, config]);
+
   const counts = useMemo(
-    () => Object.fromEntries(FILTERS.map((tab) => [tab.id, rows.filter(tab.match).length])),
-    [rows]
+    () => Object.fromEntries(config.filters.map((tab) => [tab.id, scoped.filter(tab.match).length])),
+    [scoped, config]
   );
 
   /**
@@ -108,8 +145,8 @@ export default function FoundReports() {
    * top, so the order is the triage.
    */
   const visible = useMemo(() => {
-    const tab = FILTERS.find((t) => t.id === filter) || FILTERS[0];
-    return rows
+    const tab = config.filters.find((t) => t.id === filter) || config.filters[0];
+    return scoped
       .filter(tab.match)
       .slice()
       .sort((a, b) => {
@@ -118,7 +155,7 @@ export default function FoundReports() {
         if ((b.matchScore || 0) !== (a.matchScore || 0)) return (b.matchScore || 0) - (a.matchScore || 0);
         return (b.createdAt || 0) - (a.createdAt || 0);
       });
-  }, [rows, filter]);
+  }, [scoped, filter, config]);
 
   /** Names the engine that actually ran, rather than asserting a provider. */
   const engineLabel = useMemo(() => {
@@ -193,11 +230,8 @@ export default function FoundReports() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4 border-b border-black/5 pb-4">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">Sightings &amp; matches</h2>
-          <p className="mt-1 max-w-2xl text-sm text-gray-500">
-            Photographs the public sent in, ranked against open cases. A score is a prompt to look,
-            never a decision — you confirm, and only then is a family contacted.
-          </p>
+          <h2 className="text-2xl font-bold tracking-tight">{config.title}</h2>
+          <p className="mt-1 max-w-2xl text-sm text-gray-500">{config.blurb}</p>
         </div>
         {/*
           Names the engine that actually ran, from the sighting data. This
@@ -212,7 +246,7 @@ export default function FoundReports() {
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        {FILTERS.map((tab) => (
+        {config.filters.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setFilter(tab.id)}
@@ -242,10 +276,10 @@ export default function FoundReports() {
       {!loading && !error && visible.length === 0 && (
         <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-12 text-center">
           <p className="text-sm font-semibold text-slate-700">
-            {rows.length === 0 ? 'No sightings reported yet' : 'Nothing in this view'}
+            {scoped.length === 0 ? config.empty : 'Nothing in this view'}
           </p>
           <p className="mt-1 text-sm text-slate-400">
-            {rows.length === 0
+            {scoped.length === 0
               ? 'Reports from the public arrive here the moment they are submitted, and you are alerted.'
               : 'Try another filter.'}
           </p>
@@ -286,17 +320,38 @@ export default function FoundReports() {
                 without ever seeing the face it came from.
               */}
               <div className="mt-4 flex flex-col gap-4 lg:flex-row lg:items-start">
+                {/*
+                  A photograph is shown when the screen found a person in it.
+                  Anything else stays behind a click: the public upload endpoint
+                  receives whatever a camera was pointed at, and a review queue
+                  that renders all of it puts arbitrary images from strangers in
+                  front of officers all day. Nothing is hidden from the reviewer
+                  — it is one click away, with the reason it was held back.
+                */}
                 <div className="h-28 w-28 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
-                  <ProtectedImage
-                    src={f.photoUrl || `/api/reports/photo/${f.id}`}
-                    alt="Reported sighting"
-                    className="h-full w-full object-cover"
-                    fallback={
-                      <div className="grid h-full w-full place-items-center px-2 text-center text-[11px] text-slate-400">
-                        No photo — text report
-                      </div>
-                    }
-                  />
+                  {f.screening && f.screening.verdict !== 'person' && !revealed[f.id] ? (
+                    <button
+                      onClick={() => setRevealed((r) => ({ ...r, [f.id]: true }))}
+                      className="grid h-full w-full place-items-center gap-1 px-2 text-center hover:bg-slate-200"
+                    >
+                      <span className="text-lg">🚫</span>
+                      <span className="text-[10px] font-semibold text-slate-500">
+                        {f.screening.verdict === 'no_person' ? 'No person detected' : 'Not screened'}
+                      </span>
+                      <span className="text-[10px] text-indigo-600 underline">Show anyway</span>
+                    </button>
+                  ) : (
+                    <ProtectedImage
+                      src={f.photoUrl || `/api/reports/photo/${f.id}`}
+                      alt="Reported sighting"
+                      className="h-full w-full object-cover"
+                      fallback={
+                        <div className="grid h-full w-full place-items-center px-2 text-center text-[11px] text-slate-400">
+                          No photo — text report
+                        </div>
+                      }
+                    />
+                  )}
                 </div>
 
                 <div className="min-w-0 flex-1 space-y-2">

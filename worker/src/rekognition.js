@@ -49,13 +49,24 @@ export function rekognitionConfigured(env) {
  * caller must not read as "no match" — the difference decides whether a
  * candidate is withheld for a good reason or for a network fault.
  */
-export async function compareFacesRekognition(env, sourceBuf, targetBuf) {
-  if (!rekognitionConfigured(env) || !sourceBuf?.length || !targetBuf?.length) return null;
+export async function compareFacesRekognition(env, sourceBuf, targetBuf, diagnostics = null) {
+  const note = (detail) => {
+    if (diagnostics) diagnostics.detail = detail;
+    return null;
+  };
 
-  const accessKeyId = env?.AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID;
-  const secretAccessKey = env?.AWS_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY;
-  const sessionToken = env?.AWS_SESSION_TOKEN || process.env.AWS_SESSION_TOKEN || null;
-  const region = env?.AWS_REGION || process.env.AWS_REGION || 'ap-south-1';
+  if (!rekognitionConfigured(env)) return note('AWS credentials are not set for this deployment.');
+  if (!sourceBuf?.length || !targetBuf?.length) return note('One of the images was empty.');
+
+  // Trimmed: a secret pasted into `wrangler secret put` picks up a trailing
+  // newline more often than not, and SigV4 signs the value byte for byte, so
+  // one invisible character produces "the security token is invalid" with
+  // nothing to distinguish it from a wrong key.
+  const clean = (value) => String(value || '').trim();
+  const accessKeyId = clean(env?.AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID);
+  const secretAccessKey = clean(env?.AWS_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY);
+  const sessionToken = clean(env?.AWS_SESSION_TOKEN || process.env.AWS_SESSION_TOKEN) || null;
+  const region = clean(env?.AWS_REGION || process.env.AWS_REGION) || 'ap-south-1';
 
   const host = `${SERVICE}.${region}.amazonaws.com`;
   const target = 'RekognitionService.CompareFaces';
@@ -115,10 +126,10 @@ export async function compareFacesRekognition(env, sourceBuf, targetBuf) {
       if (/InvalidParameterException/.test(text)) {
         return { score: 0, sourceFaces: 0, targetFaces: 0, warnings: ['no_face_detected'] };
       }
-      if (res.status === 403) {
-        console.warn('[Rekognition] request rejected — check AWS credentials and the Rekognition policy.');
-      }
-      return null;
+      // Logged and reported, never swallowed: a signing or permission fault
+      // looks exactly like "no match" to every caller otherwise.
+      console.warn(`[Rekognition] HTTP ${res.status}: ${text.slice(0, 300)}`);
+      return note(`HTTP ${res.status}: ${text.slice(0, 300)}`);
     }
 
     const data = await res.json();
@@ -131,7 +142,7 @@ export async function compareFacesRekognition(env, sourceBuf, targetBuf) {
     };
   } catch (err) {
     console.warn(`[Rekognition] comparison failed${err?.name === 'AbortError' ? ' (timeout)' : ''}:`, err.message);
-    return null;
+    return note(`${err.name}: ${err.message}`);
   } finally {
     clearTimeout(timer);
   }

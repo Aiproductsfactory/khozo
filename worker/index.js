@@ -22,7 +22,7 @@ import {
   fixedWindowRateLimit,
 } from './src/http/express-compat.js';
 import { createRequestStore } from './src/store-sync.js';
-import { detectPerson, matchEngineInfo, rankMatches } from './src/match.js';
+import { detectPerson, matchEngineInfo, probeMatchProviders, rankMatches } from './src/match.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -104,6 +104,7 @@ function buildDeps(env, store, ctx) {
     rankMatches: (photoBuf, hints) =>
       rankMatches(env, photoBuf, hints, { reports: store.listReports(), readPhoto: store.readPhoto }),
     matchEngineInfo: () => matchEngineInfo(env),
+    probeMatchProviders: (photoBuf) => probeMatchProviders(env, photoBuf),
     detectPerson: (photoBuf) => detectPerson(env, photoBuf),
 
     // Multipart is parsed by the router shim, so `upload.single` is a no-op that

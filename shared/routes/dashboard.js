@@ -18,6 +18,7 @@ export default function registerDashboardRoutes(router, deps) {
     listAudit, verifyAuditChain, updateFoundReport, updateReport,
     addActivity, addAudit, addUser, findUserByEmail,
     listNotifications, markNotificationsRead,
+    readPhoto, probeMatchProviders,
     isPostgres,
     authRequired, passwordChangeRequired, publicUser, requireRole,
     matchEngineInfo,
@@ -878,6 +879,45 @@ export default function registerDashboardRoutes(router, deps) {
     const marked = await markNotificationsRead(req.user.id, ids);
     const rows = await listNotifications(req.user.id);
     res.json({ marked: marked.length, unread: rows.filter((n) => !n.readAt).length });
+  });
+
+  /**
+   * Asks each face provider, from inside the runtime that actually calls them.
+   *
+   * A provider can be reachable from a laptop and unreachable from the
+   * deployment — different egress, different environment, different secrets —
+   * and the only symptom was matching quietly falling back. This probes from
+   * where it matters and reports status and message, never credentials.
+   *
+   * It compares an image with itself, so a working provider must report high
+   * similarity and at least one face.
+   */
+  router.get('/match-providers', requireRole('super_admin', 'admin', 'state_nodal'), async (req, res) => {
+    const sample = listReports().find((r) => r.photoFile) || listFoundReports().find((r) => r.photoFile);
+    if (!sample) {
+      return res.json({
+        checkedAt: new Date().toISOString(),
+        providers: [],
+        note: 'No stored photograph to probe with. Register a case with a photo first.',
+      });
+    }
+
+    const photo = await readPhoto(sample.photoFile);
+    if (!photo) {
+      return res.json({
+        checkedAt: new Date().toISOString(),
+        providers: [],
+        note: `Photo ${sample.photoFile} is referenced by a record but absent from storage.`,
+      });
+    }
+
+    const providers = await probeMatchProviders(photo);
+    res.json({
+      checkedAt: new Date().toISOString(),
+      probedWith: sample.photoFile,
+      providers,
+      answering: providers.filter((p) => p.ok).length,
+    });
   });
 
   router.get('/readiness', requireRole(...OPERATIONAL_ROLES), (req, res) => {
