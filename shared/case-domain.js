@@ -410,6 +410,11 @@ function bulletinPayload(report) {
     agency: report.bulletin?.agency || 'Khozo public bulletin desk',
     instructions: 'If you have information, submit a sighting through Khozo or contact 1098 / local police.',
     photoUrl: report.photoUrl || (report.photoFile ? `/api/reports/photo/${report.id}` : null),
+    // Only an active missing case is ever published as a bulletin, but the
+    // status still has to be stated: the public list renders it, and decides
+    // from it whether to offer "submit a sighting" or "track this case".
+    status: report.status,
+    statusLabel: 'Active public bulletin',
   };
 }
 

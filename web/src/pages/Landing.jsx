@@ -79,6 +79,15 @@ function Hero() {
           <p className="mt-5 text-sm text-white/70">
             Free Android app · Web portal · Hosted by Aegis Knowledge Trust
           </p>
+          {/*
+            The app is distributed outside the Play Store, so Android shows an
+            "unknown source" warning. Saying so up front is the difference
+            between an officer installing it and assuming it is unsafe.
+          */}
+          <p className="mt-2 text-xs text-white/50">
+            Android 7.0 or newer. The app installs directly rather than through the Play Store,
+            so Android will ask you to allow installs from your browser once.
+          </p>
         </div>
 
         <div className="relative">

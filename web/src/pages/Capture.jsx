@@ -285,10 +285,14 @@ export default function Capture() {
               <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-khozo-light text-2xl">OK</div>
               <h2 className="mt-3 text-xl font-bold">Thank you - your report was submitted</h2>
               <p className="mt-2 text-sm font-semibold text-khozo">Receipt ID: {result.foundReport.id}</p>
+              {/*
+                The server decides what a reporter may be told, and says it in
+                `review`. It never returns which child was matched — that would
+                hand a stranger a missing child's identity — so this cannot be
+                inferred client-side from a matched id, which is always absent.
+              */}
               <p className="mt-1 text-gray-500">
-                {result.foundReport.matchedReportId
-                  ? 'We found likely matches. The nearest police station has been notified for review.'
-                  : 'No strong match yet - your report is saved and will be checked against new cases.'}
+                {result.review || 'Your report is saved and will be checked against new cases.'}
               </p>
             </div>
 
