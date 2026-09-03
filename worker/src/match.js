@@ -14,6 +14,17 @@ const AARAKSHAK_API_URL = 'https://aarakshak.com/api/v1/compare';
  */
 const AARAKSHAK_TIMEOUT_MS = 12000;
 
+/**
+ * Secrets arrive exactly as they were typed. On 3 September the Aarakshak key
+ * was pasted from a file saved with a UTF-8 byte-order mark, so every request
+ * carried "X-API-Key: ﻿fr_live_..." and the provider answered HTTP 500 to
+ * all of them -- for hours, silently, while the dashboard read "no match".
+ * trim() strips U+FEFF along with ordinary whitespace, which covers the two
+ * ways a copied credential goes wrong. The AWS reads in rekognition.js
+ * already do this; the Aarakshak reads did not.
+ */
+const cleanSecret = (value) => String(value || '').trim();
+
 export const ENGINES = {
   aarakshak: {
     provider: 'aarakshak-live-v1',
@@ -42,7 +53,7 @@ export const ENGINES = {
 };
 
 export function matchEngineInfo(env) {
-  const aarakshakReady = Boolean(env?.AARAKSHAK_API_KEY || process.env.AARAKSHAK_API_KEY);
+  const aarakshakReady = Boolean(cleanSecret(env?.AARAKSHAK_API_KEY || process.env.AARAKSHAK_API_KEY));
   const rekognitionReady = Boolean((env?.AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID) && (env?.AWS_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY));
   const active = aarakshakReady ? ENGINES.aarakshak : rekognitionReady ? ENGINES.rekognition : ENGINES.heuristic;
   return {
@@ -102,7 +113,7 @@ function multipartBody(parts) {
 }
 
 async function compareFacesAarakshak(env, sourceBuf, targetBuf) {
-  const apiKey = env?.AARAKSHAK_API_KEY || process.env.AARAKSHAK_API_KEY;
+  const apiKey = cleanSecret(env?.AARAKSHAK_API_KEY || process.env.AARAKSHAK_API_KEY);
   if (!apiKey || !sourceBuf || !targetBuf) return null;
   const threshold = env?.AARAKSHAK_THRESHOLD || process.env.AARAKSHAK_THRESHOLD || '0.35';
 
@@ -242,7 +253,7 @@ export async function detectPerson(env, photoBuf) {
 export async function probeMatchProviders(env, photoBuf) {
   const results = [];
 
-  const aarakshakKey = env?.AARAKSHAK_API_KEY || process.env.AARAKSHAK_API_KEY;
+  const aarakshakKey = cleanSecret(env?.AARAKSHAK_API_KEY || process.env.AARAKSHAK_API_KEY);
   if (!aarakshakKey) {
     results.push({ provider: ENGINES.aarakshak.provider, ok: false, detail: 'AARAKSHAK_API_KEY is not set for this deployment.' });
   } else {

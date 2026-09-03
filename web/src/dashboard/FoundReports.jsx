@@ -122,13 +122,34 @@ export default function FoundReports({ view = 'matches' }) {
 
   // A sighting queue that only loads once is a queue an officer has to remember
   // to refresh. The whole point of this page is that something arrives while
-  // nobody is looking at it, so it refreshes itself on the same cadence the
-  // alert bell polls on. Cheap: one request every fifteen seconds, and the
-  // interval is torn down with the page.
+  // nobody is looking at it, so it refreshes itself on roughly the cadence the
+  // alert bell polls on.
+  //
+  // Two things distinguish a background refresh from the first load. It never
+  // surfaces an error: a transient failure (this list is the heaviest request
+  // the worker serves, and it has tripped the CPU limit) would otherwise paint a
+  // red banner over a queue that was fine a moment ago and will be fine again
+  // in fifteen seconds; the last good rows stay on screen instead. And the case
+  // register, which changes rarely and costs as much to fetch, refreshes a
+  // third as often rather than in lockstep with the sightings.
+  const refreshSightings = useCallback(() => {
+    api.get('/reports/found/all').then((d) => setRows(d.foundReports || [])).catch(() => {});
+  }, []);
+  const refreshCases = useCallback(() => {
+    api.get('/reports').then((d) => {
+      const m = {};
+      (d.reports || []).forEach((r) => (m[r.id] = r));
+      setReportsById(m);
+    }).catch(() => {});
+  }, []);
   useEffect(() => {
-    const timer = setInterval(load, 15000);
-    return () => clearInterval(timer);
-  }, [load]);
+    const sightings = setInterval(refreshSightings, 15000);
+    const cases = setInterval(refreshCases, 45000);
+    return () => {
+      clearInterval(sightings);
+      clearInterval(cases);
+    };
+  }, [refreshSightings, refreshCases]);
 
   // Arriving from an alert: show every status so the linked sighting cannot be
   // hidden by whichever filter happened to be selected, then scroll to it.
