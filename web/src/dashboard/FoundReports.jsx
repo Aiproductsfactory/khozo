@@ -120,16 +120,34 @@ export default function FoundReports({ view = 'matches' }) {
   }, []);
   useEffect(load, [load]);
 
+  // A sighting queue that only loads once is a queue an officer has to remember
+  // to refresh. The whole point of this page is that something arrives while
+  // nobody is looking at it, so it refreshes itself on the same cadence the
+  // alert bell polls on. Cheap: one request every fifteen seconds, and the
+  // interval is torn down with the page.
+  useEffect(() => {
+    const timer = setInterval(load, 15000);
+    return () => clearInterval(timer);
+  }, [load]);
+
   // Arriving from an alert: show every status so the linked sighting cannot be
   // hidden by whichever filter happened to be selected, then scroll to it.
   useEffect(() => {
     if (highlightId) setFilter('all');
   }, [highlightId]);
 
+  // Scroll to the linked card once, not on every refresh. The queue now
+  // re-fetches every fifteen seconds, and `rows` is a fresh array each time —
+  // without this guard the page would yank back to the highlighted card on
+  // every tick while an officer is reading something further down.
+  const scrolledFor = useRef('');
   useEffect(() => {
-    if (!highlightId || !rows.length) return;
+    if (!highlightId || !rows.length || scrolledFor.current === highlightId) return;
     const node = cardRefs.current[highlightId];
-    if (node) node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (node) {
+      node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      scrolledFor.current = highlightId;
+    }
   }, [highlightId, rows]);
 
   // Only the records this view is responsible for.

@@ -1,7 +1,7 @@
 # Project Khozo
 
 > **Your 1 click — "A missing child can return home"**
-> An initiative by Aegis School of Data Science, Mumbai — *Data Science for Social Good*.
+> An initiative by Aegis School of Data Science & AI, Mumbai — *AI for Social Good*.
 
 A full-stack platform that helps **citizens, NGOs, police, and government** reunite missing
 children (and women / persons) with their families using photo reporting and face-match search.

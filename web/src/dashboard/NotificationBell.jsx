@@ -64,7 +64,14 @@ export default function NotificationBell({ onConnectionChange }) {
   // that prompted the alert gets lost.
   const openAlert = (item) => {
     setOpen(false);
-    if (item.scope?.foundReportId) nav(`/app/matches?id=${encodeURIComponent(item.scope.foundReportId)}`);
+    // Matches renders only sightings that carry a matched case. Sending an
+    // unmatched sighting's alert there lands the officer on an empty page while
+    // the record sits on Sightings. Alerts raised before this shipped carry no
+    // `matched` flag; those keep the old destination.
+    if (item.scope?.foundReportId) {
+      const page = item.scope.matched === false ? '/app/sightings' : '/app/matches';
+      nav(`${page}?id=${encodeURIComponent(item.scope.foundReportId)}`);
+    }
     else if (item.scope?.reportId) nav(`/app/cases?id=${encodeURIComponent(item.scope.reportId)}`);
   };
 

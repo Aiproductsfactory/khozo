@@ -576,6 +576,16 @@ export default function registerReportRoutes(router, deps) {
       photoQualityWarnings: best?.warnings?.length ? best.warnings : null,
       lowQualityPhoto: lowQualityPhoto || null,
       matchScore: best ? best.score : 0,
+      // Both engines' numbers, kept rather than recomputed-and-dropped. The row
+      // deliberately shows the LOWER of the two, so an officer looking at 52%
+      // cannot tell from that number alone whether one engine was conservative
+      // or the two disagreed. These fields are what the compare view reads to
+      // answer that; without them it silently renders a single-engine story.
+      primaryScore: best?.primaryScore ?? null,
+      secondOpinionScore: best?.secondOpinionScore ?? null,
+      secondOpinionProvider: best?.secondOpinionProvider || null,
+      secondOpinion: best?.secondOpinion || null,
+      enginesDisagree: best?.enginesDisagree ?? null,
       // Kept on the record, not just returned once. A reviewer deciding what a
       // score means has to know whether it came from a face comparison or from
       // the non-biometric fallback, and an auditor has to know months later.
@@ -583,6 +593,12 @@ export default function registerReportRoutes(router, deps) {
         provider: matchEngine.provider,
         modelVersion: matchEngine.modelVersion || null,
         biometric: Boolean(matchEngine.biometric),
+        // Survives even when every candidate was withheld, which is the case
+        // where the queue would otherwise read as "nothing was found" when what
+        // actually happened is "two engines looked and would not agree".
+        corroborated: Boolean(matchEngine.corroborated),
+        secondOpinion: matchEngine.secondOpinion || null,
+        comparedAgainst: matchEngine.comparedAgainst ?? null,
       },
       status: hasStrongMatch ? 'pending_review' : 'no_match',
       photoConsent: req.file ? true : isTruthy(b.photoConsent),
@@ -614,13 +630,21 @@ export default function registerReportRoutes(router, deps) {
       metadata: { matchScore: fr.matchScore, status: fr.status, matchEngine, matchAttempted: canRunMatch, confidentialReporter, idProofType, idProofCaptured: fr.idProofVerified },
     });
     const where = `${fr.foundLocation}${fr.state ? `, ${[fr.district, fr.state].filter(Boolean).join(', ')}` : ''}`;
-    if (fr.screening.raisesAlert) {
+    // A confirmed biometric match overrides the screen. The screen is a cheap
+    // guard against uploads with no person in them; two engines agreeing on a
+    // face is a far stronger statement than one probe deciding it saw nobody,
+    // and letting the weaker signal suppress the stronger one means the alert
+    // that matters most is the one nobody receives.
+    if (fr.screening.raisesAlert || hasStrongMatch) {
       notifyAuthorities({
         kind: 'sighting_reported',
         title: hasStrongMatch ? 'Possible match — child spotted' : 'Child spotted',
         body: `A sighting was reported at ${where}.`,
         priority: hasStrongMatch ? 'high' : 'normal',
-        scope: { state: fr.state, district: fr.district, foundReportId: fr.id },
+        // `matched` lets the alert open the page that actually contains the
+        // record: an unmatched sighting is not on the Matches queue, so routing
+        // there by default lands the officer on an empty page.
+        scope: { state: fr.state, district: fr.district, foundReportId: fr.id, matched: hasStrongMatch },
       });
     } else {
       // Screened out, not discarded. One person still looks at it, because the
@@ -1052,6 +1076,35 @@ export default function registerReportRoutes(router, deps) {
       summary: `${sendSms ? 'Confirmed match and alerted parent' : 'Confirmed match'} for ${r.childName}`,
       scope: { state: r.state, district: r.district },
       metadata: { sendSms: !!sendSms },
+    });
+    // A confirmed match is the moment a rescue starts, and until now it raised
+    // no alert at all: the officer who pressed the button knew, and nobody
+    // carrying a phone did. The sighting's location travels in the body,
+    // because that is where somebody has to physically go, and its id travels
+    // in the scope so tapping the notification opens that sighting rather than
+    // a list the officer then has to search.
+    const confirmedSighting = listFoundReports()
+      .filter((f) => f.matchedReportId === r.id)
+      .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))[0];
+    // Where the child was seen, not where the case was filed — a case opened in
+    // one district is routinely closed by a sighting in another, and the rescue
+    // belongs to the sighting. An officer's explicit entry outranks both.
+    const rescueState = confirmedSighting?.state || r.state;
+    const rescueDistrict = confirmedSighting?.district || r.district;
+    const rescueLocation =
+      foundLocation || confirmedSighting?.foundLocation || r.foundLocation || 'location under review';
+    const rescueWhere = `${rescueLocation}${rescueState ? `, ${[rescueDistrict, rescueState].filter(Boolean).join(', ')}` : ''}`;
+    notifyAuthorities({
+      kind: 'match_confirmed',
+      title: 'Match confirmed — rescue required',
+      body: `${r.childName} was confirmed at ${rescueWhere}. Proceed for rescue.`,
+      priority: 'high',
+      scope: {
+        state: rescueState,
+        district: rescueDistrict,
+        reportId: r.id,
+        foundReportId: confirmedSighting?.id,
+      },
     });
     res.json({ report: findReport(r.id) });
   });

@@ -4,6 +4,16 @@ import { compareFacesRekognition, rekognitionConfigured } from './rekognition.js
 
 const AARAKSHAK_API_URL = 'https://aarakshak.com/api/v1/compare';
 
+/**
+ * Per-comparison ceiling on the provider call.
+ *
+ * Comfortably above a normal answer and well inside the phone's own 45-second
+ * abort, so a slow provider degrades to "no biometric answer for this
+ * candidate" — which the pipeline already reports honestly — rather than to a
+ * citizen staring at a spinner until their client gives up.
+ */
+const AARAKSHAK_TIMEOUT_MS = 12000;
+
 export const ENGINES = {
   aarakshak: {
     provider: 'aarakshak-live-v1',
@@ -113,6 +123,12 @@ async function compareFacesAarakshak(env, sourceBuf, targetBuf) {
       // itself. Setting it by hand alongside a Node Buffer is the combination
       // that produced a body the provider answered with HTTP 500.
       body: new Uint8Array(body),
+      // The comparisons run in parallel, so this bounds the whole fan-out at
+      // roughly one slow call rather than the sum of them. Without it a single
+      // hung upstream holds the request open past the 45 seconds at which the
+      // phone gives up — and the citizen is then shown a queued-for-later
+      // receipt for a sighting the server was in the middle of matching.
+      signal: AbortSignal.timeout(AARAKSHAK_TIMEOUT_MS),
     });
 
     if (!res.ok) {

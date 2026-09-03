@@ -56,7 +56,7 @@ function Hero() {
       <div className="relative mx-auto grid max-w-7xl gap-12 px-6 pb-24 pt-36 lg:grid-cols-2 lg:items-center">
         <div>
           <p className="inline-flex items-center gap-2 rounded-full bg-white/15 px-3.5 py-1 text-xs font-semibold uppercase tracking-widest ring-1 ring-white/25">
-            Data Science for Social Good · <a href="https://aiproductsfactory.com" target="_blank" rel="noopener noreferrer" title="Visit AI Products factory" className="hover:underline text-lime-200 font-bold transition-all">AI Products factory</a>
+            AI for Social Good · <a href="https://aiproductsfactory.com" target="_blank" rel="noopener noreferrer" title="Visit AI Products factory" className="hover:underline text-lime-200 font-bold transition-all">AI Products factory</a>
           </p>
           <h1 className="mt-6 text-5xl font-extrabold leading-[1.05] tracking-tight sm:text-6xl">
             Your 1 click,
@@ -103,6 +103,7 @@ function Hero() {
         </div>
 
         <div className="relative">
+          <ProposedTo />
           <div className="rounded-3xl bg-white/10 p-3 shadow-2xl ring-1 ring-white/20 backdrop-blur">
             <div className="rounded-2xl bg-white p-5 text-ink">
               <div className="flex items-center justify-between">
@@ -171,6 +172,124 @@ function How() {
             <p className="mt-2 text-sm text-gray-500">{s.d}</p>
           </div>
         ))}
+      </div>
+    </section>
+  );
+}
+
+/*
+ * Who this is being proposed to.
+ *
+ * The closing disclaimer is load-bearing and must not be dropped: Khozo is a
+ * prototype offered to the Department for consideration, and no pilot has been
+ * approved. A Minister's name and photograph on a live public page would
+ * otherwise read as the Department having adopted the platform, which is a
+ * claim we cannot make on her behalf. The heading kicker was removed at the
+ * team's request; the disclaimer sentence is what keeps the band truthful, so
+ * it stays.
+ *
+ * The portrait is optional by design. If docs hand over an image it renders;
+ * if the file is absent the band still stands on the text, because a broken
+ * image icon next to a Minister's name is worse than no photograph.
+ */
+function ProposedTo() {
+  const [showPortrait, setShowPortrait] = useState(true);
+  return (
+    <div className="mb-4 rounded-3xl bg-white/95 p-4 shadow-2xl ring-1 ring-white/30 backdrop-blur">
+      <div className="flex items-center gap-4">
+        {showPortrait ? (
+          <img
+            src="/assets/minister-wcd-maharashtra.jpg"
+            alt="Hon'ble Smt. Aditi Sunil Tatkare, Cabinet Minister, Department of Women and Child Development, Government of Maharashtra"
+            onError={() => setShowPortrait(false)}
+            className="h-20 w-20 shrink-0 rounded-2xl object-cover ring-1 ring-lime-200"
+          />
+        ) : null}
+        <div className="min-w-0">
+          <p className="text-sm font-bold leading-snug text-ink">
+            Hon&rsquo;ble Smt. Aditi Sunil Tatkare
+          </p>
+          <p className="mt-0.5 text-xs font-medium text-khozo">
+            Cabinet Minister, Women and Child Development
+          </p>
+          <p className="mt-1 text-xs leading-snug text-gray-500">
+            Department of Women and Child Development, Government of Maharashtra — aligned to
+            Mission Vatsalya.
+          </p>
+        </div>
+      </div>
+      {/* Kept even at this size. The band exists to name the Department, and the
+          moment a Minister's photograph sits on a public page the disclaimer is
+          the only thing separating "proposed to" from "endorsed by". */}
+      <p className="mt-3 border-t border-gray-100 pt-2 text-[10px] leading-snug text-gray-400">
+        Khozo is a working prototype offered in the spirit of public service by the Aegis School of
+        Data Science &amp; AI, presented for the Department&rsquo;s direction on a supervised
+        district pilot. It is not a Government-endorsed or Government-operated platform.
+      </p>
+    </div>
+  );
+}
+
+/*
+ * Where a child's face is actually compared, said plainly on the public page.
+ *
+ * Every claim here is checked against the code rather than aspirational:
+ * the primary engine is Aarakshak (worker/src/match.js), the confirming engine
+ * is pinned to ap-south-1 — AWS Mumbai (worker/src/rekognition.js), and a
+ * candidate genuinely is withheld unless both engines agree. A parent handing
+ * over a photograph of their child is owed a straight answer about where it
+ * goes, and a claim on this page that the code did not support would be worse
+ * than saying nothing.
+ */
+function Sovereignty() {
+  return (
+    <section id="sovereignty" className="bg-lime-50/60 py-24">
+      <div className="mx-auto max-w-7xl px-6">
+        <SectionTitle kicker="Data sovereignty" title="A child's face never leaves India">
+          Biometric matching for missing children is run on Indian infrastructure, by an Indian
+          provider — not shipped abroad for processing.
+        </SectionTitle>
+        <div className="mt-14 grid gap-6 md:grid-cols-3">
+          <div className="card p-6">
+            {/* Not a 🇮🇳 flag emoji: Windows ships no regional-indicator glyphs,
+                so every Chrome-on-Windows visitor would see the letters "IN". */}
+            <div className="text-3xl">🛡️</div>
+            <h3 className="mt-4 text-lg font-semibold">Indian face-recognition engine</h3>
+            <p className="mt-2 text-sm text-gray-500">
+              Face matching is performed by{' '}
+              <a
+                href="https://aarakshak.com/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-semibold text-khozo underline hover:text-khozo-dark"
+              >
+                Aarakshak
+              </a>
+              , an Indian face-recognition provider, under Government authorisation.
+            </p>
+          </div>
+          <div className="card p-6">
+            <div className="text-3xl">📍</div>
+            <h3 className="mt-4 text-lg font-semibold">Processed in Mumbai</h3>
+            <p className="mt-2 text-sm text-gray-500">
+              The confirming engine is pinned to the <span className="font-semibold">ap-south-1</span>{' '}
+              (Mumbai) region. Children&rsquo;s photographs are not sent to overseas regions for
+              comparison.
+            </p>
+          </div>
+          <div className="card p-6">
+            <div className="text-3xl">🤝</div>
+            <h3 className="mt-4 text-lg font-semibold">Two engines must agree</h3>
+            <p className="mt-2 text-sm text-gray-500">
+              One engine proposing a face is a lead, not a match. A candidate is shown to an officer
+              only when a second, independent engine confirms it — otherwise it is withheld.
+            </p>
+          </div>
+        </div>
+        <p className="mt-8 text-center text-sm text-gray-500">
+          Photographs are stored against the case record, never on a public screen: guardian
+          contacts, identity numbers, exact addresses and protected photographs stay redacted.
+        </p>
       </div>
     </section>
   );
@@ -305,7 +424,7 @@ function Footer() {
     <footer className="bg-ink text-gray-400">
       <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-4 px-6 py-10 sm:flex-row">
         <Logo light />
-        <p className="text-sm">An initiative by <a href="https://aiproductsfactory.com" target="_blank" rel="noopener noreferrer" title="Visit AI Products factory website" className="font-semibold text-white underline hover:text-lime-300 transition-colors">AI Products factory</a> — for social good.</p>
+        <p className="max-w-md text-sm sm:text-center">An initiative of <span className="font-semibold text-white">Aegis School of Data Science &amp; AI</span> and <a href="https://aiproductsfactory.com" target="_blank" rel="noopener noreferrer" title="Visit AI Products factory website" className="font-semibold text-white underline hover:text-lime-300 transition-colors">AI Products factory</a>, under AI for Social Good.</p>
         <p className="text-sm">khozo.org · © {new Date().getFullYear()}</p>
       </div>
     </footer>
@@ -318,6 +437,7 @@ export default function Landing() {
       <Nav />
       <Hero />
       <How />
+      <Sovereignty />
       <Stakeholders />
       <Pyramid />
       <CTA />
