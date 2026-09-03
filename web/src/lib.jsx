@@ -24,7 +24,7 @@ export const ROLE_LABELS = {
 };
 
 export const ROLE_TAGLINE = {
-  super_admin: 'Government of India / State Govt / Police Commissioner',
+  super_admin: 'State Govt / Police Commissioner',
   admin: 'Asst. Commissioner of Police - jurisdiction view',
   police: 'Police Station - register FIRs and confirm matches',
   sjpu: 'Special Juvenile Police Unit - child-friendly police response and FIR coordination',

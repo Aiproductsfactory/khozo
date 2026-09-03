@@ -361,7 +361,7 @@ function Stakeholders() {
 
 function Pyramid() {
   const layers = [
-    { t: 'Super Admin', d: 'Govt of India · State Govt · Police Commissioner — full national view', w: 'w-full' },
+    { t: 'Super Admin', d: 'State Govt · Police Commissioner — full national view', w: 'w-full' },
     { t: 'Admin', d: 'Asst. Commissioner of Police — jurisdiction view & drill-down', w: 'w-4/5' },
     { t: 'User (Police Station)', d: 'Registers FIRs, confirms matches, alerts parents', w: 'w-3/5' },
     { t: 'Public · Parents · NGOs', d: 'Capture & upload child photos, register missing children', w: 'w-2/5' },

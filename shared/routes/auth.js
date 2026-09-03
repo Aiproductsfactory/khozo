@@ -226,6 +226,39 @@ export default function registerAuthRoutes(router, deps) {
   router.get('/me', authRequired, (req, res) => {
     res.json({ user: publicUser(req.user) });
   });
+
+  // A signed-in user may correct how they are named. Only the two display
+  // fields the header prints; role, jurisdiction and email stay provisioning
+  // decisions. This exists because an account's stored name is otherwise
+  // uneditable through the app -- the only user route provisions new ones --
+  // and a console that announces "National Command Centre" to a State
+  // Department is a name nobody could change without a database session.
+  router.post('/me/profile', authRequired, (req, res) => {
+    const tidy = (value, max) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+    const patch = {};
+    if (req.body?.name !== undefined) {
+      const name = tidy(req.body.name, 80);
+      if (name.length < 2) return res.status(400).json({ error: 'Name must be at least 2 characters' });
+      patch.name = name;
+    }
+    if (req.body?.org !== undefined) patch.org = tidy(req.body.org, 120) || null;
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nothing to update' });
+    const before = { name: req.user.name, org: req.user.org || null };
+    updateUser(req.user.id, patch);
+    const user = { ...req.user, ...patch };
+    addAudit({
+      actorId: req.user.id,
+      actorName: user.name,
+      actorRole: req.user.role,
+      action: 'account.profile_updated',
+      targetType: 'user',
+      targetId: req.user.id,
+      summary: `Updated own display name/organisation`,
+      scope: { state: req.user.jurisdiction?.state || null, district: req.user.jurisdiction?.district || null },
+      metadata: { before, after: { name: user.name, org: user.org || null } },
+    });
+    res.json({ user: publicUser(user) });
+  });
   
   router.post('/change-password', authRequired, (req, res) => {
     const { currentPassword, newPassword } = req.body || {};
