@@ -11,10 +11,11 @@ const DISTRICT_ROLES = ['police', 'sjpu', 'ahtu', 'dcrb', 'dlsa', 'cwc', 'dcpu',
 // District" -- three spellings in one evening). An exact string compare turned
 // each of those into a row the district officer could not see while
 // super_admin could, which is the one officer the row exists for. Compare on a
-// normalised name, and treat the administrative fragments of Greater Mumbai as
-// the single jurisdiction the officers working it already treat it as.
+// normalised name, and fold the two revenue districts of Brihanmumbai into the
+// single jurisdiction their one police commissionerate already treats them as.
+// Navi Mumbai is deliberately NOT folded in: it has its own commissionerate,
+// CWC and DCPU, and sameDistrict() can only ever widen access, never narrow it.
 const DISTRICT_ALIASES = {
-  'navi mumbai': 'mumbai',
   'mumbai suburban': 'mumbai',
   'mumbai city': 'mumbai',
   'greater mumbai': 'mumbai',
