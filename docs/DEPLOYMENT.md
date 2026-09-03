@@ -54,6 +54,20 @@ npm run test:all              # no server, database or network needed
 npx wrangler deploy           # builds web/dist and uploads both
 ```
 
+### The public domain
+
+`wrangler deploy` publishes to `khozo.<subdomain>.workers.dev`. To serve
+`khozo.org`, attach it to the Worker as a **Custom Domain** — Workers & Pages →
+`khozo` → Settings → Domains & Routes → Add → Custom Domain — and again for
+`www.khozo.org`. Cloudflare writes the DNS records and issues the certificate
+itself.
+
+Do not point an `A` record at an IP: there is no origin server to point at. A
+registrar's parked-domain `A` records left in place are the trap here — Cloudflare
+proxies them faithfully and keeps serving the registrar's "Launching Soon" page,
+so the zone looks correctly configured while the site is still a placeholder.
+Delete every `A` record on the apex before adding the custom domain.
+
 ### Hyperdrive: caching must stay disabled
 
 ```bash
@@ -318,13 +332,21 @@ nobody. It passes only if every genuine match outscores the control.
 cd mobile
 
 KHOZO_ENV=production \
-KHOZO_API_URL=https://api.khozo.org \
+KHOZO_API_URL=https://khozo.org \
 KHOZO_VERSION_CODE=1 \
 npx expo prebuild --platform android --clean
 
 cd android && ./gradlew bundleRelease
 # -> app/build/outputs/bundle/release/app-release.aab
 ```
+
+`KHOZO_API_URL` is the Worker's own origin, not a separate API host. The Worker
+serves the site and `/api/*` together, so this is whatever hostname the Worker
+answers on: `https://khozo.org` once the custom domain is attached, and
+`https://khozo.swastik-kumar.workers.dev` — the default in `mobile/app.config.js`
+— until then. There is no `api.khozo.org`. An earlier version of this guide said
+to use one, which would have shipped an app pointing at a hostname that does not
+resolve.
 
 Production builds set `usesCleartextTraffic=false`, enable ProGuard and resource
 shrinking, and fail fast if the API URL is not HTTPS.

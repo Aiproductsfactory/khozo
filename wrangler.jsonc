@@ -6,6 +6,19 @@
   "compatibility_flags": [
     "nodejs_compat"
   ],
+  // khozo.org is attached to this Worker as a Custom Domain rather than pointed
+  // at an IP with an A record: there is no origin server to point at. Cloudflare
+  // creates the DNS records and issues the certificate from this declaration.
+  // A registrar's parked-domain A record left on the apex must be overridden, or
+  // Cloudflare proxies it and keeps serving the placeholder page.
+  "routes": [
+    { "pattern": "khozo.org", "custom_domain": true },
+    { "pattern": "www.khozo.org", "custom_domain": true }
+  ],
+  // Keep the workers.dev URL alive. Declaring "routes" above makes Wrangler
+  // disable workers.dev by default, which would break khozo.<subdomain>.workers.dev
+  // — the fallback API URL the mobile app ships with (mobile/app.config.js).
+  "workers_dev": true,
   "build": {
     "command": "npm run build -w web",
     "cwd": "."
