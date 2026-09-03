@@ -218,14 +218,13 @@ function ProposedTo() {
           </p>
         </div>
       </div>
-      {/* Kept even at this size. The band exists to name the Department, and the
-          moment a Minister's photograph sits on a public page the disclaimer is
-          the only thing separating "proposed to" from "endorsed by". */}
-      <p className="mt-3 border-t border-gray-100 pt-2 text-[10px] leading-snug text-gray-400">
-        Khozo is a working prototype offered in the spirit of public service by the Aegis School of
-        Data Science &amp; AI, presented for the Department&rsquo;s direction on a supervised
-        district pilot. It is not a Government-endorsed or Government-operated platform.
-      </p>
+      {/* The paragraph that stood here — "a working prototype... not a
+          Government-endorsed or Government-operated platform" — was removed at
+          the team's request on 3 September. Nothing on this card now states
+          that Khozo is proposed to the Department rather than adopted by it,
+          and a Minister's photograph beside a Department's name reads as
+          endorsement to a visitor who is told nothing else. Restore a line here
+          the moment anyone asks what the relationship is. */}
     </div>
   );
 }

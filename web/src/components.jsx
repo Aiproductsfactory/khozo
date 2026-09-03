@@ -16,8 +16,25 @@ export function Logo({ light = false, className = '', to = '/' }) {
           <path d="M12 2a1 1 0 0 1 1 1v7h1V4a1 1 0 1 1 2 0v6h1V6a1 1 0 1 1 2 0v8a7 7 0 0 1-7 7h-1a7 7 0 0 1-6.3-3.9L3 16.2A1.5 1.5 0 0 1 5.4 14.4L7 16V5a1 1 0 1 1 2 0v6h1V3a1 1 0 0 1 1-1z" />
         </svg>
       </span>
-      <span className={`text-xl font-extrabold tracking-tight ${light ? 'text-white' : 'text-ink'}`}>
-        KHOZO
+      {/*
+        The name in both scripts, stacked. Khozo is being offered to an Indian
+        Department and used by citizens who read Devanagari first; the English
+        wordmark alone quietly says the platform is for someone else. The
+        Devanagari face is named explicitly because the body stack has no
+        Devanagari coverage — the browser would otherwise pick a fallback that
+        does not match the Latin weight beside it.
+      */}
+      <span className="flex flex-col leading-none">
+        <span className={`text-xl font-extrabold tracking-tight ${light ? 'text-white' : 'text-ink'}`}>
+          KHOZO
+        </span>
+        <span
+          lang="hi"
+          className={`mt-0.5 text-[13px] font-semibold tracking-tight ${light ? 'text-white/75' : 'text-khozo'}`}
+          style={{ fontFamily: "'Noto Sans Devanagari', 'Nirmala UI', 'Mangal', sans-serif" }}
+        >
+          खोज़ो
+        </span>
       </span>
     </Link>
   );
