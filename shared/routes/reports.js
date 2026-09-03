@@ -275,6 +275,32 @@ export default function registerReportRoutes(router, deps) {
   });
 
   /**
+   * One published bulletin, by id — the record behind a shareable case page.
+   *
+   * The list endpoint existed and the single record did not, which meant a
+   * child could be browsed but never linked to: the thing a member of the
+   * public actually does with a missing-child appeal is send it to somebody
+   * else, and there was no address to send.
+   *
+   * Deliberately the same redaction as the list, through the same function, so
+   * a case page can never expose a field the list would have withheld. A case
+   * that is not a published bulletin — unverified intake, anonymised,
+   * recovered, or never published — answers 404 rather than confirming that
+   * the record exists.
+   */
+  router.get('/public/bulletins/:id', publicBulletinLimit, (req, res) => {
+    const report = findReport(req.params.id);
+    const visible =
+      report &&
+      report.status === 'missing' &&
+      report.intakeStatus !== 'pending_verification' &&
+      report.bulletin?.published === true &&
+      !report.anonymizedAt;
+    if (!visible) return res.status(404).json({ error: 'No public bulletin for this case' });
+    res.json({ bulletin: bulletinPayload(report) });
+  });
+
+  /**
    * Aggregate counts for the public landing page.
    *
    * Exists because that page used to display a fixed "10,468 missing / 4,068
@@ -314,10 +340,23 @@ export default function registerReportRoutes(router, deps) {
         ['found', 'closed'].includes(r.status)
       )
     );
+    // Free text over the fields a member of the public actually knows: the
+    // child's name, or the place. Filtering happens here rather than in the
+    // browser because the endpoint caps at 100 records — a client-side filter
+    // would quietly search only the newest hundred and tell nobody, which at
+    // pilot scale looks identical to searching everything.
+    const q = String(req.query.q || '').trim().toLowerCase();
     const state = String(req.query.state || '').trim().toLowerCase();
     const district = String(req.query.district || '').trim().toLowerCase();
     const gender = String(req.query.gender || '').trim().toLowerCase();
     const status = String(req.query.status || '').trim().toLowerCase();
+    if (q) {
+      rows = rows.filter((r) =>
+        [r.childName, r.district, r.state]
+          .filter(Boolean)
+          .some((v) => String(v).toLowerCase().includes(q))
+      );
+    }
     const ageMin = Number(req.query.ageMin);
     const ageMax = Number(req.query.ageMax);
     if (state) rows = rows.filter((r) => String(r.state || '').toLowerCase() === state);

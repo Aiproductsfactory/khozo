@@ -10,6 +10,7 @@ import Register from './pages/Register.jsx';
 import Capture from './pages/Capture.jsx';
 import ChangePassword from './pages/ChangePassword.jsx';
 import Bulletins from './pages/Bulletins.jsx';
+import ChildCase from './pages/ChildCase.jsx';
 import Services from './pages/Services.jsx';
 import TrackSighting from './pages/TrackSighting.jsx';
 import TrackCase from './pages/TrackCase.jsx';
@@ -43,6 +44,9 @@ const router = createBrowserRouter([
   { path: '/register', element: <Register /> },
   { path: '/report', element: <Capture /> },
   { path: '/bulletins', element: <Bulletins /> },
+  // The shareable unit of this product. Kept short and human because it is
+  // typed, pasted and read aloud far more often than it is clicked.
+  { path: '/child/:id', element: <ChildCase /> },
   { path: '/services', element: <Services /> },
   { path: '/track-sighting', element: <TrackSighting /> },
   { path: '/track-case', element: <TrackCase /> },
