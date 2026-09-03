@@ -26,7 +26,8 @@
     "start": "npm run dev",
     "test:images": "node scripts/test-image-pipeline.mjs",
     "db:migrate": "node scripts/migrate-to-postgres.mjs",
-    "db:migrate-photos": "node scripts/migrate-photos.mjs"
+    "db:migrate-photos": "node scripts/migrate-photos.mjs",
+    "db:sightings": "node scripts/purge-test-sightings.mjs"
   },
   "devDependencies": {
     "concurrently": "^10.0.3",
