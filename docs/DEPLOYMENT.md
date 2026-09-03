@@ -5,109 +5,109 @@ how to get the Android app onto Google Play.
 
 ---
 
-## 1. Backend hosting
+## 1. Hosting
 
-### Recommended shape
-
-```
-   Android app  ─┐
-                 ├─► Khozo API (Express, Node 20)  ─►  Supabase Postgres
-   Web dashboard ┘        on Render / Fly / VM              Supabase Storage (photos)
-```
-
-**Supabase provides the database and file storage. It does not run the API.** The
-API is an Express server and needs its own host. Deploying "on Supabase" means
-Supabase Postgres + Storage behind a Node service — Edge Functions are Deno and
-would mean rewriting all 60+ routes, which is not worth doing.
-
-Recommended host: **Render** (Web Service, Node 20, free tier works for a pilot).
-Fly.io or a small VM are equally fine. Whatever you pick must give you:
-
-- HTTPS with a real certificate — the app refuses to build against `http://` in
-  production, and Play will reject plaintext transmission of personal data
-- Environment variables (never commit secrets — see §2)
-- A persistent disk **or** object storage for photos
-
-### Can Cloudflare host the backend?
-
-**The website yes, the API no — and the repo is already set up for exactly that.**
-
-`worker/index.js` serves `web/dist` as static assets with SPA routing, and proxies
-`/api/*` to whatever `API_ORIGIN` points at. That is the correct shape: Cloudflare
-fronts everything, the Express API runs elsewhere.
-
-Cloudflare Workers run V8 isolates, not Node. The API cannot run there as written:
-
-| Dependency | Why it will not run on Workers |
-| --- | --- |
-| `express` | Needs `node:http`; Workers have no HTTP server API |
-| `node:fs` | No filesystem — used by both the data store and photo storage |
-| `multer` | Built on Node streams and `fs` |
-| `bcryptjs` | Runs, but burns CPU time against the Worker limit on every login |
-
-Porting would mean rewriting 60+ routes onto Hono, swapping `multer` for Web
-`FormData`, `fs` photos for R2, and `jsonwebtoken` for `jose`. Weeks of work for
-no benefit over a Node host that costs a few dollars a month.
-
-**Recommended: keep Cloudflare in front.**
+### The shape it actually has
 
 ```
   Android app ─┐
-               ├─► Cloudflare Worker ─┬─► /api/*  → API_ORIGIN (Render/Fly/VM)
-  Browser ─────┘   (khozo.org)        └─► /*      → web/dist (global CDN)
-                                                        │
-                                                        └─► Supabase Postgres + Storage
+               ├─► Cloudflare Worker ─┬─► /api/*  → shared/routes, run on workerd
+  Browser ─────┘  khozo.*.workers.dev └─► /*      → web/dist on the global CDN
+                                              │
+                                              └─► Hyperdrive ─► Postgres
+                                                               (records + photo bytes)
 ```
 
-This gets you HTTPS with a managed certificate (which the production Android build
-requires), DDoS protection and caching in front of the public bulletin endpoints,
-one origin for both clients so there is no CORS to configure, and the ability to
-keep the API host off the public internet.
+One deploy serves the site and the API together. There is no separate backend to
+host, no origin server to keep online, and no CORS between the clients and the
+API because they share an origin.
 
-Deploy:
+This guide previously described an Express service on Render with the Worker
+proxying `/api/*` to it via `API_ORIGIN`. That is no longer the shape, and
+`API_ORIGIN` is no longer read by anything.
 
-```bash
-npx wrangler deploy                                    # site + proxy worker
-npx wrangler secret put API_ORIGIN                     # e.g. https://khozo-api.onrender.com
-```
+### How the API runs on Workers
 
-Then point the mobile app at the Cloudflare origin, not the API host directly:
+The route handlers live in `shared/routes/` and are written against Express's
+`(req, res)` contract. The Worker supplies that contract itself rather than
+carrying a second, hand-ported copy of the routes:
 
-```bash
-KHOZO_ENV=production KHOZO_API_URL=https://khozo.org npx expo prebuild -p android
-```
-
-**What about Cloudflare Pages?** Same answer, same reason. Pages Functions execute
-on the identical `workerd` runtime as Workers — no `node:http`, no `node:fs`. Pages
-is the older way of doing what `wrangler.jsonc` already does via Workers Static
-Assets, so switching would be a step backwards, not a way to host the API.
-
-If you would rather keep everything on Cloudflare, **Cloudflare Containers** runs a
-real Node image and would take the Express app unmodified — but it is priced well
-above a small Render/Fly instance for this workload.
-
-### Why not the current setup
-
-`server/src/store.js` keeps everything in one JSON file rewritten on every save.
-That is fine for a demo and unacceptable in production:
-
-| Problem | Consequence |
+| Node dependency | What the Worker uses instead |
 | --- | --- |
-| Whole file rewritten per write | Two concurrent writes silently lose one |
-| No transactions | A crash mid-write truncates the entire database |
-| No indexes | Every query is a full scan |
-| Single instance only | Cannot scale or run zero-downtime deploys |
+| `express` router | `worker/src/http/router.js` — path params, middleware chain, `res.status().json()` |
+| `multer` | Web `FormData`, parsed by the same shim into `req.file` |
+| `jsonwebtoken` | `jose` |
+| in-memory store | `worker/src/store-sync.js` — the dataset hydrated per request over Hyperdrive |
+| `@aws-sdk/client-rekognition` | `worker/src/match.js`, a fetch-based provider client |
 
-Photos were also held in memory; that is **fixed** — they now persist to
-`server/data/uploads/` and survive restarts. On a host with an ephemeral
-filesystem they still need to move to Supabase Storage.
+`server/` still runs the same handlers on Node for local development, and
+`npm run smoke:worker` runs the full API contract through the Worker's stack on
+Node so the two cannot drift apart unnoticed. They did once: the Worker had
+fallen about forty endpoints behind, and the public sighting upload — the flow
+the product exists for — answered 404 in production while every test passed.
+
+### Deploying
+
+```bash
+node scripts/migrate.mjs      # idempotent; safe to re-run
+npm run test:all              # no server, database or network needed
+npx wrangler deploy           # builds web/dist and uploads both
+```
+
+### Hyperdrive: caching must stay disabled
+
+```bash
+npx wrangler hyperdrive get <id>                       # caching.disabled must be true
+npx wrangler hyperdrive update <id> --caching-disabled
+```
+
+Hyperdrive caches read queries by default. With caching on, a sighting reported
+by a citizen was written to Postgres and then missing from every officer's
+review queue, because the dashboards read a cached result set that predated it.
+The row was in the database; the API returned a list without it.
+
+Caching is a reasonable trade for a read-heavy public site. It is not one for a
+queue where a row that arrives late is a child nobody is looking for yet.
+
+### Storage
+
+Records and photo bytes both live in Postgres — photos in `photo_blobs`, fetched
+by key on demand and never hydrated with the rest of the dataset. Nothing is
+written to a local filesystem, which is what makes the Worker viable and what
+stops a redeploy destroying the photographs attached to open cases.
+
+The per-request hydration is the deliberate trade in `worker/src/store-sync.js`:
+six SELECTs per request buys synchronous reads for the jurisdiction-scoping code,
+which is the code least worth rewriting in a child-protection system. It is
+right at district or state pilot volume, and needs to become real queries past
+roughly 10^5 cases.
+
+### Local development
+
+```bash
+npm run dev     # Express API on :4000, Vite on :5173
+```
+
+With no `DATABASE_URL` the API uses a seeded JSON file, so a clean checkout runs
+with no setup at all.
+
 
 ### Running the migration
 
 ```bash
-cp .env.example .env          # then fill in DATABASE_URL
+cp .env.example .env                    # then fill in DATABASE_URL
+node scripts/migrate.mjs --dry-run      # list the SQL files that would run
+node scripts/migrate.mjs                # apply every file in server/sql, in order
+```
+
+Each SQL file is idempotent (`create table if not exists`, `add column if not
+exists`), so re-running is a no-op and there is no migration ledger to keep in
+sync with the database. Run it before any deploy that adds a table or column.
+
+To move an existing JSON-file dataset into Postgres for the first time:
+
+```bash
 node scripts/migrate-to-postgres.mjs --check     # connectivity + which tables exist
-node scripts/migrate-to-postgres.mjs --schema    # apply server/sql/001_schema.sql
 node scripts/migrate-to-postgres.mjs             # copy db.json into Postgres
 node scripts/migrate-to-postgres.mjs --verify    # row counts
 ```
@@ -145,38 +145,47 @@ Consequences worth knowing before you scale:
 | **Crash window** | Writes queued in the last few milliseconds can be lost on a hard crash. `SIGINT`/`SIGTERM` flush first, so ordinary deploys do not lose data. |
 | **Memory** | The full dataset is resident. Fine to ~10⁵ cases. |
 
-### Remaining: photo storage
+### Photo storage
 
-Every data access already funnels through `store.js`, which is what makes this
-tractable — the route handlers do not need to change.
+Photographs are **in Postgres**, in `photo_blobs`, keyed by the record they
+belong to. They are fetched by key on demand and are never part of the dataset
+hydration, so image bytes never sit in memory alongside the case records.
 
-1. Create the Postgres schema (`users`, `reports`, `found_reports`, `grievances`,
-   `activity`, `audit`) with real columns, not a `jsonb` blob.
-2. Reimplement the exported functions in `store.js` against Supabase.
-   `addAudit` must stay append-only and keep the hash chain.
-3. Move photo read/write (`savePhoto` / `readPhoto` / `deletePhoto`) to a
-   **private** Supabase Storage bucket; serve via signed URLs from the API so the
-   jurisdiction check in `GET /api/reports/photo/:key` still applies.
-4. Keep RLS enabled with **no policies**, and connect using the `service_role`
-   key. Authorisation stays in Express, where the 16-role jurisdiction logic
-   already lives. Do not expose PostgREST to clients.
+This is why the Worker is viable at all, and why a redeploy cannot destroy the
+photographs attached to open cases — there is no local filesystem involved on
+either runtime.
 
-> RLS with no policies denies everything to the anon key. That is deliberate:
-> the anon key is public by design, so it must be able to reach nothing.
+Access still goes through `GET /api/reports/photo/:key`, which applies the
+jurisdiction check. A photo is served without a token **only** when an officer
+has deliberately published that case as a public bulletin; anything else needs
+a token and a jurisdiction that covers the case.
+
+RLS is enabled on every table with **no policies**, and the API connects with
+the service role, which bypasses RLS. That is deliberate: the anon key is public
+by design, so it must be able to reach nothing. Authorisation lives in
+`shared/scope.js`, where the 18-role jurisdiction logic already is. Do not
+expose PostgREST to clients.
 
 ### Required environment variables
 
+The Node build reads these from `.env`; the Worker reads them from its own
+secrets (`npx wrangler secret put <NAME>`).
+
 ```bash
 NODE_ENV=production
+DATABASE_URL=postgresql://...           # unset locally to use the JSON file store
 KHOZO_JWT_SECRET=<64+ random chars>     # server refuses to boot without it
-SUPABASE_URL=https://<project>.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=<service role key>   # server-side only, never in the app
+KHOZO_EXPORT_SIGNING_KEY=<random>       # signs case handoff exports
 AARAKSHAK_API_KEY=<key>                 # optional: tier 1 face matching
-AWS_ACCESS_KEY_ID=...                   # optional: tier 2 fallback
+AWS_ACCESS_KEY_ID=...                   # optional: tier 2 fallback (Node build only)
 AWS_SECRET_ACCESS_KEY=...
 AWS_REGION=ap-south-1
-KHOZO_EXPORT_SIGNING_KEY=<random>       # signs case handoff exports
+KHOZO_SMS_GATEWAY_URL=...               # required for public registration OTPs
+KHOZO_SMS_API_KEY=...
 ```
+
+The Worker reaches Postgres through its Hyperdrive binding rather than
+`DATABASE_URL`, so that one is only needed by the Node build and the scripts.
 
 ---
 
@@ -189,6 +198,11 @@ Previously committed to the repo and **must be treated as compromised**:
 - JWT signing secret default — the server now refuses to start in production
   without `KHOZO_JWT_SECRET`, because a known secret lets anyone mint a
   `super_admin` token
+- **The Postgres password**, in plaintext in
+  `scripts/test-supabase-basic-auth.mjs`, committed in `baae704` on a public
+  repository. The file is deleted, but deletion does not remove it from git
+  history: **rotate the database password.** Until then, anyone who reads the
+  repository history holds the credentials to the case database.
 
 All 18 seeded accounts share the password `khozo123` and their bcrypt hashes were
 publicly readable for a period. **Rotate every password before go-live** and
