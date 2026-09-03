@@ -18,7 +18,7 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 
-import { query, upsertRecord, savePhotoBlob, readPhotoBlob, photoBlobStats } from './db.js';
+import { query, upsertRecord, upsertMany, savePhotoBlob, readPhotoBlob, photoBlobStats } from './db.js';
 
 export function photoMimeType(filename) {
   const ext = path.extname(filename || '').toLowerCase();
@@ -65,7 +65,7 @@ function auditHash(row, prevHash = row.prevHash || null) {
 const norm = (v) => String(v || '').trim().toLowerCase();
 
 /** Real Postgres access. Tests substitute this to run without a database. */
-const POSTGRES = { query, upsertRecord, savePhotoBlob, readPhotoBlob, photoBlobStats };
+const POSTGRES = { query, upsertRecord, upsertMany, savePhotoBlob, readPhotoBlob, photoBlobStats };
 
 /**
  * Hydrates the dataset and returns the synchronous store the shared routes use,
@@ -276,10 +276,8 @@ export async function createRequestStore(env, ctx, io = POSTGRES) {
     for (const table of order) {
       const rows = dirty.get(table);
       if (!rows?.size) continue;
-      for (const record of rows.values()) {
-        // eslint-disable-next-line no-await-in-loop
-        await io.upsertRecord(env, table, record, ctx);
-      }
+      // eslint-disable-next-line no-await-in-loop
+      await io.upsertMany(env, table, [...rows.values()], ctx);
     }
     dirty.clear();
   }

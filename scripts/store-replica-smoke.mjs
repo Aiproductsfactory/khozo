@@ -29,10 +29,12 @@ function fakeIo(seed = {}) {
     audit: seed.audit || [],
   };
   const writes = [];
+  const statements = [];
   const photos = new Map();
 
   return {
     writes,
+    statements,
     photos,
     async query(_env, sql) {
       const table = /from public\.(\w+)/.exec(sql)?.[1];
@@ -40,6 +42,11 @@ function fakeIo(seed = {}) {
     },
     async upsertRecord(_env, table, record) {
       writes.push({ table, id: record.id });
+      statements.push({ table, rows: 1 });
+    },
+    async upsertMany(_env, table, records) {
+      for (const record of records) writes.push({ table, id: record.id });
+      statements.push({ table, rows: records.length });
     },
     async savePhotoBlob(_env, key, buffer, mime) {
       photos.set(key, { buffer, mime });
@@ -118,11 +125,26 @@ check('the new sighting is written', written.includes('found_reports:f_2'));
 check('both audit rows are written', io.writes.filter((w) => w.table === 'audit').length === 2);
 check('untouched records are not rewritten', !written.includes('reports:r_2') && !written.includes('grievances:g_1'));
 
+// Ordering is checked on this flush, before the fan-out below adds more.
 const lastTable = io.writes[io.writes.length - 1]?.table;
 check('audit rows are written last', lastTable === 'audit', `last write was ${lastTable}`);
 
+// Reporting a sighting alerts every authority at once. Written a row at a time
+// that is one connection and round trip per officer, on the most time-critical
+// request in the product.
+for (let i = 0; i < 12; i += 1) {
+  store.addNotification({ userId: `u_${i}`, kind: 'sighting_reported', title: 'Child spotted', body: 'Seen at the bus stand.' });
+}
 await flush();
-check('a second flush writes nothing', io.writes.filter((w) => w.table === 'reports').length === 2);
+const notificationStatements = io.statements.filter((s) => s.table === 'notifications');
+check(
+  'a twelve-officer alert fan-out is one statement, not twelve round trips',
+  notificationStatements.length === 1 && notificationStatements[0].rows === 12,
+  `${notificationStatements.length} statement(s)`
+);
+
+await flush();
+check('a further flush writes nothing new', io.writes.filter((w) => w.table === 'reports').length === 2);
 
 const failed = checks.filter((c) => !c.ok);
 console.log(`\n--- ${checks.length - failed.length}/${checks.length} checks passed ---`);

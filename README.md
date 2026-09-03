@@ -73,6 +73,7 @@ Runs with no server, database or network:
 | `test:coverage`       | every API path the web and mobile clients call is actually served    |
 | `smoke:api`           | the full API contract against the Express runtime                    |
 | `smoke:worker`        | the same contract against the Worker's router and middleware         |
+| `smoke:alerts`        | a reported sighting reaches every authority's queue and alert inbox  |
 | `smoke:store`         | the Worker's per-request store replica, including the audit chain    |
 | `smoke:web-routes`    | dashboard route guards match the roles they claim                    |
 | `smoke:pwa`           | the service worker and offline sighting queue                        |
@@ -84,9 +85,31 @@ npm run test:accounts -- --api https://khozo.swastik-kumar.workers.dev   # every
 npm run test:images                                                       # face-match pipeline; see test-assets/faces/README.md
 ```
 
+## When a child is spotted
+
+The flow the whole platform exists for, and the one worth understanding before
+changing anything near it:
+
+1. A citizen taps **I spotted a child** on the web app or in the field app, and
+   attaches a photo. No account, no login.
+2. The photo is compared against every open case with a stored photograph.
+3. **Every authority account is alerted immediately** — police, SJPU, AHTU, CWC,
+   DCPU, RPF, CCI, SAA, JJB, DLSA, the state and national desks, and registered
+   NGOs. The alert says where and when; it never names the child, and opening
+   the record behind it still goes through the ordinary jurisdiction rules.
+   Parents are not alerted: they hear about their own child from an officer.
+4. The sighting lands in the review queue of the officers whose jurisdiction it
+   falls in — or, if the reporter gave no location, in **every** review queue,
+   because an unrouted report has to reach someone.
+5. An officer confirms, rejects or refers it. Only then is the family contacted.
+
+The reporter gets a receipt id and can track the status publicly, and is never
+told which child was matched.
+
 ## Deploy to Cloudflare Workers
 
 ```bash
+node scripts/migrate.mjs   # idempotent; apply before the first deploy of a change
 npx wrangler deploy
 ```
 
@@ -99,6 +122,15 @@ Worker needs a Hyperdrive binding to the Postgres instance (already in
 npx wrangler secret put KHOZO_JWT_SECRET
 npx wrangler secret put KHOZO_EXPORT_SIGNING_KEY
 npx wrangler secret put AARAKSHAK_API_KEY
+```
+
+**Hyperdrive query caching must stay off.** With it on, a sighting is written to
+Postgres and then missing from every dashboard, because the reads come back from
+a cache that predates it:
+
+```bash
+npx wrangler hyperdrive get <id>                      # caching.disabled must be true
+npx wrangler hyperdrive update <id> --caching-disabled
 ```
 
 ### Demo logins (seeded)

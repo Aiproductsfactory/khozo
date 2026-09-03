@@ -20,6 +20,14 @@
   },
   // Set API_ORIGIN as a Worker variable/secret in Cloudflare after hosting the Express API.
   // Example value: https://api.example.gov
+  // Query caching MUST stay disabled on this Hyperdrive config:
+  //   npx wrangler hyperdrive update <id> --caching-disabled
+  //
+  // With it on, a sighting submitted by a citizen was written to Postgres and
+  // then absent from every officer's review queue, because the dashboards read
+  // a cached result set that predated it. Caching is a reasonable trade for a
+  // read-heavy site; it is not one for a queue where a delayed row is a child
+  // nobody is looking for yet. Verify with `wrangler hyperdrive get <id>`.
   "hyperdrive": [
     {
       "binding": "HYPERDRIVE",

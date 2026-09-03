@@ -99,6 +99,45 @@ export async function upsertRecord(env, table, record, ctx) {
   await query(env, text, values, ctx);
 }
 
+/**
+ * Writes many rows of one table in a single statement.
+ *
+ * Every query here opens its own connection, so a row-at-a-time loop costs a
+ * round trip each. Reporting a sighting alerts every authority account at once,
+ * which made the most time-critical request in the product the one that paid
+ * that cost most: one insert per officer, in series, before the citizen saw
+ * their receipt.
+ */
+export async function upsertMany(env, table, records, ctx) {
+  const rows = records.filter((r) => r?.id);
+  if (!rows.length) return;
+  if (rows.length === 1) return upsertRecord(env, table, rows[0], ctx);
+
+  const names = Object.keys({ ...TABLES[table](rows[0]), data: rows[0] });
+  const values = [];
+  const tuples = rows.map((record) => {
+    const cols = { ...TABLES[table](record), data: record };
+    const placeholders = names.map((name) => {
+      values.push(cols[name]);
+      return `$${values.length}`;
+    });
+    return `(${placeholders.join(', ')})`;
+  });
+
+  const conflict =
+    table === 'audit'
+      ? 'do nothing'
+      : `do update set ${names.filter((n) => n !== 'id').map((n) => `${n} = excluded.${n}`).join(', ')}`;
+
+  await query(
+    env,
+    `insert into public.${table} (${names.join(', ')}) values ${tuples.join(', ')}
+     on conflict (id) ${conflict}`,
+    values,
+    ctx,
+  );
+}
+
 export async function savePhotoBlob(env, key, buffer, mime, ctx) {
   await query(
     env,
