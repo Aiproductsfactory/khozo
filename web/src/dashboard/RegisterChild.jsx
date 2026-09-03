@@ -38,6 +38,24 @@ const YES_NO_UNKNOWN = [
   { id: 'yes', label: 'Yes' },
   { id: 'no', label: 'No' },
 ];
+
+/**
+ * One labelled text input.
+ *
+ * Module scope, deliberately. This was declared inside `RegisterChild`, so
+ * every keystroke produced a new component *type*: React unmounted the old
+ * input and mounted a new one, the browser had nothing to keep focus on, and
+ * the caret jumped out of the field after a single character. Registering a
+ * child's name was effectively impossible.
+ */
+function Field({ label, k, type = 'text', req, form, set, ...rest }) {
+  return (
+    <div>
+      <label className="label">{label}{req && ' *'}</label>
+      <input className="field" type={type} value={form[k]} onChange={set(k)} required={req} {...rest} />
+    </div>
+  );
+}
 const DECLARATION_METHODS = [
   { id: 'digital', label: 'Digital self-declaration' },
   { id: 'verbal_recorded', label: 'Verbal declaration recorded by officer' },
@@ -114,13 +132,6 @@ export default function RegisterChild() {
     }
   };
 
-  const Field = ({ label, k, type = 'text', req, ...rest }) => (
-    <div>
-      <label className="label">{label}{req && ' *'}</label>
-      <input className="field" type={type} value={form[k]} onChange={set(k)} required={req} {...rest} />
-    </div>
-  );
-
   return (
     <div className="mx-auto max-w-3xl space-y-5">
       <div>
@@ -178,44 +189,44 @@ export default function RegisterChild() {
         </label>
 
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Child name" k="childName" req />
-          <Field label="Child Aadhar no." k="childAadhar" />
+          <Field form={form} set={set} label="Child name" k="childName" req />
+          <Field form={form} set={set} label="Child Aadhar no." k="childAadhar" />
           <div>
             <label className="label">Gender</label>
             <select className="field" value={form.gender} onChange={set('gender')}>
               <option>Male</option><option>Female</option>
             </select>
           </div>
-          <Field label="Date of missing" k="dateOfMissing" type="date" />
-          <Field label="Age" k="age" type="number" />
-          <Field label="Height (cm)" k="height" type="number" />
-          <Field label="Weight (kg)" k="weight" type="number" />
-          {isPolice && <Field label="FIR no." k="firNo" placeholder="auto-generated if blank" />}
+          <Field form={form} set={set} label="Date of missing" k="dateOfMissing" type="date" />
+          <Field form={form} set={set} label="Age" k="age" type="number" />
+          <Field form={form} set={set} label="Height (cm)" k="height" type="number" />
+          <Field form={form} set={set} label="Weight (kg)" k="weight" type="number" />
+          {isPolice && <Field form={form} set={set} label="FIR no." k="firNo" placeholder="auto-generated if blank" />}
         </div>
 
         <div className="border-t border-black/5 pt-5">
           <h3 className="mb-3 font-semibold">Guardian / parent &amp; address</h3>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Guardian / parent name" k="parentName" />
-            <Field label="Mobile no." k="parentPhone" />
-            <Field label="Email" k="parentEmail" type="email" />
-            <Field label="Address" k="address" />
-            <Field label="State" k="state" />
-            <Field label="District" k="district" />
-            <Field label="Zip code" k="zip" />
+            <Field form={form} set={set} label="Guardian / parent name" k="parentName" />
+            <Field form={form} set={set} label="Mobile no." k="parentPhone" />
+            <Field form={form} set={set} label="Email" k="parentEmail" type="email" />
+            <Field form={form} set={set} label="Address" k="address" />
+            <Field form={form} set={set} label="State" k="state" />
+            <Field form={form} set={set} label="District" k="district" />
+            <Field form={form} set={set} label="Zip code" k="zip" />
           </div>
         </div>
 
         <div className="border-t border-black/5 pt-5">
           <h3 className="mb-3 font-semibold">Identification &amp; vulnerability profile</h3>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Complexion" k="complexion" />
-            <Field label="Build" k="build" />
-            <Field label="Hair" k="hair" />
-            <Field label="Clothing when last seen" k="clothing" />
-            <Field label="Languages / dialect" k="languages" />
-            <Field label="Birth mark" k="birthMark" />
-            <Field label="Identification mark" k="identificationMark" />
+            <Field form={form} set={set} label="Complexion" k="complexion" />
+            <Field form={form} set={set} label="Build" k="build" />
+            <Field form={form} set={set} label="Hair" k="hair" />
+            <Field form={form} set={set} label="Clothing when last seen" k="clothing" />
+            <Field form={form} set={set} label="Languages / dialect" k="languages" />
+            <Field form={form} set={set} label="Birth mark" k="birthMark" />
+            <Field form={form} set={set} label="Identification mark" k="identificationMark" />
             <div>
               <label className="label">Produced by / source</label>
               <select className="field" value={form.producedByType} onChange={set('producedByType')}>
@@ -266,9 +277,9 @@ export default function RegisterChild() {
         <div className="border-t border-black/5 pt-5">
           <h3 className="mb-3 font-semibold">Reporter declaration</h3>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Signer name" k="declarationSignerName" req />
-            <Field label="Relationship to child" k="relationshipToChild" req />
-            <Field label="Signer role / designation" k="declarationSignerRole" />
+            <Field form={form} set={set} label="Signer name" k="declarationSignerName" req />
+            <Field form={form} set={set} label="Relationship to child" k="relationshipToChild" req />
+            <Field form={form} set={set} label="Signer role / designation" k="declarationSignerRole" />
             <div>
               <label className="label">Declaration method</label>
               <select className="field" value={form.declarationMethod} onChange={set('declarationMethod')}>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
 import { useAuth } from '../auth.jsx';
 import { fmtDate, StatusBadge, Avatar, ROLE_LABELS } from '../lib.jsx';
@@ -263,6 +263,11 @@ export default function Cases() {
   const { user } = useAuth();
   const [rows, setRows] = useState([]);
   const [q, setQ] = useState('');
+  const [stateFilter, setStateFilter] = useState('');
+  const [districtFilter, setDistrictFilter] = useState('');
+  const [genderFilter, setGenderFilter] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
   const [status, setStatus] = useState('');
   const [selected, setSelected] = useState(null);
   const [closure, setClosure] = useState({ reason: 'restored_family', note: '', foundLocation: '' });
@@ -397,6 +402,49 @@ export default function Cases() {
   });
   const [caseNote, setCaseNote] = useState('');
   const canAct = FORMAL_ACTION_ROLES.includes(user.role);
+
+  /** Filter options drawn from the caseload, so nothing offered returns zero. */
+  const facets = useMemo(
+    () => ({
+      states: [...new Set(rows.map((r) => r.state).filter(Boolean))].sort(),
+      districts: [
+        ...new Set(
+          rows
+            .filter((r) => !stateFilter || r.state === stateFilter)
+            .map((r) => r.district)
+            .filter(Boolean)
+        ),
+      ].sort(),
+    }),
+    [rows, stateFilter]
+  );
+
+  /**
+   * Newest first, and filtered by area, gender and date.
+   *
+   * The list arrived in whatever order the store returned, so a case registered
+   * this morning could sit anywhere in it. The most recent record is the one an
+   * officer is most likely to be looking for.
+   */
+  const visibleRows = useMemo(() => {
+    const from = fromDate ? new Date(fromDate).getTime() : null;
+    const to = toDate ? new Date(toDate).getTime() + 86399999 : null;
+    return rows
+      .filter((r) => {
+        if (stateFilter && r.state !== stateFilter) return false;
+        if (districtFilter && r.district !== districtFilter) return false;
+        if (genderFilter && r.gender !== genderFilter) return false;
+        if (from || to) {
+          const when = new Date(r.dateOfMissing || r.createdAt || 0).getTime();
+          if (!Number.isFinite(when)) return false;
+          if (from && when < from) return false;
+          if (to && when > to) return false;
+        }
+        return true;
+      })
+      .slice()
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  }, [rows, stateFilter, districtFilter, genderFilter, fromDate, toDate]);
   const canWorkflow = WORKFLOW_ROLES.includes(user.role);
   const canAssignCase = CASE_ASSIGN_ROLES.includes(user.role);
   const canRecordInvestigationChecklist = INVESTIGATION_CHECKLIST_ROLES.includes(user.role);
@@ -754,7 +802,7 @@ export default function Cases() {
           <h2 className="text-2xl font-bold">Cases &amp; FIRs</h2>
           <p className="text-sm text-gray-500">{rows.length} records in your scope</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <form onSubmit={(e) => { e.preventDefault(); load(); }}>
             <input className="field w-56" placeholder="Search name, FIR, place..." value={q} onChange={(e) => setQ(e.target.value)} />
           </form>
@@ -766,6 +814,59 @@ export default function Cases() {
             <option value="found">Found</option>
             <option value="closed">Closed</option>
           </select>
+        </div>
+      </div>
+
+      {/*
+        Area, gender and date, applied to the rows already in hand. A caseload
+        is searched by "girls, this district, last fortnight" far more often
+        than by name, and there was no way to ask that.
+      */}
+      <div className="card flex flex-wrap items-end gap-3 p-4">
+        <div>
+          <label className="label">State</label>
+          <select className="field w-44" value={stateFilter} onChange={(e) => setStateFilter(e.target.value)}>
+            <option value="">Any state</option>
+            {facets.states.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="label">District</label>
+          <select className="field w-44" value={districtFilter} onChange={(e) => setDistrictFilter(e.target.value)}>
+            <option value="">Any district</option>
+            {facets.districts.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="label">Gender</label>
+          <select className="field w-32" value={genderFilter} onChange={(e) => setGenderFilter(e.target.value)}>
+            <option value="">Any</option>
+            <option value="Male">Male</option>
+            <option value="Female">Female</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        <div>
+          <label className="label">Missing from</label>
+          <input type="date" className="field w-40" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+        </div>
+        <div>
+          <label className="label">Missing to</label>
+          <input type="date" className="field w-40" value={toDate} onChange={(e) => setToDate(e.target.value)} />
+        </div>
+        <div className="ml-auto flex items-center gap-3">
+          <p className="text-xs font-medium text-gray-500">
+            {visibleRows.length} of {rows.length} shown
+          </p>
+          {(stateFilter || districtFilter || genderFilter || fromDate || toDate) && (
+            <button
+              type="button"
+              onClick={() => { setStateFilter(''); setDistrictFilter(''); setGenderFilter(''); setFromDate(''); setToDate(''); }}
+              className="text-xs font-semibold text-khozo hover:underline"
+            >
+              Clear filters
+            </button>
+          )}
         </div>
       </div>
 
@@ -787,7 +888,7 @@ export default function Cases() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
+              {visibleRows.map((r) => (
                 <tr key={r.id} className="border-b border-black/5 last:border-0 hover:bg-gray-50/60">
                   <td className="px-4 py-3">
                     <button className="flex items-center gap-3 text-left" onClick={() => setSelected(r)}>

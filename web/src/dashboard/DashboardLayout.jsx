@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth.jsx';
 import { Logo } from '../components.jsx';
 import { ROLE_LABELS, ROLE_TAGLINE, Avatar } from '../lib.jsx';
-import { DASHBOARD_NAV } from './routes.js';
+import { DASHBOARD_NAV, DASHBOARD_NAV_GROUPS } from './routes.js';
 import NotificationBell from './NotificationBell.jsx';
 
 export default function DashboardLayout() {
@@ -30,11 +30,8 @@ export default function DashboardLayout() {
     <div className="flex min-h-screen bg-[#f1f5f9] font-sans selection:bg-indigo-500 selection:text-white">
       {/* Premium Glassy Sidebar */}
       <aside className="sticky top-0 hidden h-screen w-72 flex-col bg-white shadow-[4px_0_24px_rgba(0,0,0,0.02)] border-r border-slate-200/60 lg:flex z-30">
-        <div className="px-6 py-6 flex items-center justify-between">
-          <Logo />
-          <div className="h-6 w-6 rounded-full bg-indigo-50 flex items-center justify-center border border-indigo-100">
-            <div className="h-2 w-2 rounded-full bg-indigo-600 animate-pulse" />
-          </div>
+        <div className="px-6 py-6">
+          <Logo to="/app" />
         </div>
 
         <div className="mx-4 mb-6 mt-2 rounded-2xl bg-gradient-to-br from-indigo-600 to-violet-700 p-4 shadow-lg shadow-indigo-600/20 text-white relative overflow-hidden">
@@ -50,33 +47,42 @@ export default function DashboardLayout() {
         </div>
 
         {/* Navigation items with elegant hover states */}
-        <nav className="flex-1 space-y-1.5 px-4 overflow-y-auto pb-6 scrollbar-hide">
-          {items.map((n) => (
-            <NavLink
-              key={n.to}
-              to={n.to}
-              end={n.end}
-              className={({ isActive }) =>
-                `flex items-center gap-3.5 rounded-xl px-4 py-3 text-sm font-semibold transition-all duration-200 group relative ${
-                  isActive
-                    ? 'bg-indigo-50 text-indigo-700'
-                    : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
-                }`
-              }
-            >
-              {({ isActive }) => (
-                <>
-                  {isActive && (
-                    <span className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 rounded-r-md bg-indigo-600" />
-                  )}
-                  <span className={`w-5 text-center transition-transform duration-200 ${isActive ? 'scale-110 text-indigo-600' : 'group-hover:scale-110 group-hover:text-slate-700'}`}>
-                    {n.icon === 'Test' ? '🧪' : n.icon === 'Chart' ? '📊' : n.icon === 'Search' ? '🔍' : n.icon === 'Add' ? '➕' : n.icon === 'Cases' ? '📁' : '🔹'}
-                  </span>
-                  {n.label}
-                </>
-              )}
-            </NavLink>
-          ))}
+        <nav className="flex-1 overflow-y-auto px-4 pb-6 scrollbar-hide">
+          {DASHBOARD_NAV_GROUPS.map((group) => {
+            const groupItems = items.filter((n) => n.group === group);
+            if (!groupItems.length) return null;
+            return (
+              <div key={group} className="mb-5">
+                <p className="px-4 pb-1.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">{group}</p>
+                <div className="space-y-1">
+                  {groupItems.map((n) => (
+                    <NavLink
+                      key={n.to}
+                      to={n.to}
+                      end={n.end}
+                      className={({ isActive }) =>
+                        `group relative flex items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors ${
+                          isActive
+                            ? 'bg-indigo-50 text-indigo-700'
+                            : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
+                        }`
+                      }
+                    >
+                      {({ isActive }) => (
+                        <>
+                          {isActive && (
+                            <span className="absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-md bg-indigo-600" />
+                          )}
+                          <span className="w-5 shrink-0 text-center text-base leading-none">{n.icon}</span>
+                          <span className="truncate">{n.label}</span>
+                        </>
+                      )}
+                    </NavLink>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
         </nav>
       </aside>
 
@@ -112,19 +118,11 @@ export default function DashboardLayout() {
 
             <div className="h-8 w-px bg-slate-200"></div>
 
-            {/* PROMINENT LOGOUT BUTTON - Moved to Top Level Header */}
-            <button
-              onClick={() => {
-                logout();
-                nav('/');
-              }}
-              className="hidden sm:flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-bold text-slate-600 border border-slate-200 shadow-sm hover:shadow-md hover:border-rose-200 hover:text-rose-600 transition-all duration-200 group"
-            >
-              <span className="group-hover:-translate-x-0.5 transition-transform">🚪</span>
-              <span>Sign Out</span>
-            </button>
-
-            {/* Profile Menu Trigger */}
+            {/*
+              Sign out lives in the account menu, where it is conventional and
+              where a mis-click cannot end an officer's session mid-task. It was
+              a loose button in the header *and* a duplicate inside this menu.
+            */}
             <div className="relative" ref={dropdownRef}>
               <button
                 onClick={() => setProfileOpen(!profileOpen)}
@@ -148,24 +146,43 @@ export default function DashboardLayout() {
                     <p className="text-xs text-slate-500 font-medium truncate">{user.email}</p>
                   </div>
                   
-                  <div className="px-2 py-2 space-y-1">
-                    <div className="flex justify-between items-center text-xs px-2 py-1.5 rounded-lg hover:bg-slate-50 transition-colors">
-                      <span className="text-slate-500 font-medium">Security</span>
-                      <span className="text-emerald-600 font-bold bg-emerald-50 px-2 py-0.5 rounded-md">Verified</span>
+                  {/*
+                    Role and jurisdiction, which is what an officer actually
+                    needs to confirm about their own session. This read
+                    "Security: Verified" — a green badge asserting nothing.
+                  */}
+                  <div className="space-y-1 px-2 py-1 text-xs">
+                    <div className="flex items-center justify-between gap-3 rounded-lg px-2 py-1.5">
+                      <span className="font-medium text-slate-500">Role</span>
+                      <span className="truncate font-semibold text-slate-700">{ROLE_LABELS[user.role]}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3 rounded-lg px-2 py-1.5">
+                      <span className="font-medium text-slate-500">Jurisdiction</span>
+                      <span className="truncate font-semibold text-slate-700">
+                        {[user.jurisdiction?.station, user.jurisdiction?.district, user.jurisdiction?.state]
+                          .filter(Boolean)
+                          .join(', ') || 'National'}
+                      </span>
                     </div>
                   </div>
 
-                  <div className="mt-2 border-t border-slate-100 pt-2 sm:hidden">
-                    {/* Mobile Log out (visible only when header button is hidden) */}
+                  <div className="mt-2 space-y-1 border-t border-slate-100 pt-2">
+                    <Link
+                      to="/change-password"
+                      onClick={() => setProfileOpen(false)}
+                      className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+                    >
+                      <span>🔑</span> Change password
+                    </Link>
                     <button
                       onClick={() => {
                         setProfileOpen(false);
                         logout();
                         nav('/');
                       }}
-                      className="w-full flex items-center justify-center gap-2 rounded-xl bg-rose-50 px-4 py-2.5 text-sm font-bold text-rose-600 hover:bg-rose-100 transition-colors"
+                      className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold text-rose-600 hover:bg-rose-50"
                     >
-                      🚪 Sign Out
+                      <span>🚪</span> Sign out
                     </button>
                   </div>
                 </div>

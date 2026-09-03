@@ -126,12 +126,16 @@ export default function Overview() {
   const [activity, setActivity] = useState([]);
   const [followups, setFollowups] = useState(null);
   const [readiness, setReadiness] = useState(null);
+  const [statsError, setStatsError] = useState('');
 
   const [cciRegister, setCciRegister] = useState(null);
   const [network, setNetwork] = useState(null);
 
   useEffect(() => {
-    api.get('/dashboard/stats').then(setStats).catch(() => {});
+    // The headline figures are what the page is built around, so a failure here
+    // has to be said out loud. Swallowing it left the console showing
+    // "Loading dashboard…" for as long as the officer was willing to wait.
+    api.get('/dashboard/stats').then(setStats).catch((e) => setStatsError(e.message));
     api.get('/dashboard/activity').then((d) => setActivity(d.activity)).catch(() => {});
     api.get('/dashboard/followups').then(setFollowups).catch(() => {});
     api.get('/dashboard/readiness').then(setReadiness).catch(() => {});
@@ -145,6 +149,17 @@ export default function Overview() {
     }
   }, [user.role]);
 
+  if (statsError) {
+    return (
+      <div className="rounded-2xl bg-red-50 p-6 ring-1 ring-red-100">
+        <p className="text-sm font-semibold text-red-800">The dashboard could not load</p>
+        <p className="mt-1 text-sm text-red-700">{statsError}</p>
+        <button onClick={() => window.location.reload()} className="btn-primary mt-4">
+          Try again
+        </button>
+      </div>
+    );
+  }
   if (!stats) return <div className="text-gray-400">Loading dashboard…</div>;
   const h = HEADLINE[user.role] || HEADLINE.parent;
   const showOps = OP_ROLES.includes(user.role);

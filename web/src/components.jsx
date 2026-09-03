@@ -1,9 +1,15 @@
 // Reusable UI atoms: brand logo, stat card, section heading.
 import { Link } from 'react-router-dom';
 
-export function Logo({ light = false, className = '' }) {
+/**
+ * `to` overrides where the logo goes. Inside the console it points at the
+ * dashboard: clicking it used to sign an officer out of their workspace and
+ * back to the public marketing page, which is not what a logo does in an
+ * application.
+ */
+export function Logo({ light = false, className = '', to = '/' }) {
   return (
-    <Link to="/" className={`inline-flex items-center gap-2 ${className}`}>
+    <Link to={to} className={`inline-flex items-center gap-2 ${className}`}>
       <span className="grid h-9 w-9 place-items-center rounded-lg bg-khozo text-white shadow-sm">
         {/* waving hand glyph echoing the Khozo logo */}
         <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
