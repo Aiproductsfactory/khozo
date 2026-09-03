@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -7,7 +7,6 @@ import * as SplashScreen from 'expo-splash-screen';
 
 import { RootNavigator } from './navigation';
 import { AuthProvider } from './services/auth';
-import { loadApiBaseUrl } from './services/config';
 import { OutboxProvider } from './services/outbox';
 import { ThemeProvider, useTheme } from './theme';
 
@@ -28,21 +27,11 @@ function Root() {
 }
 
 export default function App() {
-  const [ready, setReady] = useState(false);
-
+  // Nothing has to be fetched before the first screen can render, so the splash
+  // comes down as soon as the tree mounts.
   useEffect(() => {
-    // The stored server address must be in place before any screen mounts,
-    // otherwise the first requests would go to the build-time default.
-    loadApiBaseUrl()
-      .catch(() => {})
-      .finally(() => setReady(true));
+    SplashScreen.hideAsync().catch(() => {});
   }, []);
-
-  useEffect(() => {
-    if (ready) SplashScreen.hideAsync().catch(() => {});
-  }, [ready]);
-
-  if (!ready) return null;
 
   return (
     <GestureHandlerRootView style={styles.flex}>

@@ -3,7 +3,7 @@
  * that each one is stored, matched and logged correctly.
  *
  *   node scripts/test-image-pipeline.mjs
- *   node scripts/test-image-pipeline.mjs --images "D:/random images" --api http://localhost:4000
+ *   node scripts/test-image-pipeline.mjs --images ./test-assets/faces --api http://localhost:4000
  *
  * For each image it verifies:
  *   1. the upload is accepted (or rejected for a documented reason)
@@ -11,7 +11,7 @@
  *   3. the photo is in the database, not on the API server's local disk
  *   4. a match record, an audit entry and an activity entry were all written
  *
- * Identity checks use the fact that several people appear in more than one
+ * Identity checks use the fact that each person appears in more than one
  * photograph: a sighting is expected to match the case registered from a
  * *different* photo of the same person, and never one of anybody else.
  *
@@ -29,6 +29,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 
 import '../server/src/env.js';
 import { readPhotoBlob, photoBlobStats, isPostgres, closePool } from '../server/src/db.js';
@@ -39,46 +40,69 @@ function arg(name, fallback) {
 }
 
 const API = arg('api', process.env.KHOZO_API || 'http://localhost:4000').replace(/\/+$/, '');
-const IMAGE_DIR = arg('images', process.env.KHOZO_TEST_IMAGES || 'D:/random images');
+const IMAGE_DIR = arg(
+  'images',
+  process.env.KHOZO_TEST_IMAGES ||
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'test-assets', 'faces')
+);
 const PASSWORD = 'khozo123';
 const MIME = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp' };
 
 /**
- * Who each photograph shows. `null` means "nobody registered as a case", which
- * makes those images controls: a match against them is a false positive.
+ * Fixtures are discovered from the folder rather than listed here, so the test
+ * runs against whatever photographs are dropped in. Filenames carry the
+ * identity the run is checking:
  *
- * `id.jpg` is deliberately excluded — it is a real student ID card containing a
- * living person's name, phone number and address, and does not belong in a
- * child-protection test fixture.
+ *   <subject>-1.jpg, <subject>-2.jpg, ...   two or more photos of one person
+ *   control-1.jpg, control-2.jpg, ...       nobody registered — a match here is
+ *                                           a false positive
+ *
+ * Case details per subject can be given in `subjects.json` alongside the
+ * images; anything absent is filled in below. See test-assets/faces/README.md.
  */
-const SUBJECTS = {
-  'Aamir_Khan_3.jpg': 'aamir', 'Aamir_Khan_4.jpg': 'aamir', 'Aamir_Khan_5.jpg': 'aamir',
-  'Aamir_Khan_6.jpg': 'aamir', 'Aamir_Khan_7.jpg': 'aamir',
-  'Akshay_Kumar_0.jpg': 'akshay', 'Akshay_Kumar_1.jpg': 'akshay', 'Akshay_Kumar_2.jpg': 'akshay',
-  'Akshay_Kumar_3.jpg': 'akshay', 'Akshay_Kumar_4.jpg': 'akshay', 'Akshay_Kumar_5.jpg': 'akshay',
-  'Asin_0.jpg': 'asin', 'Asin_1.jpg': 'asin', 'Asin_2.jpg': 'asin',
-  'Asin_12.jpg': 'asin', 'Asin_13.jpg': 'asin', 'Asin_14.jpg': 'asin',
-  '0.jpg': null, '2.jpg': null, '4.jpg': null,
-  'resixed-img.png': null,
-  'c271f23f-7fd5-4a90-8eb7-9fa6cc5f1367_DSC05169.jpg': null,
-  'd24489d4-e5e1-45ce-bed9-f3b559128224_DSC04487.jpg': null,
-  'e7c44c90-94cd-404c-9e7e-f76aa7aa8345_DSC05169.jpg': null,
-};
+const FIXTURE_NAME = /^(.*?)-(\d+)$/;
 
-const EXCLUDED = { 'id.jpg': 'personal ID card — contains a real identity document' };
+function discoverFixtures(dir) {
+  const files = fs
+    .readdirSync(dir)
+    .filter((f) => MIME[path.extname(f).toLowerCase()])
+    .sort();
 
-/** One case is registered per subject, from the photo named here. */
-const REGISTRATION_PHOTO = {
-  aamir: 'Aamir_Khan_3.jpg',
-  akshay: 'Akshay_Kumar_0.jpg',
-  asin: 'Asin_0.jpg',
-};
+  const subjects = new Map();
+  const unnamed = [];
 
-const CASE_DETAIL = {
-  aamir: { childName: 'Aarav Khan', age: 11, gender: 'Male', parentName: 'Nasreen Khan', parentPhone: '9820011221', district: 'Mumbai', zip: '400050', address: 'Bandra West, Mumbai' },
-  akshay: { childName: 'Rohan Kumar', age: 13, gender: 'Male', parentName: 'Vinod Kumar', parentPhone: '9833044556', district: 'Mumbai', zip: '400024', address: 'Kurla East, Mumbai' },
-  asin: { childName: 'Ananya Nair', age: 12, gender: 'Female', parentName: 'Latha Nair', parentPhone: '9845567788', district: 'Mumbai', zip: '400076', address: 'Powai, Mumbai' },
-};
+  for (const file of files) {
+    const parsed = FIXTURE_NAME.exec(path.basename(file, path.extname(file)));
+    if (!parsed) {
+      unnamed.push(file);
+      continue;
+    }
+    const subject = parsed[1].toLowerCase();
+    if (!subjects.has(subject)) subjects.set(subject, []);
+    subjects.get(subject).push(file);
+  }
+
+  return { files, subjects, unnamed };
+}
+
+/** Placeholder case records, so a fixture folder needs no configuration. */
+function defaultCaseDetail(subject, index) {
+  const districts = [
+    { district: 'Mumbai', zip: '400050', address: 'Bandra West, Mumbai' },
+    { district: 'Mumbai', zip: '400024', address: 'Kurla East, Mumbai' },
+    { district: 'Mumbai', zip: '400076', address: 'Powai, Mumbai' },
+  ];
+  const place = districts[index % districts.length];
+  const label = subject.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  return {
+    childName: `Test Subject ${label}`,
+    age: 12,
+    gender: 'Male',
+    parentName: `Guardian of ${label}`,
+    parentPhone: `98200${String(11000 + index).slice(0, 5)}`,
+    ...place,
+  };
+}
 
 const results = [];
 const record = (check, ok, detail = '') => results.push({ check, ok, detail });
@@ -102,8 +126,7 @@ function imageBlob(name) {
   return { buf, blob: new Blob([buf], { type: MIME[path.extname(name).toLowerCase()] || 'image/jpeg' }) };
 }
 
-async function registerCase(token, subject, photoName) {
-  const d = CASE_DETAIL[subject];
+async function registerCase(token, d, photoName) {
   const { blob } = imageBlob(photoName);
   const form = new FormData();
   Object.entries({
@@ -123,7 +146,7 @@ async function registerCase(token, subject, photoName) {
     const existing = list.payload.reports.find((r) => r.childName === d.childName);
     if (existing) return existing;
   }
-  if (res.status !== 201 && res.status !== 200) throw new Error(`register ${subject}: HTTP ${res.status} ${res.payload?.error || ''}`);
+  if (res.status !== 201 && res.status !== 200) throw new Error(`register ${d.childName}: HTTP ${res.status} ${res.payload?.error || ''}`);
   return res.payload.report;
 }
 
@@ -144,26 +167,66 @@ async function submitSighting(photoName) {
 async function main() {
   console.log(`Khozo image pipeline test\n  API    : ${API}\n  images : ${IMAGE_DIR}\n`);
 
-  const all = fs.readdirSync(IMAGE_DIR).filter((f) => MIME[path.extname(f).toLowerCase()]);
-  console.log(`Found ${all.length} image(s). Excluded: ${Object.keys(EXCLUDED).join(', ') || 'none'}\n`);
+  if (!fs.existsSync(IMAGE_DIR)) {
+    console.error(
+      `No fixture folder at ${IMAGE_DIR}.\n\n` +
+      'Add two or more photographs of each person, named <subject>-1.jpg, <subject>-2.jpg,\n' +
+      'and any number of control-<n>.jpg images of people who are not registered.\n' +
+      'See test-assets/faces/README.md.'
+    );
+    process.exit(1);
+  }
 
-  const untracked = all.filter((f) => !(f in SUBJECTS) && !(f in EXCLUDED));
-  record('every image is accounted for', untracked.length === 0, untracked.join(', '));
+  const { files: all, subjects, unnamed } = discoverFixtures(IMAGE_DIR);
+  console.log(`Found ${all.length} image(s) across ${subjects.size} subject(s).\n`);
+
+  record('every image follows the <subject>-<n> naming convention', unnamed.length === 0, unnamed.join(', '));
+
+  // A subject with one photo cannot prove identity matching: the only image
+  // available is the one its case was registered from.
+  const identitySubjects = [...subjects].filter(([name, photos]) => name !== 'control' && photos.length >= 2);
+  record(
+    'at least one subject has two or more photos',
+    identitySubjects.length > 0,
+    'identity matching needs a second photo of the same person to search with'
+  );
 
   const health = await api('/health');
   if (health.status !== 200) throw new Error(`API unreachable at ${API}`);
   record('database mode is postgres', isPostgres, isPostgres ? '' : 'DATABASE_URL not set — photos would be local');
 
+  const overrides = (() => {
+    const file = path.join(IMAGE_DIR, 'subjects.json');
+    if (!fs.existsSync(file)) return {};
+    try {
+      return JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch (err) {
+      console.warn(`  (ignoring subjects.json: ${err.message})`);
+      return {};
+    }
+  })();
+
   // --- register one case per subject ---------------------------------------
   const officer = await login('police@khozo.org');
   const cases = {};
+  const detailBySubject = {};
+  const registrationPhoto = {};
+
   console.log('Registering cases:');
-  for (const [subject, photo] of Object.entries(REGISTRATION_PHOTO)) {
-    const report = await registerCase(officer.token, subject, photo);
+  let index = 0;
+  for (const [subject, photos] of subjects) {
+    if (subject === 'control') continue;
+    const detail = { ...defaultCaseDetail(subject, index), ...(overrides[subject] || {}) };
+    const photo = photos[0];
+    detailBySubject[subject] = detail;
+    registrationPhoto[subject] = photo;
+
+    const report = await registerCase(officer.token, detail, photo);
     cases[subject] = report;
-    console.log(`  ${subject.padEnd(8)} ${report.id.padEnd(13)} ${CASE_DETAIL[subject].childName.padEnd(13)} (${photo})`);
+    console.log(`  ${subject.padEnd(12)} ${report.id.padEnd(13)} ${detail.childName.padEnd(22)} (${photo})`);
     record(`case registered for ${subject}`, Boolean(report.id));
     record(`case ${subject} stored a photo`, Boolean(report.photoFile), report.photoFile || 'no photoFile');
+    index += 1;
   }
 
   // --- every image through the sighting pipeline ----------------------------
@@ -172,14 +235,15 @@ async function main() {
   const rows = [];
 
   for (const name of all) {
-    if (name in EXCLUDED) {
-      console.log(`  ${name.padEnd(29)} SKIPPED  —      —               —            ${EXCLUDED[name]}`);
+    if (unnamed.includes(name)) {
+      console.log(`  ${name.padEnd(29)} SKIPPED  —      —               —            not named <subject>-<n>`);
       continue;
     }
-    const expectedSubject = SUBJECTS[name];
-    const registrationPhoto = expectedSubject ? REGISTRATION_PHOTO[expectedSubject] : null;
+    const subject = FIXTURE_NAME.exec(path.basename(name, path.extname(name)))[1].toLowerCase();
+    // A control image belongs to nobody registered: any match is a false positive.
+    const expectedSubject = subject === 'control' ? null : subject;
     // The photo a case was registered from is not a fair identity test.
-    const isRegistrationPhoto = name === registrationPhoto;
+    const isRegistrationPhoto = name === registrationPhoto[subject];
 
     const { buf } = imageBlob(name);
     const res = await submitSighting(name);
@@ -207,7 +271,7 @@ async function main() {
     const queue = await api('/reports/found/all', { token: officer.token });
     const officerView = (queue.payload?.foundReports || []).find((f) => f.id === fr.id);
     const matchedName = officerView?.matchedReport?.childName || null;
-    const expectedName = expectedSubject ? CASE_DETAIL[expectedSubject].childName : null;
+    const expectedName = expectedSubject ? detailBySubject[expectedSubject]?.childName || null : null;
 
     record(`public response hides child identity: ${name}`,
       fr.matchedReport === undefined && fr.matchedReportId === undefined,

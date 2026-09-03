@@ -66,8 +66,8 @@ export async function request(path, { method = 'GET', body, token, timeout, sign
     const cause = error?.message ? ` (${error.message})` : '';
     throw new ApiError(
       aborted
-        ? 'The server did not respond in time. Check the server address in Settings and that you are on the same network.'
-        : `Could not reach the Khozo server. Check your connection or the server address in Settings.${cause}`,
+        ? 'The Khozo server did not respond in time. Check your connection and try again — a sighting you submit offline is saved and sent automatically.'
+        : `Could not reach the Khozo server. Check your connection and try again.${cause}`,
       { status: 0, code: aborted ? 'TIMEOUT' : 'NETWORK', details: error?.message || null },
     );
   } finally {
@@ -86,7 +86,7 @@ export async function request(path, { method = 'GET', body, token, timeout, sign
   return payload;
 }
 
-/** Probes the configured server. Used by Settings and the connection banner. */
+/** Probes the API. Useful when diagnosing a field device. */
 export async function checkHealth(timeout = 6000) {
   const started = Date.now();
   const payload = await request('/health', { timeout });

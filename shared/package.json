@@ -1,0 +1,7 @@
+{
+  "name": "@khozo/shared",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Case-domain rules and jurisdiction scoping shared by the Express API and the Cloudflare Worker."
+}

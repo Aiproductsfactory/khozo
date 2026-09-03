@@ -9,6 +9,12 @@ server/data/db.json
 # wrangler local state
 .wrangler/
 
+# Face-match test fixtures. These are photographs of real people; this
+# repository is public, so the images stay local and only the README is tracked.
+# See test-assets/faces/README.md.
+test-assets/faces/*
+!test-assets/faces/README.md
+
 # temp & generated artifacts
 .tmp/
 graphify-out/

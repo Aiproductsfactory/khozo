@@ -20,16 +20,29 @@ This repository implements the system described in the Khozo deck & proposal:
 
 ## Tech stack
 
-| Layer    | Choice                                              |
-|----------|-----------------------------------------------------|
-| Frontend | Vite + React + React Router + Tailwind CSS + Recharts |
-| Backend  | Node.js + Express (ES modules), JWT auth, RBAC      |
-| Storage  | File-backed JSON store (zero-config), seeded with demo data |
-| Matching | Pluggable scorer (placeholder for a face-recognition model) |
+| Layer    | Choice                                                        |
+|----------|---------------------------------------------------------------|
+| Web      | Vite + React + React Router + Tailwind CSS + Recharts          |
+| Mobile   | Expo / React Native (Android field app)                        |
+| API      | One set of route handlers, run by two runtimes (see below)     |
+| Storage  | Postgres (photos included), or a JSON file store with no config |
+| Matching | Aarakshak face comparison, AWS Rekognition fallback, local heuristic last |
 
-> The data store and the face-match scorer are deliberately swappable. The store is a single
-> repository module (`server/src/store.js`) and matching lives in `server/src/match.js`, so a real
-> database (Postgres) and a real model (face-api / InsightFace) can drop in without touching routes.
+### One API, two runtimes
+
+The route handlers live in `shared/routes/` and are run by both:
+
+- **Express** (`server/`) for local development, against an in-memory replica of
+  the dataset that is hydrated from Postgres at boot — or a JSON file when
+  `DATABASE_URL` is unset, so the project runs with no setup at all.
+- **Cloudflare Worker** (`worker/`) in production, against a per-request replica
+  hydrated over Hyperdrive, behind a small Express-compatible router shim.
+
+They previously had a route file each. The copies drifted, the deployed Worker
+fell about forty endpoints behind, and the public sighting upload — the product's
+central flow — answered 404 in production while every test still passed. Sharing
+the handlers is what stops that recurring; `npm run test:coverage` is what
+catches it if it starts to.
 
 ## Run it
 
@@ -44,15 +57,49 @@ npm run dev
 - Web app: http://localhost:5173
 - API:     http://localhost:4000
 
-## Deploy the web app to Cloudflare Workers
+Without `DATABASE_URL` the API uses the seeded JSON store, so this works on a
+clean checkout.
 
-The repository is an npm workspace, so deploy from the root with the checked-in Wrangler config:
+## Tests
+
+```bash
+npm run test:all
+```
+
+Runs with no server, database or network:
+
+| Script                | Checks                                                              |
+|-----------------------|---------------------------------------------------------------------|
+| `test:coverage`       | every API path the web and mobile clients call is actually served    |
+| `smoke:api`           | the full API contract against the Express runtime                    |
+| `smoke:worker`        | the same contract against the Worker's router and middleware         |
+| `smoke:store`         | the Worker's per-request store replica, including the audit chain    |
+| `smoke:web-routes`    | dashboard route guards match the roles they claim                    |
+| `smoke:pwa`           | the service worker and offline sighting queue                        |
+
+Two more need something running, so they are not in `test:all`:
+
+```bash
+npm run test:accounts -- --api https://khozo.swastik-kumar.workers.dev   # every role against a live API
+npm run test:images                                                       # face-match pipeline; see test-assets/faces/README.md
+```
+
+## Deploy to Cloudflare Workers
 
 ```bash
 npx wrangler deploy
 ```
 
-Wrangler runs `npm run build -w web` automatically and uploads `web/dist`. The Express API must be hosted on a Node-capable service separately; set the Worker variable `API_ORIGIN` to that backend origin, without a trailing `/api` path.
+Wrangler builds `web/dist` and uploads it with the Worker, which serves the
+static app and the API together — there is no separate backend to host. The
+Worker needs a Hyperdrive binding to the Postgres instance (already in
+`wrangler.jsonc`) and these secrets:
+
+```bash
+npx wrangler secret put KHOZO_JWT_SECRET
+npx wrangler secret put KHOZO_EXPORT_SIGNING_KEY
+npx wrangler secret put AARAKSHAK_API_KEY
+```
 
 ### Demo logins (seeded)
 
@@ -64,10 +111,22 @@ Wrangler runs `npm run build -w web` automatically and uploads `web/dist`. The E
 | Parent      | parent@khozo.org        | khozo123   |
 | NGO         | ngo@khozo.org           | khozo123   |
 
+Thirteen further official roles (SJPU, AHTU, DCRB, DLSA, CWC, DCPU, RPF, CCI,
+SAA, JJB, state nodal, SARA, crime bureau) are seeded on the same password —
+`npm run test:accounts` lists them all.
+
 ## Structure
 
 ```
 khozo/
-  server/   Express API + JSON store + seed
-  web/      Vite + React single-page app
+  shared/           route handlers, case rules and jurisdiction scoping, used by both runtimes
+    routes/         the API itself
+    case-domain.js  case vocabulary, validation, public-payload redaction
+    scope.js        who may see which case
+  server/           Express runtime: store, auth, matching, JSON-file fallback
+  worker/           Cloudflare runtime: router shim, per-request store replica, matching
+  web/              Vite + React single-page app
+  mobile/           Expo / React Native field app
+  scripts/          tests, seeding, migrations, deck tooling
+  test-assets/      local-only test fixtures
 ```

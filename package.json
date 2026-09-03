@@ -2,6 +2,7 @@
   "name": "khozo",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "description": "Project Khozo - reunite missing children with their families. An initiative by Aegis School of Data Science.",
   "workspaces": [
     "server",
@@ -15,8 +16,11 @@
     "dev:web": "npm run dev -w web",
     "seed:test-data": "node scripts/seed-test-data.mjs",
     "test:accounts": "node scripts/test-accounts.mjs",
-    "test:all": "npm run smoke:api && npm run test:accounts && npm run test:images && npm run smoke:web-routes && npm run smoke:pwa",
+    "test:all": "npm run test:coverage && npm run smoke:api && npm run smoke:worker && npm run smoke:store && npm run smoke:web-routes && npm run smoke:pwa",
+    "test:coverage": "node scripts/api-coverage.mjs",
+    "smoke:store": "node scripts/store-replica-smoke.mjs",
     "smoke:api": "node scripts/api-smoke.mjs",
+    "smoke:worker": "node scripts/api-smoke.mjs --runtime worker",
     "smoke:web-routes": "node scripts/web-route-guards.mjs",
     "smoke:pwa": "node scripts/pwa-offline-smoke.mjs",
     "start": "npm run dev",
@@ -29,13 +33,9 @@
     "wrangler": "^4.110.0"
   },
   "dependencies": {
-    "@neondatabase/serverless": "^1.1.0",
-    "@supabase/supabase-js": "^2.112.0",
     "bcryptjs": "^3.0.3",
-    "hono": "^4.12.34",
     "jose": "^6.2.8",
     "nanoid": "^6.0.1",
-    "pg": "^8.22.0",
-    "postgres": "^3.4.9"
+    "pg": "^8.22.0"
   }
 }

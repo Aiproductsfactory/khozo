@@ -1,58 +1,16 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import Constants from 'expo-constants';
-
-const STORAGE_KEY = 'khozo.apiBaseUrl';
-
 /**
- * Build-time default, set in app.json under `expo.extra.khozoApiUrl`.
+ * Where the app talks to, and the helplines it surfaces.
  *
- * Defaults to the production Cloudflare Worker endpoint so APK builds connect out of the box.
- * Users can override it in Settings without a rebuild.
+ * The API address is fixed at build time rather than editable in the app. A
+ * field build that can be pointed at an arbitrary host is a phishing surface:
+ * anyone who can persuade an officer to change it collects sighting photos of
+ * children and their sign-in credentials. Pilot builds that need a LAN backend
+ * set KHOZO_API_URL at build time instead — see app.config.js.
  */
 export const DEFAULT_API_URL = 'https://khozo.swastik-kumar.workers.dev';
 
-let currentBaseUrl = DEFAULT_API_URL;
-
-/** Strips trailing slashes and a trailing `/api` so callers can pass either form. */
-export function normaliseBaseUrl(input) {
-  const trimmed = String(input || '').trim().replace(/\s+/g, '');
-  if (!trimmed) return DEFAULT_API_URL;
-  const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
-  return withScheme.replace(/\/+$/, '').replace(/\/api$/i, '');
-}
-
-export function isValidBaseUrl(input) {
-  const normalised = normaliseBaseUrl(input);
-  if (!normalised) return false;
-  try {
-    const url = new URL(normalised);
-    return Boolean(url.hostname);
-  } catch {
-    return false;
-  }
-}
-
 export function getApiBaseUrl() {
   return DEFAULT_API_URL;
-}
-
-export async function loadApiBaseUrl() {
-  currentBaseUrl = DEFAULT_API_URL;
-  return DEFAULT_API_URL;
-}
-
-export async function setApiBaseUrl(input) {
-  const normalised = normaliseBaseUrl(input);
-  if (!isValidBaseUrl(normalised)) throw new Error('Enter a valid server address, for example https://khozo.swastik-kumar.workers.dev');
-  currentBaseUrl = normalised;
-  await AsyncStorage.setItem(STORAGE_KEY, normalised);
-  return normalised;
-}
-
-export async function resetApiBaseUrl() {
-  currentBaseUrl = DEFAULT_API_URL;
-  await AsyncStorage.removeItem(STORAGE_KEY);
-  return currentBaseUrl;
 }
 
 /** Helplines surfaced throughout the app. */

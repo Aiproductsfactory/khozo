@@ -1,4 +1,3 @@
-import { listReports, readPhoto } from './store.js';
 import crypto from 'node:crypto';
 
 const AARAKSHAK_API_URL = 'https://aarakshak.com/api/v1/compare';
@@ -117,12 +116,20 @@ async function compareFacesAarakshak(env, sourceBuf, targetBuf) {
   }
 }
 
-export async function rankMatches(env, photoBuf, hints = {}) {
+/**
+ * Ranks open cases against a sighting photo.
+ *
+ * `source` supplies the candidate cases and a photo reader. Both come from the
+ * request's store replica, which has already read the case rows, so ranking
+ * costs no additional query for them.
+ */
+export async function rankMatches(env, photoBuf, hints = {}, source = {}) {
   if (!photoBuf?.length) {
     return { candidates: [], engine: { ...ENGINES.none } };
   }
 
-  const reports = await listReports(env);
+  const reports = source.reports || [];
+  const readPhoto = source.readPhoto || (async () => null);
   const openCases = reports.filter((r) => r.status !== 'found' && !r.anonymizedAt);
   const maxCandidates = Number(env?.KHOZO_MATCH_CANDIDATES || 25);
   const withPhotos = openCases.filter((r) => r.photoFile).slice(0, maxCandidates);
@@ -132,7 +139,7 @@ export async function rankMatches(env, photoBuf, hints = {}) {
     const loaded = await Promise.all(
       withPhotos.map(async (report) => ({
         report,
-        targetBuf: await readPhoto(env, report.photoFile),
+        targetBuf: await readPhoto(report.photoFile),
       }))
     );
 

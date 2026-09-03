@@ -9,6 +9,25 @@ const backupFile = path.join(root, 'server', 'data', 'db.json.smoke.bak');
 const port = Number(process.env.KHOZO_SMOKE_PORT || 4400);
 const base = `http://localhost:${port}/api`;
 
+/**
+ * The same suite runs against both runtimes, because they share their route
+ * handlers: `--runtime express` (default) starts the Node API, `--runtime
+ * worker` starts the Cloudflare Worker's router shim on Node. A result that
+ * differs between the two is a bug in the runtime glue, which is the part that
+ * used to drift silently and 404 in production.
+ */
+const RUNTIMES = {
+  express: { entry: 'src/index.js', cwd: path.join(root, 'server') },
+  worker: { entry: 'scripts/worker-shim-server.mjs', cwd: root },
+};
+const runtimeFlag = process.argv.indexOf('--runtime');
+const runtimeName = runtimeFlag === -1 ? 'express' : process.argv[runtimeFlag + 1] || 'express';
+const runtime = RUNTIMES[runtimeName];
+if (!runtime) {
+  console.error(`Unknown runtime "${runtimeName}". Use one of: ${Object.keys(RUNTIMES).join(', ')}`);
+  process.exit(1);
+}
+
 let server;
 
 function assert(condition, message) {
@@ -108,8 +127,8 @@ async function run() {
     fs.copyFileSync(dbFile, backupFile);
     fs.rmSync(dbFile, { force: true });
   }
-  server = spawn(process.execPath, ['src/index.js'], {
-    cwd: path.join(root, 'server'),
+  server = spawn(process.execPath, [runtime.entry], {
+    cwd: runtime.cwd,
     env: {
       ...process.env,
       // Run against the isolated JSON store, not the real database. This suite
@@ -457,7 +476,15 @@ async function run() {
   assert(!('parentPhone' in publicBulletin), 'public bulletin should not expose parent phone');
   assert(!('parentName' in publicBulletin), 'public bulletin should not expose parent name');
   assert(!('childAadhar' in publicBulletin), 'public bulletin should not expose child Aadhar');
-  assert(!('photoUrl' in publicBulletin), 'public bulletin should not expose protected photo URL');
+  // A bulletin exists so the public can recognise the child, so it does carry a
+  // photo — but only for the case an officer chose to publish, and the URL must
+  // resolve without a token or the public page shows a broken image.
+  assert(
+    publicBulletin.photoUrl === `/api/reports/photo/${photoReport.report.id}`,
+    `published bulletin should carry its public photo URL, got ${publicBulletin.photoUrl}`
+  );
+  const bulletinPhoto = await fetch(`${base}${publicBulletin.photoUrl.replace('/api', '')}`);
+  assert(bulletinPhoto.ok, `published bulletin photo should load anonymously, got ${bulletinPhoto.status}`);
   const publicSearch = await request('GET', '/reports/public/search?state=Karnataka&status=missing');
   const searchBulletin = publicSearch.results.find((row) => row.id === photoReport.report.id);
   assert(searchBulletin, 'public search should include active published bulletin');
@@ -2085,7 +2112,7 @@ async function run() {
   assert(nationalAudit.audit.some((row) => row.action === 'mis.report_generated'), 'missing MIS report audit event');
   assert(nationalAudit.audit.some((row) => row.action === 'sighting.cwc_followup_completed'), 'missing CWC follow-up audit event');
 
-  console.log('API smoke checks passed.');
+  console.log(`API smoke checks passed (${runtimeName} runtime).`);
 }
 
 async function cleanup() {

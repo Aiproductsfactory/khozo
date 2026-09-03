@@ -1,58 +1,14 @@
-import React, { useCallback, useState } from 'react';
+import React from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Badge, Banner, Button, Card, Divider, Screen, SectionHeader, Text, TextField } from '../components';
-import { checkHealth } from '../services/api';
-import { DEFAULT_API_URL, getApiBaseUrl, resetApiBaseUrl, setApiBaseUrl } from '../services/config';
+import { Badge, Banner, Card, Divider, Button, Screen, SectionHeader, Text } from '../components';
 import { useOutbox } from '../services/outbox';
 import { useTheme } from '../theme';
 
 export default function SettingsScreen() {
   const theme = useTheme();
   const { online, pendingCount, flush, flushing } = useOutbox();
-
-  const [url, setUrl] = useState(getApiBaseUrl());
-  const [error, setError] = useState(null);
-  const [saved, setSaved] = useState(false);
-  const [probe, setProbe] = useState(null);
-  const [testing, setTesting] = useState(false);
-
-  const save = useCallback(async () => {
-    setError(null);
-    setSaved(false);
-    setProbe(null);
-    try {
-      const next = await setApiBaseUrl(url);
-      setUrl(next);
-      setSaved(true);
-    } catch (err) {
-      setError(err.message);
-    }
-  }, [url]);
-
-  const reset = useCallback(async () => {
-    const next = await resetApiBaseUrl();
-    setUrl(next);
-    setSaved(true);
-    setError(null);
-    setProbe(null);
-  }, []);
-
-  const test = useCallback(async () => {
-    setTesting(true);
-    setProbe(null);
-    try {
-      // Persist first so the probe hits the address shown in the field.
-      await setApiBaseUrl(url).catch(() => {});
-      const result = await checkHealth();
-      setProbe({ ok: result.ok, message: `Connected to ${result.service || 'khozo-api'} in ${result.latencyMs} ms` });
-    } catch (err) {
-      setProbe({ ok: false, message: err.message });
-    } finally {
-      setTesting(false);
-    }
-  }, [url]);
 
   return (
     <Screen edges={{ top: false, bottom: false }}>
