@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../api.js';
 import { useAuth } from '../auth.jsx';
 import { fmtDate, StatusBadge, Avatar, ROLE_LABELS } from '../lib.jsx';
@@ -900,7 +901,21 @@ export default function Cases() {
                     </button>
                   </td>
                   <td className="px-4 py-3 text-gray-600">{r.firNo || <span className="text-gray-300">-</span>}</td>
-                  <td className="px-4 py-3"><StatusBadge status={r.status} /></td>
+                  <td className="px-4 py-3">
+                    <StatusBadge status={r.status} />
+                    {/* An unconfirmed match is the most urgent fact about a case and
+                        it does not change the case's status; without this line the
+                        row reads "Missing" while the Matches queue holds a 71%. */}
+                    {r.pendingMatch ? (
+                      <Link
+                        to={`/app/matches?id=${encodeURIComponent(r.pendingMatch.foundReportId)}`}
+                        className="mt-1 inline-block whitespace-nowrap rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-200 hover:bg-amber-200"
+                      >
+                        Matched — pending verification · {Math.round(r.pendingMatch.score * 100)}%
+                        {r.pendingMatch.corroborated ? ' · two engines' : ''}
+                      </Link>
+                    ) : null}
+                  </td>
                   <td className="px-4 py-3 text-gray-600">{r.workflowStatus || '-'}</td>
                   <td className="px-4 py-3 text-gray-600">{r.foundLocation || '-'}</td>
                   <td className="px-4 py-3">

@@ -364,7 +364,26 @@ export default function registerReportRoutes(router, deps) {
           .some((v) => String(v).toLowerCase().includes(needle))
       );
     }
-    res.json({ reports: rows });
+    // A match an officer has not yet confirmed lives on the sighting, not the
+    // case, so a case list that reads only case status shows "missing" for a
+    // child whose face two engines agreed on ten minutes ago. Surface the
+    // strongest unconfirmed match per case, computed from the sightings this
+    // caller is already allowed to see -- nothing crosses a jurisdiction line
+    // that the Matches page would not show them anyway.
+    const pendingByCase = new Map();
+    for (const f of scopeFoundReports(req.user, listFoundReports(), rows)) {
+      if (f.status !== 'pending_review' || !f.matchedReportId) continue;
+      const prev = pendingByCase.get(f.matchedReportId);
+      if (!prev || (f.matchScore || 0) > prev.score) {
+        pendingByCase.set(f.matchedReportId, {
+          foundReportId: f.id,
+          score: f.matchScore || 0,
+          corroborated: Boolean(f.matchEngine?.corroborated),
+          at: f.createdAt || null,
+        });
+      }
+    }
+    res.json({ reports: rows.map((r) => ({ ...r, pendingMatch: pendingByCase.get(r.id) || null })) });
   });
 
   // Register a missing child. Parents/NGOs file a report; police file a formal FIR.
