@@ -22,6 +22,9 @@ import {
   fixedWindowRateLimit,
 } from './src/http/express-compat.js';
 import { createRequestStore } from './src/store-sync.js';
+// The same redaction the public list and the public case endpoint use, so the
+// share preview can never carry a field those two would have withheld.
+import { bulletinPayload as sharedBulletinPayload } from '../shared/case-domain.js';
 import { detectPerson, matchEngineInfo, probeMatchProviders, rankMatches } from './src/match.js';
 
 const CORS_HEADERS = {
@@ -140,11 +143,126 @@ const MOUNTS = [
   ['/api/grievances', registerGrievanceRoutes],
 ];
 
+/** Escapes a value for an HTML attribute. Case data is arbitrary user text. */
+function attr(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * Serves /child/:id with the child's own share metadata baked into the HTML.
+ *
+ * The site is a client-rendered SPA, so every URL shipped one identical set of
+ * meta tags: a case pasted into WhatsApp — the channel this product actually
+ * travels through — previewed as a bare grey link with no name and no face.
+ * Crawlers do not run JavaScript, so no amount of client-side work fixes it.
+ *
+ * Because the Worker already runs on every request, the fix needs no rendering
+ * framework: fetch the same redacted bulletin payload the public page uses,
+ * rewrite the <head> of the existing document, and hand the unmodified SPA to
+ * the browser to hydrate as usual.
+ *
+ * Failure here is never allowed to cost a person the page. Anything unexpected
+ * falls through to the normal asset response, which still renders the case
+ * client-side — a missing preview is a bad share, a 500 is a lost child.
+ */
+async function childCaseDocument(request, env, ctx, id, url) {
+  const assetRequest = new Request(new URL('/index.html', url.origin), request);
+  const assetResponse = await env.ASSETS.fetch(assetRequest);
+
+  // Crawlers issue GET and HEAD; anything else has no business here.
+  if (!assetResponse.ok || (request.method !== 'GET' && request.method !== 'HEAD')) return assetResponse;
+
+  let bulletin = null;
+  let flush = null;
+  try {
+    const requestStore = await createRequestStore(env, ctx);
+    flush = requestStore.flush;
+    const report = requestStore.store.findReport(id);
+    const visible =
+      report &&
+      report.status === 'missing' &&
+      report.intakeStatus !== 'pending_verification' &&
+      report.bulletin?.published === true &&
+      !report.anonymizedAt;
+    if (visible) bulletin = sharedBulletinPayload(report);
+  } catch (err) {
+    console.warn('[worker] child case metadata unavailable:', err?.message || err);
+  } finally {
+    // Read-only path, but the store contract expects the flush either way.
+    if (flush) await flush().catch(() => {});
+  }
+
+  if (!bulletin) return assetResponse;
+
+  const name = bulletin.childName || 'A missing child';
+  const agePart = bulletin.age != null && bulletin.age !== '' ? `, ${bulletin.age}` : '';
+  const title = `${name}${agePart} — missing from ${bulletin.lastSeen} | Khozo`;
+  const description =
+    `Have you seen ${name}? Report a sighting in under a minute. ` +
+    `Every appeal on Khozo is issued by ${bulletin.agency} and reviewed by an authorised officer.`;
+  const canonical = `${url.origin}/child/${encodeURIComponent(bulletin.id)}`;
+  const image = bulletin.photoUrl ? `${url.origin}${bulletin.photoUrl}` : `${url.origin}/assets/share-default.jpg`;
+
+  // Person + missing-appeal structured data, so a search engine can render the
+  // case as more than a blue link.
+  const jsonLd = JSON.stringify({
+    '@context': 'https://schema.org',
+    '@type': 'Person',
+    name,
+    ...(bulletin.gender ? { gender: bulletin.gender } : {}),
+    image,
+    url: canonical,
+    description,
+  });
+
+  const head =
+    `<title>${attr(title)}</title>` +
+    `<meta name="description" content="${attr(description)}" />` +
+    `<link rel="canonical" href="${attr(canonical)}" />` +
+    `<meta property="og:type" content="article" />` +
+    `<meta property="og:site_name" content="Khozo" />` +
+    `<meta property="og:title" content="${attr(title)}" />` +
+    `<meta property="og:description" content="${attr(description)}" />` +
+    `<meta property="og:image" content="${attr(image)}" />` +
+    `<meta property="og:image:alt" content="${attr(`Photograph of ${name}`)}" />` +
+    `<meta property="og:url" content="${attr(canonical)}" />` +
+    `<meta name="twitter:card" content="summary_large_image" />` +
+    `<meta name="twitter:title" content="${attr(title)}" />` +
+    `<meta name="twitter:description" content="${attr(description)}" />` +
+    `<meta name="twitter:image" content="${attr(image)}" />` +
+    `<script type="application/ld+json">${jsonLd.replace(/</g, '\\u003c')}</script>`;
+
+  let html = await assetResponse.text();
+  // Drop the document's own title and description so the case's own values are
+  // the only ones a crawler sees.
+  html = html
+    .replace(/<title>[\s\S]*?<\/title>/i, '')
+    .replace(/<meta\s+name=["']description["'][^>]*>/i, '')
+    .replace('</head>', `${head}</head>`);
+
+  const headers = new Headers(assetResponse.headers);
+  headers.set('content-type', 'text/html; charset=utf-8');
+  headers.delete('content-length');
+  headers.delete('etag');
+  // A withdrawn appeal must stop being shared quickly, so this is deliberately
+  // short-lived rather than cached at the edge for hours.
+  headers.set('cache-control', 'public, max-age=0, s-maxage=60');
+  return new Response(html, { status: 200, headers });
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
+    if (!url.pathname.startsWith('/api/')) {
+      const child = url.pathname.match(/^\/child\/([A-Za-z0-9_-]{1,64})\/?$/);
+      if (child) return childCaseDocument(request, env, ctx, child[1], url);
+      return env.ASSETS.fetch(request);
+    }
 
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
 
