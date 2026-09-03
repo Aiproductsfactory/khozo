@@ -5,10 +5,40 @@
 const STATE_ROLES = ['admin', 'state_nodal', 'sara', 'crime_bureau'];
 const DISTRICT_ROLES = ['police', 'sjpu', 'ahtu', 'dcrb', 'dlsa', 'cwc', 'dcpu', 'rpf', 'cci', 'saa', 'jjb'];
 
+// Jurisdiction names arrive from three places that never agree: the seeded
+// accounts ("Mumbai"), the registration form (whatever the officer typed), and
+// the phone's reverse geocoder ("Navi mumbai", "Navi Mumbai", "Mumbai Suburban
+// District" -- three spellings in one evening). An exact string compare turned
+// each of those into a row the district officer could not see while
+// super_admin could, which is the one officer the row exists for. Compare on a
+// normalised name, and treat the administrative fragments of Greater Mumbai as
+// the single jurisdiction the officers working it already treat it as.
+const DISTRICT_ALIASES = {
+  'navi mumbai': 'mumbai',
+  'mumbai suburban': 'mumbai',
+  'mumbai city': 'mumbai',
+  'greater mumbai': 'mumbai',
+};
+
+function normaliseDistrict(value) {
+  const base = String(value || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\s+(district|division)$/, '');
+  return DISTRICT_ALIASES[base] || base;
+}
+
+export function sameDistrict(a, b) {
+  const x = normaliseDistrict(a);
+  const y = normaliseDistrict(b);
+  return Boolean(x) && x === y;
+}
+
 function canAccessScopedLocation(user, row) {
   if (!row?.state && !row?.district) return user?.role === 'super_admin';
   if (STATE_ROLES.includes(user?.role)) return !user?.jurisdiction?.state || row.state === user?.jurisdiction?.state;
-  if (DISTRICT_ROLES.includes(user?.role)) return !user?.jurisdiction?.district || row.district === user?.jurisdiction?.district;
+  if (DISTRICT_ROLES.includes(user?.role)) return !user?.jurisdiction?.district || sameDistrict(row.district, user?.jurisdiction?.district);
   return false;
 }
 
@@ -36,7 +66,7 @@ export function scopeReports(user, reports = []) {
     case 'saa':
     case 'jjb':
       return reports.filter(
-        (r) => !user.jurisdiction?.district || r.district === user.jurisdiction?.district
+        (r) => !user.jurisdiction?.district || sameDistrict(r.district, user.jurisdiction?.district)
       );
     case 'parent':
     case 'ngo':
@@ -98,7 +128,7 @@ export function scopeAudit(user, auditRows = [], reports = []) {
     if (row.scope?.matchedReportId) return visibleReportIds.has(row.scope.matchedReportId);
     if (row.targetType === 'foundReport') return canAccessScopedLocation(user, row.scope || {});
     if (STATE_ROLES.includes(user.role)) return !user.jurisdiction?.state || row.scope?.state === user.jurisdiction?.state;
-    if (DISTRICT_ROLES.includes(user.role)) return !user.jurisdiction?.district || row.scope?.district === user.jurisdiction?.district;
+    if (DISTRICT_ROLES.includes(user.role)) return !user.jurisdiction?.district || sameDistrict(row.scope?.district, user.jurisdiction?.district);
     return row.actorId === user.id;
   });
 }
