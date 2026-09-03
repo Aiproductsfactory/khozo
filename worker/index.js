@@ -73,14 +73,15 @@ function buildDeps(env, store, ctx) {
     updateUser: store.updateUser,
     listActivity: store.listActivity,
     addActivity: store.addActivity,
+    listNotifications: store.listNotifications,
+    addNotification: store.addNotification,
+    markNotificationsRead: store.markNotificationsRead,
     listAudit: store.listAudit,
     addAudit: store.addAudit,
     verifyAuditChain: store.verifyAuditChain,
     savePhoto: store.savePhoto,
     readPhoto: store.readPhoto,
     photoMimeType: store.photoMimeType,
-    BASE_TOTAL_MISSING: store.BASE_TOTAL_MISSING,
-    BASE_TOTAL_FOUND: store.BASE_TOTAL_FOUND,
 
     // Postgres is the only storage mode the Worker has.
     isPostgres: true,

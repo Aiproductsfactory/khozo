@@ -196,4 +196,9 @@ export const officerApi = {
   reports: (token, filters = {}) => request(`/reports${query(filters)}`, { token }).then((r) => r?.reports || []),
   report: (token, id) => request(`/reports/${encodeURIComponent(id)}`, { token }),
   stats: (token) => request('/dashboard/stats', { token }),
+
+  /** Alerts raised for this officer, newest first, with the unread count. */
+  notifications: (token) => request('/dashboard/notifications', { token }),
+  markNotificationsRead: (token, ids) =>
+    request('/dashboard/notifications/read', { method: 'POST', token, body: ids ? { ids } : {} }),
 };

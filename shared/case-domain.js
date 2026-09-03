@@ -969,26 +969,25 @@ function validateFoundReport(body, file) {
   return { ageApprox: ageApprox.value, lat: lat.value, lng: lng.value };
 }
 
+/**
+ * Where a sighting belongs, for jurisdiction routing.
+ *
+ * This used to guess the state from a hardcoded list of city names — "mumbai",
+ * "dadar", "goa", "delhi" — which meant a sighting anywhere else in India got
+ * no jurisdiction at all, and an unlocated sighting is one no district officer
+ * can see. A child reported in Guwahati was invisible to everyone.
+ *
+ * So there is no guessing now. The location is what the reporter selected; if
+ * they gave none, the sighting is `unassigned` and every review role sees it
+ * until an officer places it. An unrouted report must land in someone's queue,
+ * never in nobody's.
+ */
 function inferLocationScope(body = {}) {
-  const text = [body.foundLocation, body.note].filter(Boolean).join(' ').toLowerCase();
-  const state = body.state || (
-    text.includes('mumbai') || text.includes('powai') || text.includes('dadar') || text.includes('cst') || text.includes('csmt')
-      ? 'Maharashtra'
-      : text.includes('margao') || text.includes('goa')
-        ? 'Goa'
-        : text.includes('delhi')
-          ? 'Delhi'
-          : null
-  );
-  const district = body.district || (
-    state === 'Maharashtra' && (text.includes('mumbai') || text.includes('powai') || text.includes('dadar') || text.includes('cst') || text.includes('csmt'))
-      ? 'Mumbai'
-      : state === 'Goa' && text.includes('margao')
-        ? 'South Goa'
-        : null
-  );
-  return { state, district };
+  const state = cleanText(body.state, 80) || null;
+  const district = cleanText(body.district, 80) || null;
+  return { state, district, unassigned: !state && !district };
 }
+
 
 export {
   DAY,

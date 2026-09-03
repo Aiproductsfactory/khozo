@@ -73,6 +73,13 @@ const TABLES = {
     photo_file: r.photoFile || null,
   }),
   grievances: (r) => ({ id: r.id, status: r.status || 'open' }),
+  notifications: (r) => ({
+    id: r.id,
+    ts: Number(r.ts) || Date.now(),
+    user_id: r.userId || null,
+    kind: r.kind || null,
+    read_at: r.readAt ? Number(r.readAt) : null,
+  }),
   activity: (r) => ({ id: r.id, ts: Number(r.ts) || Date.now(), actor_id: r.actorId || null }),
   audit: (r) => ({
     id: r.id,
@@ -148,7 +155,7 @@ export async function hydrate() {
     const { rows } = await pool.query(`select data from public.${table} ${order}`);
     return rows.map((row) => row.data);
   };
-  const [users, reports, foundReports, grievances, activity, audit] = await Promise.all([
+  const [users, reports, foundReports, grievances, activity, audit, notifications] = await Promise.all([
     read('users'),
     read('reports', 'order by created_at desc'),
     read('found_reports', 'order by created_at desc'),
@@ -156,8 +163,9 @@ export async function hydrate() {
     read('activity', 'order by ts desc'),
     // store.js keeps the audit log newest-first and reverses it to verify.
     read('audit', 'order by ts desc'),
+    read('notifications', 'order by ts desc'),
   ]);
-  return { users, reports, foundReports, grievances, activity, audit };
+  return { users, reports, foundReports, grievances, activity, audit, notifications };
 }
 
 // --- Photo storage ---------------------------------------------------------

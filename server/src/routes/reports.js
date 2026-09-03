@@ -10,7 +10,7 @@ import registerReportRoutes from '../../../shared/routes/reports.js';
 import {
   listReports, addReport, findReport, updateReport,
   listFoundReports, addFoundReport, findFoundReport, updateFoundReport,
-  listUsers, addActivity, addAudit,
+  listUsers, addActivity, addAudit, addNotification,
   savePhoto, readPhoto, photoMimeType,
 } from '../store.js';
 import { authRequired, optionalAuth, passwordChangeRequired, requireRole } from '../auth.js';
@@ -22,7 +22,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 *
 export default registerReportRoutes(Router(), {
   listReports, addReport, findReport, updateReport,
   listFoundReports, addFoundReport, findFoundReport, updateFoundReport,
-  listUsers, addActivity, addAudit,
+  listUsers, addActivity, addAudit, addNotification,
   savePhoto, readPhoto, photoMimeType,
   authRequired, optionalAuth, passwordChangeRequired, requireRole,
   auditPublicRateLimit, clientIp, fixedWindowRateLimit,

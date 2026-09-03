@@ -4,11 +4,13 @@ import { useAuth } from '../auth.jsx';
 import { Logo } from '../components.jsx';
 import { ROLE_LABELS, ROLE_TAGLINE, Avatar } from '../lib.jsx';
 import { DASHBOARD_NAV } from './routes.js';
+import NotificationBell from './NotificationBell.jsx';
 
 export default function DashboardLayout() {
   const { user, logout } = useAuth();
   const nav = useNavigate();
   const [profileOpen, setProfileOpen] = useState(false);
+  const [connected, setConnected] = useState(true);
   const dropdownRef = useRef(null);
 
   const items = DASHBOARD_NAV.filter((n) => n.roles.includes(user.role));
@@ -88,17 +90,25 @@ export default function DashboardLayout() {
           </div>
 
           <div className="flex items-center gap-5">
-            {/* Live Status Pill */}
-            <div className="hidden md:flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1.5 border border-emerald-100 shadow-sm">
-              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              <span className="text-xs font-bold text-emerald-700">System Synced</span>
+            {/*
+              Reflects whether the last alert poll actually reached the API. It
+              previously read "System Synced" unconditionally, which is the one
+              thing a status indicator must never do.
+            */}
+            <div
+              className={`hidden md:flex items-center gap-2 rounded-full px-3 py-1.5 border shadow-sm ${
+                connected
+                  ? 'bg-emerald-50 border-emerald-100'
+                  : 'bg-amber-50 border-amber-100'
+              }`}
+            >
+              <span className={`h-2 w-2 rounded-full ${connected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+              <span className={`text-xs font-bold ${connected ? 'text-emerald-700' : 'text-amber-700'}`}>
+                {connected ? 'Connected' : 'Reconnecting…'}
+              </span>
             </div>
 
-            {/* Notification Bell */}
-            <button className="relative rounded-full p-2.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-all duration-200 focus:outline-none ring-2 ring-transparent focus:ring-indigo-100">
-              <span className="text-lg leading-none">🔔</span>
-              <span className="absolute top-2 right-2 h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-white border border-rose-600"></span>
-            </button>
+            <NotificationBell onConnectionChange={setConnected} />
 
             <div className="h-8 w-px bg-slate-200"></div>
 

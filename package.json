@@ -16,7 +16,7 @@
     "dev:web": "npm run dev -w web",
     "seed:test-data": "node scripts/seed-test-data.mjs",
     "test:accounts": "node scripts/test-accounts.mjs",
-    "test:all": "npm run test:coverage && npm run smoke:api && npm run smoke:worker && npm run smoke:store && npm run smoke:web-routes && npm run smoke:pwa",
+    "test:all": "npm run test:coverage && npm run smoke:api && npm run smoke:worker && npm run smoke:alerts && npm run smoke:store && npm run smoke:web-routes && npm run smoke:pwa",
     "test:coverage": "node scripts/api-coverage.mjs",
     "smoke:store": "node scripts/store-replica-smoke.mjs",
     "smoke:api": "node scripts/api-smoke.mjs",
@@ -27,7 +27,8 @@
     "test:images": "node scripts/test-image-pipeline.mjs",
     "db:migrate": "node scripts/migrate-to-postgres.mjs",
     "db:migrate-photos": "node scripts/migrate-photos.mjs",
-    "db:sightings": "node scripts/purge-test-sightings.mjs"
+    "db:sightings": "node scripts/purge-test-sightings.mjs",
+    "smoke:alerts": "node scripts/sighting-alert-smoke.mjs"
   },
   "devDependencies": {
     "concurrently": "^10.0.3",

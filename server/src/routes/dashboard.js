@@ -7,7 +7,7 @@ import {
   listReports, listFoundReports, listActivity, listUsers,
   listAudit, verifyAuditChain, updateFoundReport, updateReport,
   addActivity, addAudit, addUser, findUserByEmail,
-  BASE_TOTAL_MISSING, BASE_TOTAL_FOUND,
+  listNotifications, markNotificationsRead,
 } from '../store.js';
 import { isPostgres } from '../db.js';
 import { authRequired, passwordChangeRequired, publicUser, requireRole } from '../auth.js';
@@ -17,7 +17,7 @@ export default registerDashboardRoutes(Router(), {
   listReports, listFoundReports, listActivity, listUsers,
   listAudit, verifyAuditChain, updateFoundReport, updateReport,
   addActivity, addAudit, addUser, findUserByEmail,
-  BASE_TOTAL_MISSING, BASE_TOTAL_FOUND,
+  listNotifications, markNotificationsRead,
   isPostgres,
   authRequired, passwordChangeRequired, publicUser, requireRole,
   matchEngineInfo,

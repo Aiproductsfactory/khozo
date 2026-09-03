@@ -28,9 +28,6 @@ export function photoMimeType(filename) {
   return 'image/jpeg';
 }
 
-export const BASE_TOTAL_MISSING = 10468;
-export const BASE_TOTAL_FOUND = 4068;
-
 function stable(value) {
   if (Array.isArray(value)) return value.map(stable);
   if (value && typeof value === 'object') {
@@ -84,7 +81,22 @@ export async function createRequestStore(env, ctx, io = POSTGRES) {
     io.query(env, 'select data from public.audit order by ts desc'),
   ]).then((results) => results.map((r) => r.rows.map((row) => row.data).filter(Boolean)));
 
-  const db = { users, reports, foundReports, grievances, activity, audit };
+  // Notifications are read for one officer at a time, so unlike the tables
+  // above they are fetched per request rather than hydrated wholesale — the
+  // fan-out is one row per authority per sighting and grows fastest of all.
+  const db = { users, reports, foundReports, grievances, activity, audit, notifications: [] };
+  let notificationsLoaded = false;
+  async function loadNotifications(userId) {
+    if (notificationsLoaded) return db.notifications;
+    const { rows } = await io.query(
+      env,
+      'select data from public.notifications where user_id = $1 order by ts desc limit 200',
+      [userId]
+    );
+    db.notifications = rows.map((row) => row.data).filter(Boolean);
+    notificationsLoaded = true;
+    return db.notifications;
+  }
 
   // Records touched during this request, by table, so the flush writes only what
   // changed rather than the whole dataset.
@@ -105,9 +117,6 @@ export async function createRequestStore(env, ctx, io = POSTGRES) {
   }
 
   const store = {
-    BASE_TOTAL_MISSING,
-    BASE_TOTAL_FOUND,
-
     // --- Users ---
     listUsers: () => db.users,
     findUserById: (id) => (id ? db.users.find((u) => u.id === id) || null : null),
@@ -161,6 +170,35 @@ export async function createRequestStore(env, ctx, io = POSTGRES) {
       const grievance = store.findGrievance(id);
       if (!grievance) return null;
       return markDirty('grievances', replace(db.grievances, id, { ...grievance, ...patch }));
+    },
+
+    // --- Authority notifications ---
+    async listNotifications(userId) {
+      const rows = await loadNotifications(userId);
+      return rows.slice().sort((a, b) => b.ts - a.ts);
+    },
+    addNotification(entry) {
+      const row = {
+        id: `n_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        ts: Date.now(),
+        readAt: null,
+        ...entry,
+      };
+      db.notifications.unshift(row);
+      return markDirty('notifications', row);
+    },
+    async markNotificationsRead(userId, ids = null) {
+      const rows = await loadNotifications(userId);
+      const now = Date.now();
+      const touched = [];
+      for (const row of rows) {
+        if (row.readAt) continue;
+        if (ids && !ids.includes(row.id)) continue;
+        row.readAt = now;
+        markDirty('notifications', row);
+        touched.push(row.id);
+      }
+      return touched;
     },
 
     // --- Activity feed ---
@@ -234,7 +272,7 @@ export async function createRequestStore(env, ctx, io = POSTGRES) {
    * failure cannot leave the hash chain ahead of the data it describes.
    */
   async function flush() {
-    const order = ['users', 'reports', 'found_reports', 'grievances', 'activity', 'audit'];
+    const order = ['users', 'reports', 'found_reports', 'grievances', 'notifications', 'activity', 'audit'];
     for (const table of order) {
       const rows = dirty.get(table);
       if (!rows?.size) continue;

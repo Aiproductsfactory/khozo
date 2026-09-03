@@ -17,7 +17,7 @@ export default function registerDashboardRoutes(router, deps) {
     listReports, listFoundReports, listActivity, listUsers,
     listAudit, verifyAuditChain, updateFoundReport, updateReport,
     addActivity, addAudit, addUser, findUserByEmail,
-    BASE_TOTAL_MISSING, BASE_TOTAL_FOUND,
+    listNotifications, markNotificationsRead,
     isPostgres,
     authRequired, passwordChangeRequired, publicUser, requireRole,
     matchEngineInfo,
@@ -805,10 +805,13 @@ export default function registerDashboardRoutes(router, deps) {
     const review = all.filter((r) => r.status === 'under_review');
     const closed = all.filter((r) => r.status === 'closed');
   
-    // For the national view, blend in the deck's headline totals so the numbers read realistically.
-    const national = req.user.role === 'super_admin';
-    const totalMissing = (national ? BASE_TOTAL_MISSING : 0) + missing.length + review.length;
-    const totalFound = (national ? BASE_TOTAL_FOUND : 0) + found.length + closed.length;
+    // Counts are what is actually in the system. A previous version added a
+    // fixed 10,468 / 4,068 to the national view "so the numbers read
+    // realistically" — an operations dashboard that inflates its own caseload
+    // is worse than an empty one, because every figure downstream of it, the
+    // reunification rate included, becomes fiction.
+    const totalMissing = missing.length + review.length;
+    const totalFound = found.length + closed.length;
   
     // State-wise breakdown.
     const byState = {};
@@ -859,6 +862,27 @@ export default function registerDashboardRoutes(router, deps) {
     res.json({ activity: scopeActivity(req.user, listActivity(), listReports()).slice(0, 12) });
   });
   
+  /**
+   * This officer's alert inbox. Every authority is notified when a child is
+   * spotted, so this is the surface that turns a public report into someone's
+   * responsibility within seconds rather than at the next dashboard refresh.
+   */
+  router.get('/notifications', async (req, res) => {
+    const rows = await listNotifications(req.user.id);
+    res.json({
+      notifications: rows.slice(0, 50),
+      unread: rows.filter((n) => !n.readAt).length,
+      checkedAt: new Date().toISOString(),
+    });
+  });
+
+  router.post('/notifications/read', async (req, res) => {
+    const ids = Array.isArray(req.body?.ids) && req.body.ids.length ? req.body.ids.map(String) : null;
+    const marked = await markNotificationsRead(req.user.id, ids);
+    const rows = await listNotifications(req.user.id);
+    res.json({ marked: marked.length, unread: rows.filter((n) => !n.readAt).length });
+  });
+
   router.get('/readiness', requireRole(...OPERATIONAL_ROLES), (req, res) => {
     const checks = readinessChecks(req.user);
     res.json({

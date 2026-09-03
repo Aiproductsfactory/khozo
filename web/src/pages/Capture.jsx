@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
+import { INDIAN_STATES } from '../../../shared/india.js';
 import { Logo } from '../components.jsx';
 import { Avatar } from '../lib.jsx';
 import {
@@ -212,9 +213,20 @@ export default function Capture() {
                 </div>
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
+                {/*
+                  The state decides which officers this report reaches, so it is
+                  a list rather than free text — a typo used to leave a sighting
+                  outside every jurisdiction. Still optional: a report with no
+                  location goes to every review desk rather than being refused.
+                */}
                 <div>
                   <label className="label">State</label>
-                  <input className="field" value={form.state} onChange={set('state')} placeholder="e.g. Maharashtra" />
+                  <select className="field" value={form.state} onChange={set('state')}>
+                    <option value="">Select state (helps us route it faster)</option>
+                    {INDIAN_STATES.map((state) => (
+                      <option key={state} value={state}>{state}</option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="label">District</label>

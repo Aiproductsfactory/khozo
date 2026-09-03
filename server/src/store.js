@@ -20,8 +20,8 @@ export const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
 
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-/** @type {{users:any[], reports:any[], foundReports:any[], grievances:any[], activity:any[], audit:any[]}} */
-let db = { users: [], reports: [], foundReports: [], grievances: [], activity: [], audit: [] };
+/** @type {{users:any[], reports:any[], foundReports:any[], grievances:any[], activity:any[], audit:any[], notifications:any[]}} */
+let db = { users: [], reports: [], foundReports: [], grievances: [], activity: [], audit: [], notifications: [] };
 
 /**
  * Persists the whole in-memory dataset.
@@ -549,6 +549,7 @@ function persistAll() {
     ['grievances', db.grievances],
     ['activity', db.activity],
     ['audit', db.audit.slice().reverse()], // oldest first: the chain depends on order
+    ['notifications', db.notifications],
   ]) {
     for (const row of rows) enqueueUpsert(table, row);
   }
@@ -578,11 +579,6 @@ function initFromFile() {
   }
   seed();
 }
-
-// These headline counts come from the deck; live records are layered on top so the
-// numbers stay believable while the seeded/added records drive the tables and charts.
-export const BASE_TOTAL_MISSING = 10468;
-export const BASE_TOTAL_FOUND = 4068;
 
 // --- Photos ---------------------------------------------------------------
 // Uploaded images are written to data/uploads so they survive a restart. Holding
@@ -751,6 +747,42 @@ export function updateGrievance(id, patch) {
   Object.assign(g, patch);
   persistRow('grievances', g);
   return g;
+}
+
+// --- Authority notifications ---
+//
+// One row per recipient, so each officer has their own read state. The alert
+// says where and when a child was seen and never who the child is; opening the
+// sighting behind it goes through the same jurisdiction rules as everything
+// else.
+// Async in both runtimes: the Worker reads one officer's inbox per request
+// rather than hydrating every notification, and the shared routes must not care
+// which runtime they are on.
+export async function listNotifications(userId) {
+  return db.notifications.filter((n) => n.userId === userId).sort((a, b) => b.ts - a.ts).slice(0, 200);
+}
+export function addNotification(entry) {
+  const row = {
+    id: `n_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    ts: Date.now(),
+    readAt: null,
+    ...entry,
+  };
+  db.notifications.unshift(row);
+  persistRow('notifications', row);
+  return row;
+}
+export async function markNotificationsRead(userId, ids = null) {
+  const now = Date.now();
+  const touched = [];
+  for (const row of db.notifications) {
+    if (row.userId !== userId || row.readAt) continue;
+    if (ids && !ids.includes(row.id)) continue;
+    row.readAt = now;
+    persistRow('notifications', row);
+    touched.push(row.id);
+  }
+  return touched;
 }
 
 // --- Activity feed ---

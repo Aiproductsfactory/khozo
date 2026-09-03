@@ -1,4 +1,6 @@
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { api } from '../api.js';
 import { Logo, SectionTitle } from '../components.jsx';
 import { useAuth } from '../auth.jsx';
 
@@ -38,6 +40,16 @@ function Nav() {
 }
 
 function Hero() {
+  const [summary, setSummary] = useState(null);
+
+  // Real counts or none. A dash while the request is in flight is honest; a
+  // placeholder number on a page about missing children is not.
+  useEffect(() => {
+    api.get('/reports/public/summary')
+      .then((d) => setSummary(d.summary || null))
+      .catch(() => setSummary(null));
+  }, []);
+
   return (
     <section className="khozo-mesh relative overflow-hidden text-white">
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,transparent,rgba(0,0,0,.35))]" />
@@ -101,22 +113,32 @@ function Hero() {
               </div>
               <div className="mt-4 grid grid-cols-2 gap-3">
                 {[
-                  { k: 'Total missing', v: '10,468', c: 'text-red-600' },
-                  { k: 'Reunited', v: '4,068', c: 'text-emerald-600' },
-                  { k: 'States onboard', v: '28', c: 'text-ink' },
-                  { k: 'Avg. match time', v: '< 2 min', c: 'text-khozo' },
+                  { k: 'Active cases', v: summary?.activeCases, c: 'text-red-600' },
+                  { k: 'Reunited', v: summary?.reunited, c: 'text-emerald-600' },
+                  { k: 'Public bulletins', v: summary?.publicBulletins, c: 'text-ink' },
+                  { k: 'Sightings received', v: summary?.sightingsReceived, c: 'text-khozo' },
                 ].map((s) => (
                   <div key={s.k} className="rounded-xl bg-gray-50 p-4">
                     <p className="text-xs font-medium text-gray-500">{s.k}</p>
-                    <p className={`mt-1 text-2xl font-bold ${s.c}`}>{s.v}</p>
+                    <p className={`mt-1 text-2xl font-bold ${s.c}`}>
+                      {s.v == null ? <span className="text-gray-300">—</span> : s.v.toLocaleString('en-IN')}
+                    </p>
                   </div>
                 ))}
               </div>
               <div className="mt-4 flex items-center gap-3 rounded-xl bg-khozo-light p-3">
                 <span className="grid h-9 w-9 place-items-center rounded-lg bg-khozo text-white">✓</span>
                 <div className="text-sm">
-                  <p className="font-semibold">Match found · suresh, age 4</p>
-                  <p className="text-gray-500">Powai, Mumbai · parent alerted via SMS</p>
+                  <p className="font-semibold">
+                    {summary
+                      ? `${summary.sightingsActioned.toLocaleString('en-IN')} sightings actioned by officers`
+                      : 'Connecting to the Khozo network…'}
+                  </p>
+                  <p className="text-gray-500">
+                    {summary
+                      ? `${summary.statesCovered} state${summary.statesCovered === 1 ? '' : 's'} · ${summary.agenciesOnboard} agencies on the network`
+                      : 'Live counts load from the national register'}
+                  </p>
                 </div>
               </div>
             </div>

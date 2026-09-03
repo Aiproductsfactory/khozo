@@ -8,7 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Banner, Button, Card, CheckField, ChoiceField, Screen, Text, TextField } from '../components';
+import { Banner, Button, Card, CheckField, ChoiceField, Screen, StateField, Text, TextField } from '../components';
 import { ApiError, submitSighting } from '../services/api';
 import { useAuth } from '../services/auth';
 import { useOutbox } from '../services/outbox';
@@ -462,7 +462,7 @@ export default function ReportSightingScreen() {
 
           <View style={[styles.inlineRow, { gap: theme.spacing.md }]}>
             <TextField label="District" placeholder="e.g. Mumbai" value={form.district} onChangeText={(v) => set('district', v)} style={{ flex: 1 }} />
-            <TextField label="State" placeholder="e.g. Maharashtra" value={form.state} onChangeText={(v) => set('state', v)} style={{ flex: 1 }} />
+            <StateField value={form.state} onChange={(v) => set('state', v)} style={{ flex: 1 }} />
           </View>
         </View>
       ) : null}

@@ -131,7 +131,7 @@ export default function registerReportRoutes(router, deps) {
   const {
     listReports, addReport, findReport, updateReport,
     listFoundReports, addFoundReport, findFoundReport, updateFoundReport,
-    listUsers, addActivity, addAudit,
+    listUsers, addActivity, addAudit, addNotification,
     savePhoto, readPhoto, photoMimeType,
     authRequired, optionalAuth, passwordChangeRequired, requireRole,
     auditPublicRateLimit, clientIp, fixedWindowRateLimit,
@@ -141,6 +141,43 @@ export default function registerReportRoutes(router, deps) {
   } = deps;
 
   const protectedRoute = [authRequired, passwordChangeRequired];
+
+  /**
+   * Alerts every authority account that a child has been spotted.
+   *
+   * Deliberately not scoped to the district the sighting falls in. A citizen
+   * reporting a child rarely knows which jurisdiction they are standing in, and
+   * a trafficked child is by definition moving between them; an alert that only
+   * reaches one district is the alert that arrives too late. So every
+   * authority — police, SJPU, AHTU, CWC, DCPU, RPF, CCI, SAA, JJB, DLSA, the
+   * state and national desks and registered NGOs — is told, and the message
+   * carries only where and when. Parents are not notified: they are told about
+   * their own child by an officer, never about every sighting in the country.
+   *
+   * Opening the sighting behind the alert still goes through the ordinary
+   * jurisdiction rules, so knowing that a child was seen does not grant access
+   * to that child's record.
+   */
+  function notifyAuthorities({ kind, title, body, priority = 'normal', scope = {} }) {
+    const recipients = listUsers().filter((u) => u.role !== 'parent');
+    for (const recipient of recipients) {
+      addNotification({
+        userId: recipient.id,
+        kind,
+        title,
+        body,
+        priority,
+        scope,
+        // Lets an officer see at a glance whether this one is theirs to action,
+        // without hiding the rest from them.
+        inJurisdiction:
+          !scope.state ||
+          !recipient.jurisdiction?.state ||
+          recipient.jurisdiction.state === scope.state,
+      });
+    }
+    return recipients.length;
+  }
 
   const foundReportLimit = fixedWindowRateLimit({
     name: 'public_found_report',
@@ -228,6 +265,38 @@ export default function registerReportRoutes(router, deps) {
       .sort((a, b) => new Date(b.bulletin?.publishedAt || b.createdAt || 0) - new Date(a.bulletin?.publishedAt || a.createdAt || 0))
       .slice(0, 100);
     res.json({ bulletins: rows.map(bulletinPayload) });
+  });
+
+  /**
+   * Aggregate counts for the public landing page.
+   *
+   * Exists because that page used to display a fixed "10,468 missing / 4,068
+   * reunited" under a heading that read "Live national overview". Numbers shown
+   * to the public about missing children have to be the real ones, even while
+   * they are small.
+   *
+   * Counts only, never a record: nothing here identifies a child.
+   */
+  router.get('/public/summary', publicBulletinLimit, (req, res) => {
+    const rows = listReports().filter((r) => !r.anonymizedAt);
+    const active = rows.filter((r) => r.status === 'missing' || r.status === 'under_review');
+    const reunited = rows.filter((r) => r.status === 'found' || r.status === 'closed');
+    const published = rows.filter((r) => r.bulletin?.published === true && r.status === 'missing');
+    const sightings = listFoundReports();
+    const reviewed = sightings.filter((f) => !['pending_review', 'no_match'].includes(f.status));
+
+    res.json({
+      summary: {
+        activeCases: active.length,
+        reunited: reunited.length,
+        publicBulletins: published.length,
+        sightingsReceived: sightings.length,
+        sightingsActioned: reviewed.length,
+        statesCovered: new Set(rows.map((r) => r.state).filter(Boolean)).size,
+        agenciesOnboard: new Set(listUsers().filter((u) => u.role !== 'parent').map((u) => u.org || u.role)).size,
+      },
+      generatedAt: new Date().toISOString(),
+    });
   });
 
   router.get('/public/search', publicBulletinLimit, (req, res) => {
@@ -501,6 +570,13 @@ export default function registerReportRoutes(router, deps) {
       summary: `Public sighting submitted at ${fr.foundLocation}`,
       scope: { matchedReportId: fr.matchedReportId, state: fr.state, district: fr.district },
       metadata: { matchScore: fr.matchScore, status: fr.status, matchEngine, matchAttempted: canRunMatch, confidentialReporter, idProofType, idProofCaptured: fr.idProofVerified },
+    });
+    notifyAuthorities({
+      kind: 'sighting_reported',
+      title: hasStrongMatch ? 'Possible match — child spotted' : 'Child spotted',
+      body: `A sighting was reported at ${fr.foundLocation}${fr.state ? `, ${[fr.district, fr.state].filter(Boolean).join(', ')}` : ''}.`,
+      priority: hasStrongMatch ? 'high' : 'normal',
+      scope: { state: fr.state, district: fr.district, foundReportId: fr.id },
     });
     if (!hasStrongMatch) {
       addActivity({ actor: 'Khozo intake', action: 'Queued report for 1098/CWC follow-up', target: fr.foundLocation, icon: 'referral', scope: { state: fr.state, district: fr.district } });

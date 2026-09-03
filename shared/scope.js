@@ -75,6 +75,12 @@ export function scopeFoundReports(user, foundReports = [], reports = []) {
     case 'jjb':
       return foundReports.filter((f) => {
         if (f.matchedReportId) return visibleReportIds.has(f.matchedReportId);
+        // A sighting the reporter gave no location for belongs to no district,
+        // and filtering on jurisdiction alone made it visible to the super
+        // admin and nobody else — a child reported by a citizen who skipped the
+        // location fields simply never reached a review queue. Unplaced
+        // sightings go to every review role until an officer assigns one.
+        if (!f.state && !f.district) return true;
         return canAccessScopedLocation(user, f);
       });
     default:

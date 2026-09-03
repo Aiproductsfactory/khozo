@@ -57,6 +57,13 @@ const TABLES = {
     photo_file: r.photoFile || null,
   }),
   grievances: (r) => ({ id: r.id, status: r.status || 'open' }),
+  notifications: (r) => ({
+    id: r.id,
+    ts: Number(r.ts) || Date.now(),
+    user_id: r.userId || null,
+    kind: r.kind || null,
+    read_at: r.readAt ? Number(r.readAt) : null,
+  }),
   activity: (r) => ({ id: r.id, ts: Number(r.ts) || Date.now(), actor_id: r.actorId || null }),
   audit: (r) => ({
     id: r.id,

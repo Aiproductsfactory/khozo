@@ -8,6 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Text } from '../components';
 import { useAuth } from '../services/auth';
 import { useOutbox } from '../services/outbox';
+import { useUnreadAlerts } from '../hooks/useUnreadAlerts';
 import { useTheme } from '../theme';
 
 import HomeScreen from '../screens/HomeScreen';
@@ -21,6 +22,7 @@ import SignInScreen from '../screens/SignInScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import OutboxScreen from '../screens/OutboxScreen';
 import ReviewQueueScreen from '../screens/ReviewQueueScreen';
+import AlertsScreen from '../screens/AlertsScreen';
 import ReviewDetailScreen from '../screens/ReviewDetailScreen';
 import CasesScreen from '../screens/CasesScreen';
 import CaseDetailScreen from '../screens/CaseDetailScreen';
@@ -69,6 +71,7 @@ function Tabs() {
   const theme = useTheme();
   const { canReviewSightings } = useAuth();
   const { pendingCount } = useOutbox();
+  const unreadAlerts = useUnreadAlerts();
 
   const screenOptions = useMemo(
     () => ({
@@ -90,6 +93,13 @@ function Tabs() {
   return (
     <Tab.Navigator screenOptions={screenOptions}>
       <Tab.Screen name="Home" component={HomeScreen} options={{ tabBarIcon: tabIcon('home') }} />
+      {canReviewSightings ? (
+        <Tab.Screen
+          name="Alerts"
+          component={AlertsScreen}
+          options={{ title: 'Alerts', tabBarIcon: tabIcon('notifications', unreadAlerts) }}
+        />
+      ) : null}
       {canReviewSightings ? (
         <Tab.Screen
           name="Review"
