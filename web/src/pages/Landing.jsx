@@ -490,8 +490,8 @@ function ForAgencies() {
 function ProposedTo() {
   const [showPortrait, setShowPortrait] = useState(true);
   return (
-    <section className="mx-auto max-w-6xl px-5 py-14">
-      <div className="flex flex-col gap-5 rounded-2xl border border-black/5 bg-white p-6 sm:flex-row sm:items-center sm:gap-7">
+    <section className="border-b border-black/5 bg-khozo-light/50">
+      <div className="mx-auto flex max-w-6xl flex-col gap-5 px-5 py-6 sm:flex-row sm:items-center sm:gap-7">
         {showPortrait ? (
           <img
             src="/assets/minister-wcd-maharashtra.jpg"
@@ -501,7 +501,10 @@ function ProposedTo() {
           />
         ) : null}
         <div>
-          <h2 className="text-lg font-bold leading-snug text-ink">
+          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-khozo-dark">
+            Presented to
+          </p>
+          <h2 className="mt-1 text-lg font-bold leading-snug text-ink">
             Department of Women and Child Development, Government of Maharashtra
           </h2>
           <p className="mt-1 text-sm text-gray-600">
@@ -641,12 +644,22 @@ export default function Landing() {
         setQuery={setQuery}
         onSearch={onSearch}
       />
-      <MissingNow children={rows} loading={loading} query={applied} />
+      <ProposedTo />
+      {/*
+        With no appeal published, the headline already says so at full size —
+        repeating it under a "Children on appeal now" heading, above an empty
+        box, said the same thing three times and made the page look broken
+        rather than quiet. The section returns the moment an officer publishes.
+        An empty *search* still renders, because there the visitor asked a
+        question and is owed an answer.
+      */}
+      {loading || rows.length || applied ? (
+        <MissingNow children={rows} loading={loading} query={applied} />
+      ) : null}
       <How />
       <Trust />
       <Sovereignty />
       <ForAgencies />
-      <ProposedTo />
       <GetApp />
       <Footer />
     </div>
