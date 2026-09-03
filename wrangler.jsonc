@@ -27,8 +27,14 @@
     "directory": "./web/dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
+    // The Worker must see these before the asset layer does. /api/* is the
+    // API itself; /child/* is served by the Worker so it can rewrite the
+    // document's <head> with that child's own Open Graph and JSON-LD metadata
+    // before it reaches a crawler. Without this the request never reaches the
+    // Worker at all and every case link previews as a bare grey rectangle.
     "run_worker_first": [
-      "/api/*"
+      "/api/*",
+      "/child/*"
     ]
   },
   // Set API_ORIGIN as a Worker variable/secret in Cloudflare after hosting the Express API.
