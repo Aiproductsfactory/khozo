@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../api.js';
 import { ProtectedImage, StatusBadge, timeAgo } from '../lib.jsx';
 import { useAuth } from '../auth.jsx';
@@ -10,6 +11,42 @@ const CWC_OUTCOMES = [
   { id: 'duplicate_or_invalid', label: 'Duplicate / invalid' },
 ];
 
+const FILTERS = [
+  { id: 'needs_review', label: 'Needs review', match: (f) => ['pending_review', 'no_match', 'referred_cwc'].includes(f.status) },
+  { id: 'matched', label: 'Confirmed', match: (f) => ['matched', 'formalized_case', 'cwc_followup_complete'].includes(f.status) },
+  { id: 'closed', label: 'Rejected', match: (f) => f.status === 'rejected' },
+  { id: 'all', label: 'All', match: () => true },
+];
+
+/**
+ * Describes a score against the threshold the system actually routes on (0.35),
+ * not against a round number. The bands were 80/60, which painted a genuine
+ * match at 0.5 the same grey as no match at all — in the one place a reviewer
+ * looks before deciding whether to open a case.
+ */
+function confidenceBand(score) {
+  const value = Number(score) || 0;
+  if (value >= 0.6) return { label: 'Strong', className: 'text-emerald-600' };
+  if (value >= 0.35) return { label: 'Worth reviewing', className: 'text-amber-600' };
+  if (value > 0) return { label: 'Below threshold', className: 'text-slate-400' };
+  return { label: 'No candidate', className: 'text-slate-300' };
+}
+
+/** What the intake screen found, for the reviewer who has to weigh it. */
+function screeningNote(screening) {
+  if (!screening) return null;
+  if (screening.verdict === 'person') {
+    return { label: 'Person detected in the photo', className: 'bg-emerald-50 text-emerald-700' };
+  }
+  if (screening.verdict === 'no_person') {
+    return { label: 'No person detected — screened out of the general alert', className: 'bg-amber-50 text-amber-700' };
+  }
+  if (screening.verdict === 'unverified') {
+    return { label: 'Not screened — no detection provider answered', className: 'bg-slate-100 text-slate-600' };
+  }
+  return null;
+}
+
 export default function FoundReports() {
   const { user } = useAuth();
   const [rows, setRows] = useState([]);
@@ -18,20 +55,81 @@ export default function FoundReports() {
   const [intakes, setIntakes] = useState({});
   const [busyId, setBusyId] = useState('');
   const [compareModal, setCompareModal] = useState(null);
+  const [filter, setFilter] = useState('needs_review');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  // A notification links to one sighting, so arriving from an alert has to land
+  // on that card rather than on a list of twenty-five.
+  const [search] = useSearchParams();
+  const highlightId = search.get('id') || '';
+  const cardRefs = useRef({});
 
   const canConfirm = ['super_admin', 'admin', 'police', 'sjpu'].includes(user.role);
   const canCwcFollowup = ['super_admin', 'admin', 'cwc', 'dcpu', 'state_nodal', 'sara'].includes(user.role);
   const canFormalizeIntake = ['super_admin', 'admin', 'police', 'sjpu', 'cwc', 'dcpu', 'cci', 'saa', 'state_nodal', 'sara'].includes(user.role);
 
-  const load = () => {
-    api.get('/reports/found/all').then((d) => setRows(d.foundReports)).catch(() => {});
+  const load = useCallback(() => {
+    setError('');
+    api.get('/reports/found/all')
+      .then((d) => setRows(d.foundReports || []))
+      // A swallowed failure here is indistinguishable from an empty queue, which
+      // is the difference between "nothing to do" and "you are not being shown
+      // the reports".
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
     api.get('/reports').then((d) => {
       const m = {};
-      d.reports.forEach((r) => (m[r.id] = r));
+      (d.reports || []).forEach((r) => (m[r.id] = r));
       setReportsById(m);
     }).catch(() => {});
-  };
-  useEffect(load, []);
+  }, []);
+  useEffect(load, [load]);
+
+  // Arriving from an alert: show every status so the linked sighting cannot be
+  // hidden by whichever filter happened to be selected, then scroll to it.
+  useEffect(() => {
+    if (highlightId) setFilter('all');
+  }, [highlightId]);
+
+  useEffect(() => {
+    if (!highlightId || !rows.length) return;
+    const node = cardRefs.current[highlightId];
+    if (node) node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [highlightId, rows]);
+
+  const counts = useMemo(
+    () => Object.fromEntries(FILTERS.map((tab) => [tab.id, rows.filter(tab.match).length])),
+    [rows]
+  );
+
+  /**
+   * Unreviewed first, then by score, then newest. The queue is worked from the
+   * top, so the order is the triage.
+   */
+  const visible = useMemo(() => {
+    const tab = FILTERS.find((t) => t.id === filter) || FILTERS[0];
+    return rows
+      .filter(tab.match)
+      .slice()
+      .sort((a, b) => {
+        const pending = (f) => (f.status === 'pending_review' ? 0 : 1);
+        if (pending(a) !== pending(b)) return pending(a) - pending(b);
+        if ((b.matchScore || 0) !== (a.matchScore || 0)) return (b.matchScore || 0) - (a.matchScore || 0);
+        return (b.createdAt || 0) - (a.createdAt || 0);
+      });
+  }, [rows, filter]);
+
+  /** Names the engine that actually ran, rather than asserting a provider. */
+  const engineLabel = useMemo(() => {
+    const engine = rows.find((f) => f.matchEngine?.provider)?.matchEngine;
+    if (!engine) return { text: 'No comparison run yet', biometric: false, provider: 'none' };
+    return {
+      text: engine.biometric ? `Biometric · ${engine.provider}` : `Non-biometric · ${engine.provider}`,
+      biometric: Boolean(engine.biometric),
+      provider: engine.provider,
+    };
+  }, [rows]);
 
   const review = async (f, decision) => {
     await api.post(`/reports/found/${f.id}/review`, { decision });
@@ -93,51 +191,143 @@ export default function FoundReports() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-black/5 pb-4">
+      <div className="flex flex-wrap items-end justify-between gap-4 border-b border-black/5 pb-4">
         <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-2xl font-bold tracking-tight">Sightings &amp; Biometric Matches</h2>
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-              Aarakshak Live AI v1.82
-            </span>
-          </div>
-          <p className="mt-1 text-sm text-gray-500">
-            Field citizen sightings ranked against missing-children cases using primary Aarakshak Face Recognition API &amp; AWS Rekognition.
+          <h2 className="text-2xl font-bold tracking-tight">Sightings &amp; matches</h2>
+          <p className="mt-1 max-w-2xl text-sm text-gray-500">
+            Photographs the public sent in, ranked against open cases. A score is a prompt to look,
+            never a decision — you confirm, and only then is a family contacted.
           </p>
+        </div>
+        {/*
+          Names the engine that actually ran, from the sighting data. This
+          previously read "Aarakshak Live AI v1.82" regardless of what was
+          configured, which tells a reviewer a score is biometric when it may
+          not be.
+        */}
+        <div className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600 ring-1 ring-slate-200">
+          <span className={`h-1.5 w-1.5 rounded-full ${engineLabel.biometric ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+          {engineLabel.text}
         </div>
       </div>
 
+      <div className="flex flex-wrap items-center gap-2">
+        {FILTERS.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setFilter(tab.id)}
+            className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+              filter === tab.id
+                ? 'bg-slate-900 text-white'
+                : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50'
+            }`}
+          >
+            {tab.label}
+            <span className={`ml-1.5 ${filter === tab.id ? 'text-white/70' : 'text-slate-400'}`}>
+              {counts[tab.id] ?? 0}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {error && (
+        <div className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-red-100">
+          Could not load the review queue: {error}.{' '}
+          <button onClick={load} className="font-semibold underline">Retry</button>
+        </div>
+      )}
+
+      {loading && <p className="text-sm text-gray-400">Loading the review queue…</p>}
+
+      {!loading && !error && visible.length === 0 && (
+        <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-12 text-center">
+          <p className="text-sm font-semibold text-slate-700">
+            {rows.length === 0 ? 'No sightings reported yet' : 'Nothing in this view'}
+          </p>
+          <p className="mt-1 text-sm text-slate-400">
+            {rows.length === 0
+              ? 'Reports from the public arrive here the moment they are submitted, and you are alerted.'
+              : 'Try another filter.'}
+          </p>
+        </div>
+      )}
+
       <div className="grid gap-6 md:grid-cols-2">
-        {rows.map((f) => {
+        {visible.map((f) => {
           const matched = f.matchedReport || (f.matchedReportId ? reportsById[f.matchedReportId] : null);
           const scorePct = Math.round((f.matchScore || 0) * 100);
+          const band = confidenceBand(f.matchScore);
+          const screen = screeningNote(f.screening);
           return (
-            <div key={f.id} className="card p-6 shadow-sm hover:shadow-md transition-shadow">
+            <div
+              key={f.id}
+              ref={(node) => { cardRefs.current[f.id] = node; }}
+              className={`card p-6 shadow-sm transition-shadow hover:shadow-md ${
+                highlightId === f.id ? 'ring-2 ring-indigo-500 ring-offset-2' : ''
+              }`}
+            >
               <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="font-bold text-gray-900">{f.reporterName}</p>
+                <div className="min-w-0">
+                  <p className="truncate font-bold text-gray-900">{f.reporterName}</p>
                   <p className="text-xs text-gray-500">{timeAgo(f.createdAt)} • {f.reporterPhone || 'confidential'}</p>
                 </div>
                 <StatusBadge status={f.status} />
               </div>
 
-              <div className="mt-4 rounded-xl bg-slate-50 p-3.5 text-sm border border-slate-100">
-                <p className="font-medium text-slate-800 flex items-center gap-1.5">
-                  <svg className="w-4 h-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                  </svg>
-                  {f.foundLocation}
-                </p>
-                {f.note && <p className="mt-1 text-slate-600 italic">"{f.note}"</p>}
+              {/*
+                The photograph the citizen sent is the thing being reviewed, so
+                it belongs on the card. It used to be reachable only through a
+                modal, leaving the reviewer judging a percentage without ever
+                seeing the face it came from.
+              */}
+              <div className="mt-4 flex gap-4">
+                <div className="h-32 w-32 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
+                  <ProtectedImage
+                    src={f.photoUrl || `/api/reports/photo/${f.id}`}
+                    alt="Reported sighting"
+                    className="h-full w-full object-cover"
+                    fallback={
+                      <div className="grid h-full w-full place-items-center px-2 text-center text-[11px] text-slate-400">
+                        No photo — text report
+                      </div>
+                    }
+                  />
+                </div>
+
+                <div className="min-w-0 flex-1 space-y-2">
+                  <p className="flex items-start gap-1.5 text-sm font-medium text-slate-800">
+                    <svg className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                    </svg>
+                    <span className="min-w-0">
+                      {f.foundLocation}
+                      {(f.district || f.state) && (
+                        <span className="block text-xs font-normal text-slate-500">
+                          {[f.district, f.state].filter(Boolean).join(', ')}
+                          {f.locationSource === 'coordinates' && ' · from the reporter’s location'}
+                        </span>
+                      )}
+                      {!f.state && !f.district && (
+                        <span className="block text-xs font-normal text-amber-600">
+                          No jurisdiction given — visible to every review desk
+                        </span>
+                      )}
+                    </span>
+                  </p>
+                  {f.note && <p className="text-sm italic text-slate-600">“{f.note}”</p>}
+                  {screen && (
+                    <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${screen.className}`}>
+                      {screen.label}
+                    </span>
+                  )}
+                </div>
               </div>
 
-              {/* Match Card Gauge */}
-              <div className="mt-4 rounded-xl border border-indigo-100 bg-gradient-to-r from-indigo-50/40 to-slate-50 p-4">
+              <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/70 p-4">
                 <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
                     {matched && (
-                      <div className="h-12 w-12 rounded-lg bg-indigo-100 overflow-hidden shrink-0 border border-indigo-200">
+                      <div className="h-12 w-12 shrink-0 overflow-hidden rounded-lg border border-indigo-200 bg-indigo-100">
                         <ProtectedImage
                           src={matched.photoUrl || `/api/reports/photo/${matched.id}`}
                           alt={matched.childName}
@@ -145,23 +335,27 @@ export default function FoundReports() {
                         />
                       </div>
                     )}
-                    <div>
-                      <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-600">Biometric Candidate Match</span>
-                      <p className="text-base font-bold text-gray-900 capitalize">{matched ? matched.childName : 'No strong match'}</p>
-                      {matched && <p className="text-xs text-gray-500">Case #{matched.id} • {matched.address || matched.district}</p>}
+                    <div className="min-w-0">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Closest open case</span>
+                      <p className="truncate text-base font-bold capitalize text-gray-900">
+                        {matched ? matched.childName : 'No candidate above the review threshold'}
+                      </p>
+                      {matched && (
+                        <p className="truncate text-xs text-gray-500">
+                          Case #{matched.id} • {matched.address || matched.district}
+                        </p>
+                      )}
                     </div>
                   </div>
-                  <div className="text-right">
-                    <div className={`inline-flex items-center gap-1 text-2xl font-extrabold ${scorePct >= 80 ? 'text-emerald-600' : scorePct >= 60 ? 'text-amber-600' : 'text-gray-400'}`}>
-                      {scorePct}%
-                    </div>
-                    <p className="text-[10px] font-medium text-gray-400">Confidence</p>
+                  <div className="shrink-0 text-right">
+                    <div className={`text-2xl font-extrabold ${band.className}`}>{scorePct}%</div>
+                    <p className="text-[10px] font-medium text-gray-400">{band.label}</p>
                   </div>
                 </div>
 
                 {matched && (
-                  <div className="mt-3 flex items-center justify-between border-t border-indigo-100/60 pt-2.5">
-                    <span className="text-xs font-medium text-indigo-700">Aarakshak AI Engine</span>
+                  <div className="mt-3 flex items-center justify-between border-t border-slate-200 pt-2.5">
+                    <span className="text-xs text-slate-500">{f.matchEngine?.provider || engineLabel.provider}</span>
                     <button
                       onClick={() => setCompareModal({ sighting: f, matched })}
                       className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800"
@@ -275,7 +469,6 @@ export default function FoundReports() {
             </div>
           );
         })}
-        {rows.length === 0 && <p className="text-sm text-gray-400 col-span-2">No sightings reported yet.</p>}
       </div>
 
       {/* Side-by-Side Compare Modal */}

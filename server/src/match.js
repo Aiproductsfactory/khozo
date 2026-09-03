@@ -255,6 +255,59 @@ async function compareFacesAWS(sourceBuf, targetBuf) {
   }
 }
 
+/**
+ * Decides whether an uploaded photo actually shows a person.
+ *
+ * See worker/src/match.js for the reasoning; this is the Node build of the same
+ * screen, using the same providers. Rekognition answers first here because the
+ * Node build has the SDK and `CompareFaces` reports a face-not-detected error
+ * explicitly.
+ *
+ * Three verdicts, and the caller must treat the last two the same way:
+ *   person      — a face was found; raise the alert
+ *   no_person   — the provider looked and found none
+ *   unverified  — no provider answered, so nothing is known
+ */
+export async function detectPerson(photoBuf) {
+  if (!photoBuf?.length) {
+    return { verdict: 'no_photo', faces: 0, provider: null, checkedAt: Date.now() };
+  }
+
+  // Probing the image against itself: the provider reports the faces it found
+  // in the source, which is the signal needed, without a second service.
+  const viaAarakshak = await compareFacesAarakshak(photoBuf, photoBuf);
+  if (viaAarakshak) {
+    return {
+      verdict: viaAarakshak.sourceFaces > 0 ? 'person' : 'no_person',
+      faces: viaAarakshak.sourceFaces,
+      quality: viaAarakshak.sourceQuality ?? null,
+      warnings: viaAarakshak.warnings || [],
+      provider: ENGINES.aarakshak.provider,
+      checkedAt: Date.now(),
+    };
+  }
+
+  const viaAws = await compareFacesAWS(photoBuf, photoBuf);
+  if (viaAws) {
+    const found = viaAws.warnings?.includes('no_face_detected') ? 0 : viaAws.sourceFaces;
+    return {
+      verdict: found > 0 ? 'person' : 'no_person',
+      faces: found,
+      provider: ENGINES.rekognition.provider,
+      warnings: viaAws.warnings || [],
+      checkedAt: Date.now(),
+    };
+  }
+
+  return {
+    verdict: 'unverified',
+    faces: null,
+    provider: null,
+    reason: 'No face-detection provider answered; the photo has not been screened.',
+    checkedAt: Date.now(),
+  };
+}
+
 // ---- Orchestration ---------------------------------------------------------
 
 /**

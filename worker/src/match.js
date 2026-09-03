@@ -117,6 +117,52 @@ async function compareFacesAarakshak(env, sourceBuf, targetBuf) {
 }
 
 /**
+ * Decides whether an uploaded photo actually shows a person.
+ *
+ * The upload endpoint is public and unauthenticated, so anything can arrive:
+ * screenshots, scenery, posters, an accidental photo of the floor. Alerting
+ * every authority in the country on each of those trains officers to ignore the
+ * alert that matters, so only a photo with a face in it raises the general
+ * alarm. Everything else still reaches a human — the super admin — rather than
+ * being discarded, because the cost of wrongly dropping a real sighting is a
+ * child nobody looks for.
+ *
+ * Detection reuses the comparison endpoint by probing the image against itself:
+ * the provider reports the faces it found in the source image, which is the
+ * signal needed, without depending on a second service.
+ *
+ * Three verdicts, and the caller must treat the last two the same way:
+ *   person      — a face was found; raise the alert
+ *   no_person   — the provider looked and found none
+ *   unverified  — no provider answered, so nothing is known
+ */
+export async function detectPerson(env, photoBuf) {
+  if (!photoBuf?.length) {
+    return { verdict: 'no_photo', faces: 0, provider: null, checkedAt: Date.now() };
+  }
+
+  const probe = await compareFacesAarakshak(env, photoBuf, photoBuf);
+  if (probe) {
+    return {
+      verdict: probe.sourceFaces > 0 ? 'person' : 'no_person',
+      faces: probe.sourceFaces,
+      quality: probe.sourceQuality ?? null,
+      warnings: probe.warnings || [],
+      provider: ENGINES.aarakshak.provider,
+      checkedAt: Date.now(),
+    };
+  }
+
+  return {
+    verdict: 'unverified',
+    faces: null,
+    provider: null,
+    reason: 'No face-detection provider answered; the photo has not been screened.',
+    checkedAt: Date.now(),
+  };
+}
+
+/**
  * Ranks open cases against a sighting photo.
  *
  * `source` supplies the candidate cases and a photo reader. Both come from the

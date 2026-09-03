@@ -54,6 +54,8 @@ export default {
         'android.permission.CAMERA',
         'android.permission.ACCESS_FINE_LOCATION',
         'android.permission.ACCESS_COARSE_LOCATION',
+        // Android 13+ will not show a sighting alert without this.
+        'android.permission.POST_NOTIFICATIONS',
       ],
       blockedPermissions: [
         'android.permission.RECORD_AUDIO',
@@ -98,6 +100,17 @@ export default {
         {
           photosPermission:
             'Khozo needs access to your photos so you can attach an existing picture to a sighting report.',
+        },
+      ],
+      [
+        // Sighting alerts use the device's own notification tone rather than a
+        // bundled sound, so they respect the officer's volume, Do Not Disturb
+        // and accessibility settings and sound like every other alert they act
+        // on. `sounds: []` is deliberate: no custom audio is shipped.
+        'expo-notifications',
+        {
+          color: '#4338CA',
+          sounds: [],
         },
       ],
       [

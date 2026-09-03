@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Linking, Pressable, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -60,6 +60,29 @@ export default function ReviewDetailScreen() {
   const [sighting, setSighting] = useState(params?.sighting || null);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(null);
+  const [loadError, setLoadError] = useState(null);
+
+  // An alert carries an id, not a record, so opening one has to be able to
+  // fetch what it points at. Without this, tapping a notification arrived here
+  // with nothing to show.
+  useEffect(() => {
+    if (sighting || !params?.id || !token) return undefined;
+    let alive = true;
+    officerApi
+      .foundReports(token)
+      .then((rows) => {
+        if (!alive) return;
+        const found = rows.find((row) => row.id === params.id);
+        if (found) setSighting(found);
+        else setLoadError('This sighting is outside your jurisdiction, or has been removed.');
+      })
+      .catch((error) => {
+        if (alive) setLoadError(error.message);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [sighting, params?.id, token]);
 
   const submitDecision = useCallback(
     async (decision) => {
@@ -89,10 +112,22 @@ export default function ReviewDetailScreen() {
     [submitDecision],
   );
 
+  // Every hook runs before any early return. `useProtectedImage` and
+  // `showFullImage` sat below the "no sighting" guard, so a render that took
+  // that branch ran fewer hooks than the next one — which React rejects the
+  // moment the record arrives asynchronously, as it now does when a
+  // notification opens this screen by id.
+  const photo = useProtectedImage(sighting?.photoUrl, token);
+  const [showFullImage, setShowFullImage] = useState(false);
+
   if (!sighting) {
     return (
       <Screen edges={{ top: false, bottom: true }}>
-        <Banner tone="warning" title="Sighting unavailable" message="Go back to the queue and open it again." />
+        {loadError ? (
+          <Banner tone="warning" title="Sighting unavailable" message={loadError} />
+        ) : (
+          <Banner tone="info" title="Opening sighting" message="Fetching the report this alert points at…" />
+        )}
       </Screen>
     );
   }
@@ -101,8 +136,6 @@ export default function ReviewDetailScreen() {
   const band = matchBand(sighting.matchScore);
   const matched = sighting.matchedReport;
   const decided = !['pending_review', 'no_match', 'referred_cwc'].includes(sighting.status);
-  const photo = useProtectedImage(sighting.photoUrl, token);
-  const [showFullImage, setShowFullImage] = useState(false);
 
   return (
     <Screen edges={{ top: false, bottom: false }}>

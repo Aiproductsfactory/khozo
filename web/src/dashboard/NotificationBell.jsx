@@ -59,10 +59,13 @@ export default function NotificationBell({ onConnectionChange }) {
     }
   };
 
+  // An alert is about one record, so it opens that record. Landing on a list of
+  // twenty-five and expecting the officer to find the new one is how the report
+  // that prompted the alert gets lost.
   const openAlert = (item) => {
     setOpen(false);
-    if (item.scope?.foundReportId) nav('/app/matches');
-    else if (item.scope?.reportId) nav('/app/cases');
+    if (item.scope?.foundReportId) nav(`/app/matches?id=${encodeURIComponent(item.scope.foundReportId)}`);
+    else if (item.scope?.reportId) nav(`/app/cases?id=${encodeURIComponent(item.scope.reportId)}`);
   };
 
   return (

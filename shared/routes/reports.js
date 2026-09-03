@@ -14,6 +14,7 @@
 import { nanoid } from 'nanoid';
 
 import { canAccessReport, scopeFoundReports, scopeReports } from '../scope.js';
+import { resolveSightingLocation } from '../geocode.js';
 // The case vocabulary, validation and public-redaction rules are shared with the
 // Cloudflare Worker build so the two runtimes cannot drift apart. See
 // shared/case-domain.js.
@@ -136,7 +137,11 @@ export default function registerReportRoutes(router, deps) {
     authRequired, optionalAuth, passwordChangeRequired, requireRole,
     auditPublicRateLimit, clientIp, fixedWindowRateLimit,
     rankMatches,
+    detectPerson,
     upload,
+    // Injectable so the reverse geocoder can be stubbed in tests rather than
+    // reaching OpenStreetMap from a test run.
+    fetchImpl = fetch,
     settings = {},
   } = deps;
 
@@ -158,8 +163,10 @@ export default function registerReportRoutes(router, deps) {
    * jurisdiction rules, so knowing that a child was seen does not grant access
    * to that child's record.
    */
-  function notifyAuthorities({ kind, title, body, priority = 'normal', scope = {} }) {
-    const recipients = listUsers().filter((u) => u.role !== 'parent');
+  function notifyAuthorities({ kind, title, body, priority = 'normal', scope = {}, roles = null }) {
+    const recipients = listUsers().filter(
+      (u) => u.role !== 'parent' && (!roles || roles.includes(u.role))
+    );
     for (const recipient of recipients) {
       addNotification({
         userId: recipient.id,
@@ -501,10 +508,22 @@ export default function registerReportRoutes(router, deps) {
       return res.status(400).json({ error: 'Add a photo or enough sighting details to help CWC/Childline review the report' });
     }
     const id = `f_${nanoid(8)}`;
-    const matchResult = await rankMatches(req.file?.buffer || null, {
-      gender: b.gender,
-      ageApprox: validation.ageApprox,
-    });
+
+    // Screening decides who hears about this report: a public upload endpoint
+    // receives whatever a phone camera happened to be pointed at, and alerting
+    // every authority in the country about a photo of the floor is how officers
+    // learn to ignore the alert that matters.
+    //
+    // It runs alongside the match rather than before it. Both call the same
+    // provider, the citizen is waiting on the response, and the ordinary case
+    // is a real photograph of a real child that needs both answers anyway.
+    const [screening, matchResult] = await Promise.all([
+      detectPerson(req.file?.buffer || null),
+      rankMatches(req.file?.buffer || null, {
+        gender: b.gender,
+        ageApprox: validation.ageApprox,
+      }),
+    ]);
     const { candidates, engine: matchEngine } = matchResult;
     const canRunMatch = !!req.file;
     const best = candidates[0];
@@ -521,7 +540,9 @@ export default function registerReportRoutes(router, deps) {
     const lowQualityPhoto = Boolean(best?.lowQuality || best?.warnings?.length);
     const hasStrongMatch = canRunMatch && best && best.score >= MATCH_REVIEW_THRESHOLD;
     const matchedScope = hasStrongMatch ? { state: best.report.state || null, district: best.report.district || null } : {};
-    const locationScope = inferLocationScope(b);
+    // The phone's coordinates fill in the jurisdiction the reporter did not
+    // type. What they did type always wins; a failed lookup changes nothing.
+    const locationScope = await resolveSightingLocation(b, { fetchImpl });
     const confidentialReporter = isTruthy(b.confidentialReporter);
     const reporterName = cleanText(b.reporterName, 120) || 'Anonymous citizen';
     const idProofType = SIGHTING_ID_PROOF_TYPES[b.idProofType] ? b.idProofType : null;
@@ -551,12 +572,29 @@ export default function registerReportRoutes(router, deps) {
       photoQualityWarnings: best?.warnings?.length ? best.warnings : null,
       lowQualityPhoto: lowQualityPhoto || null,
       matchScore: best ? best.score : 0,
+      // Kept on the record, not just returned once. A reviewer deciding what a
+      // score means has to know whether it came from a face comparison or from
+      // the non-biometric fallback, and an auditor has to know months later.
+      matchEngine: {
+        provider: matchEngine.provider,
+        modelVersion: matchEngine.modelVersion || null,
+        biometric: Boolean(matchEngine.biometric),
+      },
       status: hasStrongMatch ? 'pending_review' : 'no_match',
       photoConsent: req.file ? true : isTruthy(b.photoConsent),
       dataPurpose: req.file ? 'sighting_review_and_child_protection' : 'text_sighting_childline_intake',
       retentionUntil: retentionUntil(SIGHTING_PHOTO_RETENTION_DAYS),
       referredTo1098: true,
       referralStatus: hasStrongMatch ? 'Police review pending' : 'Childline/CWC intake queued',
+      // What the screen found, kept on the record so a reviewer can see why the
+      // report was routed the way it was rather than guessing.
+      screening: {
+        ...screening,
+        // A text-only report has no photo to screen and is a person's account of
+        // seeing a child, so it alerts on its own terms.
+        raisesAlert: !req.file || screening.verdict === 'person',
+      },
+      locationSource: locationScope.source || 'reporter',
       createdAt: Date.now(),
     };
     addFoundReport(fr);
@@ -571,13 +609,31 @@ export default function registerReportRoutes(router, deps) {
       scope: { matchedReportId: fr.matchedReportId, state: fr.state, district: fr.district },
       metadata: { matchScore: fr.matchScore, status: fr.status, matchEngine, matchAttempted: canRunMatch, confidentialReporter, idProofType, idProofCaptured: fr.idProofVerified },
     });
-    notifyAuthorities({
-      kind: 'sighting_reported',
-      title: hasStrongMatch ? 'Possible match — child spotted' : 'Child spotted',
-      body: `A sighting was reported at ${fr.foundLocation}${fr.state ? `, ${[fr.district, fr.state].filter(Boolean).join(', ')}` : ''}.`,
-      priority: hasStrongMatch ? 'high' : 'normal',
-      scope: { state: fr.state, district: fr.district, foundReportId: fr.id },
-    });
+    const where = `${fr.foundLocation}${fr.state ? `, ${[fr.district, fr.state].filter(Boolean).join(', ')}` : ''}`;
+    if (fr.screening.raisesAlert) {
+      notifyAuthorities({
+        kind: 'sighting_reported',
+        title: hasStrongMatch ? 'Possible match — child spotted' : 'Child spotted',
+        body: `A sighting was reported at ${where}.`,
+        priority: hasStrongMatch ? 'high' : 'normal',
+        scope: { state: fr.state, district: fr.district, foundReportId: fr.id },
+      });
+    } else {
+      // Screened out, not discarded. One person still looks at it, because the
+      // screen can be wrong and the cost of it being wrong is a real sighting
+      // that nobody read.
+      notifyAuthorities({
+        kind: 'sighting_screening',
+        title: fr.screening.verdict === 'no_person' ? 'Upload with no person in it' : 'Unscreened upload',
+        body:
+          fr.screening.verdict === 'no_person'
+            ? `An upload at ${where} contained no recognisable person. Queued for your review.`
+            : `An upload at ${where} could not be screened — no detection provider answered. Queued for your review.`,
+        priority: 'normal',
+        roles: ['super_admin'],
+        scope: { state: fr.state, district: fr.district, foundReportId: fr.id },
+      });
+    }
     if (!hasStrongMatch) {
       addActivity({ actor: 'Khozo intake', action: 'Queued report for 1098/CWC follow-up', target: fr.foundLocation, icon: 'referral', scope: { state: fr.state, district: fr.district } });
       addAudit({

@@ -35,6 +35,91 @@ const HEADLINE = {
 
 const OP_ROLES = ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'dcrb', 'dlsa', 'cwc', 'dcpu', 'rpf', 'cci', 'saa', 'jjb', 'state_nodal', 'sara', 'crime_bureau'];
 
+/**
+ * What each role is actually responsible for, as live counts.
+ *
+ * Every operational role saw the same four national-shaped tiles, which told a
+ * CWC desk how many cases exist nationally and nothing about the children
+ * waiting on them. Each entry reads its number out of data the page already
+ * holds — all of it scoped to the signed-in officer by the API — so a queue
+ * showing zero means zero, not "not implemented".
+ */
+const ROLE_WORK = {
+  police: [
+    { label: 'Sightings to review', from: (s) => s.cards.pendingMatches, to: '/app/matches' },
+    { label: 'Cases open past 30 days', from: (s, f) => f?.totals.caseOverdue, to: '/app/cases' },
+    { label: 'Cases with no recent note', from: (s, f) => f?.totals.staleUpdates, to: '/app/cases' },
+  ],
+  sjpu: [
+    { label: 'Sightings to review', from: (s) => s.cards.pendingMatches, to: '/app/matches' },
+    { label: 'Cases needing a follow-up note', from: (s, f) => f?.totals.staleUpdates, to: '/app/cases' },
+  ],
+  ahtu: [
+    { label: 'Sightings to review', from: (s) => s.cards.pendingMatches, to: '/app/matches' },
+    { label: 'Cases open past 30 days', from: (s, f) => f?.totals.caseOverdue, to: '/app/cases' },
+  ],
+  rpf: [
+    { label: 'Sightings to review', from: (s) => s.cards.pendingMatches, to: '/app/matches' },
+    { label: 'Active cases in your district', from: (s) => s.cards.activeCases, to: '/app/cases' },
+  ],
+  cwc: [
+    { label: 'Sightings awaiting a decision', from: (s) => s.cards.pendingMatches, to: '/app/matches' },
+    { label: 'Statutory records due', from: (s, f) => f?.totals.formalFollowups, to: '/app/cases' },
+    { label: 'Children in the CCI register', from: (s, f, c) => c?.totals.activeChildren, to: '/app/cci-register' },
+  ],
+  dcpu: [
+    { label: 'Sightings awaiting a decision', from: (s) => s.cards.pendingMatches, to: '/app/matches' },
+    { label: 'Statutory records due', from: (s, f) => f?.totals.formalFollowups, to: '/app/cases' },
+    { label: 'Children in the CCI register', from: (s, f, c) => c?.totals.activeChildren, to: '/app/cci-register' },
+  ],
+  cci: [
+    { label: 'Children in your care', from: (s, f, c) => c?.totals.activeChildren, to: '/app/cci-register' },
+    { label: 'Care reviews overdue', from: (s, f, c) => c?.totals.overdueReviews, to: '/app/cci-register' },
+    { label: 'Care reviews due soon', from: (s, f, c) => c?.totals.dueSoonReviews, to: '/app/cci-register' },
+  ],
+  saa: [
+    { label: 'Children in the register', from: (s, f, c) => c?.totals.activeChildren, to: '/app/cci-register' },
+    { label: 'Adoption records due', from: (s, f) => f?.totals.formalFollowups, to: '/app/cases' },
+  ],
+  sara: [
+    { label: 'Children in the state register', from: (s, f, c) => c?.totals.activeChildren, to: '/app/cci-register' },
+    { label: 'Adoption records due', from: (s, f) => f?.totals.formalFollowups, to: '/app/cases' },
+    { label: 'Statewide active cases', from: (s) => s.cards.activeCases, to: '/app/cases' },
+  ],
+  jjb: [
+    { label: 'Proceedings and records due', from: (s, f) => f?.totals.formalFollowups, to: '/app/cases' },
+    { label: 'Active cases in your district', from: (s) => s.cards.activeCases, to: '/app/cases' },
+  ],
+  dlsa: [
+    { label: 'Legal-aid records due', from: (s, f) => f?.totals.formalFollowups, to: '/app/cases' },
+    { label: 'Active cases in your district', from: (s) => s.cards.activeCases, to: '/app/cases' },
+  ],
+  dcrb: [
+    { label: 'Bureau records due', from: (s, f) => f?.totals.formalFollowups, to: '/app/cases' },
+    { label: 'Cases open past 30 days', from: (s, f) => f?.totals.caseOverdue, to: '/app/cases' },
+  ],
+  crime_bureau: [
+    { label: 'Bureau records due', from: (s, f) => f?.totals.formalFollowups, to: '/app/cases' },
+    { label: 'Statewide active cases', from: (s) => s.cards.activeCases, to: '/app/cases' },
+    { label: 'Abuse signals to review', from: (s, f) => f?.totals.high, to: '/app/fraud' },
+  ],
+  state_nodal: [
+    { label: 'Statewide active cases', from: (s) => s.cards.activeCases, to: '/app/cases' },
+    { label: 'Sightings awaiting review', from: (s) => s.cards.pendingMatches, to: '/app/matches' },
+    { label: 'High-priority follow-ups', from: (s, f) => f?.totals.high, to: '/app/cases' },
+  ],
+  admin: [
+    { label: 'Sightings awaiting review', from: (s) => s.cards.pendingMatches, to: '/app/matches' },
+    { label: 'High-priority follow-ups', from: (s, f) => f?.totals.high, to: '/app/cases' },
+    { label: 'Stakeholders on the network', from: (s, f, c, n) => n?.users.length, to: '/app/network' },
+  ],
+  super_admin: [
+    { label: 'Sightings awaiting review', from: (s) => s.cards.pendingMatches, to: '/app/matches' },
+    { label: 'High-priority follow-ups', from: (s, f) => f?.totals.high, to: '/app/cases' },
+    { label: 'Stakeholders on the network', from: (s, f, c, n) => n?.users.length, to: '/app/network' },
+  ],
+};
+
 export default function Overview() {
   const { user } = useAuth();
   const [stats, setStats] = useState(null);
@@ -42,16 +127,30 @@ export default function Overview() {
   const [followups, setFollowups] = useState(null);
   const [readiness, setReadiness] = useState(null);
 
+  const [cciRegister, setCciRegister] = useState(null);
+  const [network, setNetwork] = useState(null);
+
   useEffect(() => {
     api.get('/dashboard/stats').then(setStats).catch(() => {});
     api.get('/dashboard/activity').then((d) => setActivity(d.activity)).catch(() => {});
     api.get('/dashboard/followups').then(setFollowups).catch(() => {});
     api.get('/dashboard/readiness').then(setReadiness).catch(() => {});
-  }, []);
+    // Only fetched for the roles whose work panel needs them, and only where
+    // the role is permitted — a 403 here would just leave the tile blank.
+    if (['cwc', 'dcpu', 'cci', 'saa', 'sara', 'super_admin', 'admin'].includes(user.role)) {
+      api.get('/dashboard/cci-register').then(setCciRegister).catch(() => {});
+    }
+    if (['super_admin', 'admin', 'state_nodal', 'sara', 'crime_bureau'].includes(user.role)) {
+      api.get('/dashboard/network').then(setNetwork).catch(() => {});
+    }
+  }, [user.role]);
 
   if (!stats) return <div className="text-gray-400">Loading dashboard…</div>;
   const h = HEADLINE[user.role] || HEADLINE.parent;
   const showOps = OP_ROLES.includes(user.role);
+  const work = (ROLE_WORK[user.role] || [])
+    .map((item) => ({ ...item, value: item.from(stats, followups, cciRegister, network) }))
+    .filter((item) => item.value != null);
 
   return (
     <div className="space-y-6">
@@ -73,6 +172,31 @@ export default function Overview() {
         <StatCard label="Active cases" value={stats.cards.activeCases.toLocaleString('en-IN')} accent="amber" icon="🗂️" sub="In your scope" />
         <StatCard label="Pending matches" value={stats.cards.pendingMatches} accent="blue" icon="🔍" sub="Citizen sightings to review" />
       </div>
+
+      {/*
+        The queues this particular officer owns. The four tiles above frame the
+        caseload; this frames the shift.
+      */}
+      {work.length > 0 && (
+        <div className="card p-5">
+          <h3 className="font-semibold">Waiting on you</h3>
+          <p className="text-xs text-gray-500">Scoped to {stats.scope}</p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {work.map((item) => (
+              <Link
+                key={item.label}
+                to={item.to}
+                className="group rounded-xl border border-slate-200 bg-slate-50/70 p-4 transition hover:border-indigo-200 hover:bg-indigo-50/50"
+              >
+                <p className={`text-3xl font-extrabold ${item.value > 0 ? 'text-slate-900' : 'text-slate-300'}`}>
+                  {Number(item.value).toLocaleString('en-IN')}
+                </p>
+                <p className="mt-1 text-sm font-medium text-slate-600 group-hover:text-indigo-700">{item.label}</p>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Charts */}
       {showOps && readiness && (
@@ -102,29 +226,6 @@ export default function Overview() {
             ))}
           </div>
 
-          {/* Live In-App Role Testing Telemetry Matrix */}
-          <div className="mt-5 rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <span className="text-base">🧪</span>
-                <h4 className="text-xs font-extrabold uppercase tracking-wider text-indigo-900">In-App Live Role Verification Telemetry</h4>
-              </div>
-              <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-extrabold text-emerald-800 border border-emerald-200">
-                18 / 18 Roles Verified
-              </span>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
-              {['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'dcrb', 'dlsa', 'cwc', 'dcpu', 'rpf', 'cci', 'saa', 'jjb', 'state_nodal', 'sara', 'crime_bureau', 'parent', 'ngo'].map((r) => (
-                <div key={r} className="rounded-lg bg-white p-2 border border-indigo-100/80 text-center shadow-xs">
-                  <span className="block text-[10px] font-extrabold uppercase text-slate-700 truncate">{r.replace('_', ' ')}</span>
-                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600 mt-0.5">
-                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
-                    Verified
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
       )}
 

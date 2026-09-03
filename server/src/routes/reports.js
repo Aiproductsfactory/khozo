@@ -14,7 +14,7 @@ import {
   savePhoto, readPhoto, photoMimeType,
 } from '../store.js';
 import { authRequired, optionalAuth, passwordChangeRequired, requireRole } from '../auth.js';
-import { rankMatches } from '../match.js';
+import { rankMatches, detectPerson } from '../match.js';
 import { auditPublicRateLimit, clientIp, fixedWindowRateLimit } from '../rateLimit.js';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
@@ -27,6 +27,7 @@ export default registerReportRoutes(Router(), {
   authRequired, optionalAuth, passwordChangeRequired, requireRole,
   auditPublicRateLimit, clientIp, fixedWindowRateLimit,
   rankMatches,
+  detectPerson,
   upload,
   settings: {
     foundReportLimit: process.env.KHOZO_FOUND_REPORT_LIMIT,

@@ -1,6 +1,6 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { View } from 'react-native';
-import { DarkTheme, DefaultTheme, NavigationContainer } from '@react-navigation/native';
+import { createNavigationContainerRef, DarkTheme, DefaultTheme, NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
@@ -9,6 +9,7 @@ import { Text } from '../components';
 import { useAuth } from '../services/auth';
 import { useOutbox } from '../services/outbox';
 import { useUnreadAlerts } from '../hooks/useUnreadAlerts';
+import { onAlertOpened } from '../services/alerts';
 import { useTheme } from '../theme';
 
 import HomeScreen from '../screens/HomeScreen';
@@ -29,6 +30,8 @@ import CaseDetailScreen from '../screens/CaseDetailScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
+
+export const navigationRef = createNavigationContainerRef();
 
 /** Small count bubble on the Report tab showing unsent sightings. */
 function TabBadge({ count }) {
@@ -128,6 +131,19 @@ function Tabs() {
 export function RootNavigator() {
   const theme = useTheme();
 
+  // A notification tap arrives from outside React, including on a cold start,
+  // so opening the sighting it points at needs a handle on the navigator rather
+  // than a hook inside a screen.
+  useEffect(
+    () =>
+      onAlertOpened((scope) => {
+        if (!navigationRef.isReady()) return;
+        if (scope?.foundReportId) navigationRef.navigate('ReviewDetail', { id: scope.foundReportId });
+        else if (scope?.reportId) navigationRef.navigate('CaseDetail', { id: scope.reportId });
+      }),
+    [],
+  );
+
   const navTheme = useMemo(() => {
     const base = theme.mode === 'dark' ? DarkTheme : DefaultTheme;
     return {
@@ -155,7 +171,7 @@ export function RootNavigator() {
   );
 
   return (
-    <NavigationContainer theme={navTheme}>
+    <NavigationContainer theme={navTheme} ref={navigationRef}>
       <Stack.Navigator screenOptions={stackOptions}>
         <Stack.Screen name="Tabs" component={Tabs} options={{ headerShown: false }} />
         <Stack.Screen name="Bulletins" component={BulletinsScreen} options={{ title: 'Public bulletins' }} />
