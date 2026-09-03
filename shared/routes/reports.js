@@ -340,10 +340,23 @@ export default function registerReportRoutes(router, deps) {
         ['found', 'closed'].includes(r.status)
       )
     );
+    // Free text over the fields a member of the public actually knows: the
+    // child's name, or the place. Filtering happens here rather than in the
+    // browser because the endpoint caps at 100 records — a client-side filter
+    // would quietly search only the newest hundred and tell nobody, which at
+    // pilot scale looks identical to searching everything.
+    const q = String(req.query.q || '').trim().toLowerCase();
     const state = String(req.query.state || '').trim().toLowerCase();
     const district = String(req.query.district || '').trim().toLowerCase();
     const gender = String(req.query.gender || '').trim().toLowerCase();
     const status = String(req.query.status || '').trim().toLowerCase();
+    if (q) {
+      rows = rows.filter((r) =>
+        [r.childName, r.district, r.state]
+          .filter(Boolean)
+          .some((v) => String(v).toLowerCase().includes(q))
+      );
+    }
     const ageMin = Number(req.query.ageMin);
     const ageMax = Number(req.query.ageMax);
     if (state) rows = rows.filter((r) => String(r.state || '').toLowerCase() === state);
