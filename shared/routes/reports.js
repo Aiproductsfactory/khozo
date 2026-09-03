@@ -538,7 +538,11 @@ export default function registerReportRoutes(router, deps) {
     // dropped a real one. Surfacing an extra face for a human to reject costs an
     // officer a minute; suppressing a real match costs a child.
     const lowQualityPhoto = Boolean(best?.lowQuality || best?.warnings?.length);
-    const hasStrongMatch = canRunMatch && best && best.score >= MATCH_REVIEW_THRESHOLD;
+    // A candidate reaches an officer only when a biometric engine compared the
+    // faces. The non-biometric scorer produces no candidates now, and this
+    // guard makes that a property of the route rather than of one module.
+    const hasStrongMatch =
+      canRunMatch && best && Boolean(matchEngine.biometric) && best.score >= MATCH_REVIEW_THRESHOLD;
     const matchedScope = hasStrongMatch ? { state: best.report.state || null, district: best.report.district || null } : {};
     // The phone's coordinates fill in the jurisdiction the reporter did not
     // type. What they did type always wins; a failed lookup changes nothing.

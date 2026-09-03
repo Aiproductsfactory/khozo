@@ -165,12 +165,50 @@ export default function Overview() {
         </div>
       </div>
 
-      {/* Stat cards */}
+      {/*
+        Four figures that answer four different questions, each labelled with
+        what it counts and over what. "Total missing" and "Active cases" were
+        two names for nearly the same number, and a reunification rate was shown
+        even when nothing had been reunited, reading as a 0% success rate rather
+        than as no data yet.
+      */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Total missing" value={stats.cards.totalMissing.toLocaleString('en-IN')} accent="red" icon="🔴" sub="Open + under review" />
-        <StatCard label="Total found / reunited" value={stats.cards.totalFound.toLocaleString('en-IN')} accent="khozo" icon="🏠" sub={`${stats.cards.reunificationRate}% reunification rate`} />
-        <StatCard label="Active cases" value={stats.cards.activeCases.toLocaleString('en-IN')} accent="amber" icon="🗂️" sub="In your scope" />
-        <StatCard label="Pending matches" value={stats.cards.pendingMatches} accent="blue" icon="🔍" sub="Citizen sightings to review" />
+        <StatCard
+          label="Children still missing"
+          value={stats.cards.totalMissing.toLocaleString('en-IN')}
+          accent="red"
+          icon="🔴"
+          sub={`${stats.statusSplit?.find((s) => s.name === 'Under review')?.value ?? 0} of them under review`}
+        />
+        <StatCard
+          label="Reunited or closed"
+          value={stats.cards.totalFound.toLocaleString('en-IN')}
+          accent="khozo"
+          icon="🏠"
+          sub={
+            stats.cards.totalMissing + stats.cards.totalFound === 0
+              ? 'No cases recorded yet'
+              : `${stats.cards.reunificationRate}% of all cases in ${stats.scope}`
+          }
+        />
+        <StatCard
+          label="Sightings awaiting review"
+          value={stats.cards.pendingMatches.toLocaleString('en-IN')}
+          accent="amber"
+          icon="🔍"
+          sub={
+            followups?.totals.pendingSightings
+              ? `${followups.totals.pendingSightings} waiting more than 2 days`
+              : 'None overdue'
+          }
+        />
+        <StatCard
+          label="Needs your attention"
+          value={(followups?.totals.alerts ?? 0).toLocaleString('en-IN')}
+          accent="blue"
+          icon="⚠️"
+          sub={followups?.totals.high ? `${followups.totals.high} high priority` : 'Nothing overdue'}
+        />
       </div>
 
       {/*

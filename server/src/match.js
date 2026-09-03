@@ -53,6 +53,17 @@ const SECOND_OPINION_TOP_N = Number(process.env.KHOZO_SECOND_OPINION_TOP_N || 5)
 /** Score gap at which the two engines are considered to disagree. */
 const DISAGREEMENT_GAP = 0.25;
 
+/**
+ * Rekognition similarity at or above which the second opinion counts as
+ * agreement, and the match may be shown to an officer as a candidate.
+ *
+ * AWS reports similarity 0-100; this is the 0..1 form. 0.80 is AWS's own
+ * guidance for general face comparison — below their 0.99 identity-verification
+ * bar, which is right here because a human confirms afterwards, but high enough
+ * that the two engines have to actually agree about a face.
+ */
+const REKOGNITION_CONFIRM_THRESHOLD = Number(process.env.KHOZO_REKOGNITION_CONFIRM || 0.8);
+
 /** Runs `worker` over `items` with at most `limit` in flight, preserving order. */
 async function mapLimit(items, limit, worker) {
   const results = new Array(items.length);
@@ -144,12 +155,24 @@ function scoreCandidateLocal(seedUnit, report, hints) {
   return Math.max(0, Math.min(0.99, score - 0.09 + jitter * (1 - seedUnit)));
 }
 
-function rankWithHeuristic(photoBuf, candidates, hints = {}) {
-  const seed = hashUnit(photoBuf);
-  return candidates
-    .map((report) => ({ report, score: Number(scoreCandidateLocal(seed, report, hints).toFixed(2)) }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 5);
+/**
+ * Ranks candidates without comparing faces. Returns nothing, deliberately.
+ *
+ * This used to score every open case at `0.45 + hash(photo bytes) * 0.5` — a
+ * number between 45% and 95% derived from the image's bytes, not from anyone's
+ * face. Those scores cleared the 0.35 review threshold, were written to the
+ * record as `matchScore`, and were shown to officers as "AI Match Similarity
+ * Confidence" under a biometric provider's name. A photograph of an adult man
+ * was presented as an 83% match to a missing girl, above a button reading
+ * "Confirm Match & Reunite".
+ *
+ * There is no honest way to rank faces without comparing faces. When no
+ * biometric provider answers, the right output is no candidate and a stated
+ * reason: the sighting is still recorded, still reaches a human, and is simply
+ * not accompanied by a number nobody can stand behind.
+ */
+function rankWithHeuristic() {
+  return [];
 }
 
 // ---- Tier 1: Aarakshak -----------------------------------------------------
@@ -357,9 +380,9 @@ async function addSecondOpinion(photoBuf, ranked) {
 
   const reviewed = await mapLimit(shortlist, MATCH_CONCURRENCY, async (candidate) => {
     const targetBuf = await readPhoto(candidate.report.photoFile);
-    if (!targetBuf) return candidate;
+    if (!targetBuf) return { ...candidate, confirmed: false, secondOpinion: 'photo_unavailable' };
     const second = await compareFacesAWS(photoBuf, targetBuf);
-    if (!second) return candidate;
+    if (!second) return { ...candidate, confirmed: false, secondOpinion: 'no_answer' };
     checked += 1;
     const primary = candidate.score;
     return {
@@ -367,12 +390,19 @@ async function addSecondOpinion(photoBuf, ranked) {
       primaryScore: primary,
       secondOpinionScore: second.score,
       secondOpinionProvider: ENGINES.rekognition.provider,
-      score: Math.max(primary, second.score),
+      // The lower of the two, not the higher. Taking the maximum let one engine
+      // overrule the other, so two engines disagreeing produced a *more*
+      // confident number than either alone — the opposite of what a second
+      // opinion is for.
+      score: Math.min(primary, second.score),
+      confirmed: second.score >= REKOGNITION_CONFIRM_THRESHOLD,
+      secondOpinion: second.score >= REKOGNITION_CONFIRM_THRESHOLD ? 'agrees' : 'disagrees',
       enginesDisagree: Math.abs(primary - second.score) >= DISAGREEMENT_GAP,
     };
   });
 
-  const merged = [...reviewed, ...ranked.slice(SECOND_OPINION_TOP_N)].sort((a, b) => b.score - a.score);
+  const merged = [...reviewed, ...ranked.slice(SECOND_OPINION_TOP_N).map((c) => ({ ...c, confirmed: false, secondOpinion: 'not_checked' }))]
+    .sort((a, b) => b.score - a.score);
   return { candidates: merged, applied: checked > 0, checked };
 }
 
@@ -396,16 +426,31 @@ export async function rankMatches(photoBuf, hints = {}) {
     const viaAarakshak = await rankWithProvider(compareFacesAarakshak, photoBuf, withPhotos);
     if (viaAarakshak?.length) {
       const second = await addSecondOpinion(photoBuf, viaAarakshak);
+      // When Rekognition is available it has to agree before a candidate is put
+      // in front of an officer. One engine proposing a face is a lead; two
+      // engines agreeing is a candidate. Anything Rekognition rejects is
+      // withheld rather than shown with a slightly lower number, because the
+      // number is what an officer acts on.
+      const candidates = second.applied ? second.candidates.filter((c) => c.confirmed) : second.candidates;
       return {
-        candidates: second.candidates,
+        candidates,
         engine: {
           ...ENGINES.aarakshak,
           comparedAgainst: withPhotos.length,
           threshold: Number(AARAKSHAK_THRESHOLD),
           elapsedMs: Date.now() - started,
           secondOpinion: second.applied
-            ? { provider: ENGINES.rekognition.provider, checked: second.checked }
+            ? {
+                provider: ENGINES.rekognition.provider,
+                checked: second.checked,
+                confirmed: second.candidates.filter((c) => c.confirmed).length,
+                withheld: second.candidates.filter((c) => !c.confirmed).length,
+                threshold: REKOGNITION_CONFIRM_THRESHOLD,
+              }
             : null,
+          // Stated so an officer knows a single engine proposed this and
+          // nothing corroborated it.
+          corroborated: second.applied,
           disagreements: second.candidates.filter((c) => c.enginesDisagree).length,
           // If the sighting photo itself was poor, every score is unreliable -
           // the reviewer needs to know that before trusting a low result.
@@ -415,25 +460,36 @@ export async function rankMatches(photoBuf, hints = {}) {
       };
     }
 
+    // Rekognition alone, when Aarakshak did not answer. It is the confirming
+    // engine, so its own verdict is held to the same bar it is used to apply.
     const viaRekognition = await rankWithProvider(compareFacesAWS, photoBuf, withPhotos);
     if (viaRekognition?.length) {
       return {
-        candidates: viaRekognition,
-        engine: { ...ENGINES.rekognition, comparedAgainst: withPhotos.length, elapsedMs: Date.now() - started },
+        candidates: viaRekognition
+          .filter((c) => c.score >= REKOGNITION_CONFIRM_THRESHOLD)
+          .map((c) => ({ ...c, confirmed: true, secondOpinion: 'sole_engine' })),
+        engine: {
+          ...ENGINES.rekognition,
+          comparedAgainst: withPhotos.length,
+          elapsedMs: Date.now() - started,
+          threshold: REKOGNITION_CONFIRM_THRESHOLD,
+          corroborated: false,
+        },
       };
     }
   }
 
-  // Nothing biometric was available or usable. Say so plainly rather than
-  // presenting heuristic output as a face match.
+  // Nothing biometric answered. No candidate is returned: there is no honest
+  // way to rank faces without comparing faces, and a number invented here is
+  // one an officer would act on.
   return {
-    candidates: rankWithHeuristic(photoBuf, openCases.slice(0, MAX_CANDIDATES), hints),
+    candidates: rankWithHeuristic(),
     engine: {
       ...ENGINES.heuristic,
       comparedAgainst: 0,
       reason: withPhotos.length
-        ? 'No biometric provider answered; scores are non-biometric.'
-        : 'No stored case photos to compare against; scores are non-biometric.',
+        ? 'No biometric provider answered, so no face comparison was made and no candidate is offered.'
+        : 'No stored case photos to compare against, so no face comparison was possible.',
     },
   };
 }

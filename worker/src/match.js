@@ -1,5 +1,7 @@
 import crypto from 'node:crypto';
 
+import { compareFacesRekognition, rekognitionConfigured } from './rekognition.js';
+
 const AARAKSHAK_API_URL = 'https://aarakshak.com/api/v1/compare';
 
 export const ENGINES = {
@@ -44,33 +46,21 @@ export function matchEngineInfo(env) {
   };
 }
 
-function hashUnit(buf) {
-  let h = 2166136261;
-  for (let i = 0; i < buf.length; i += 997) {
-    h ^= buf[i];
-    h = Math.imul(h, 16777619);
-  }
-  return (h >>> 0) / 0xffffffff;
-}
-
-function scoreCandidateLocal(seedUnit, report, hints) {
-  let score = 0.45 + seedUnit * 0.5;
-  if (hints?.gender && report.gender && hints.gender === report.gender) score += 0.04;
-  if (hints?.ageApprox != null && report.age != null) {
-    const diff = Math.abs(Number(hints.ageApprox) - report.age);
-    score += Math.max(0, 0.06 - diff * 0.02);
-  }
-  if (report.status === 'found') score -= 0.5;
-  const jitter = hashUnit(Buffer.from(report.id)) * 0.18;
-  return Math.max(0, Math.min(0.99, score - 0.09 + jitter * (1 - seedUnit)));
-}
-
-function rankWithHeuristic(photoBuf, candidates, hints = {}) {
-  const seed = hashUnit(photoBuf);
-  return candidates
-    .map((report) => ({ report, score: Number(scoreCandidateLocal(seed, report, hints).toFixed(2)) }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 5);
+/**
+ * Ranks candidates without comparing faces. Returns nothing, deliberately.
+ *
+ * This used to score every open case at `0.45 + hash(photo bytes) * 0.5` — a
+ * number between 45% and 95% derived from the image's bytes, not from anyone's
+ * face. Those scores cleared the review threshold, were stored as `matchScore`,
+ * and were shown to officers as "AI Match Similarity Confidence" under a
+ * biometric provider's name. A photograph of an adult man was presented as an
+ * 83% match to a missing girl, above a button reading "Confirm Match & Reunite".
+ *
+ * There is no honest way to rank faces without comparing faces. With no
+ * biometric answer the right output is no candidate and a stated reason.
+ */
+function rankWithHeuristic() {
+  return [];
 }
 
 async function compareFacesAarakshak(env, sourceBuf, targetBuf) {
@@ -163,6 +153,55 @@ export async function detectPerson(env, photoBuf) {
 }
 
 /**
+ * Rekognition similarity at or above which the second opinion counts as
+ * agreement, and a candidate may be put in front of an officer. AWS's own
+ * guidance for general face comparison, below their 0.99 identity-verification
+ * bar — right here because a human confirms afterwards, but high enough that
+ * the two engines have to actually agree about a face.
+ */
+function confirmThreshold(env) {
+  return Number(env?.KHOZO_REKOGNITION_CONFIRM || process.env.KHOZO_REKOGNITION_CONFIRM || 0.8);
+}
+
+/**
+ * Asks Rekognition about the top candidates Aarakshak proposed.
+ *
+ * Confirmation, not inflation: the surviving score is the *lower* of the two.
+ * Taking the higher let one engine overrule the other, so two engines
+ * disagreeing produced a more confident number than either alone.
+ */
+async function addSecondOpinion(env, photoBuf, ranked, readPhoto) {
+  if (!rekognitionConfigured(env) || !ranked.length) {
+    return { candidates: ranked.map((c) => ({ ...c, confirmed: false, secondOpinion: 'unavailable' })), applied: false, checked: 0 };
+  }
+
+  let checked = 0;
+  const threshold = confirmThreshold(env);
+
+  const reviewed = await Promise.all(
+    ranked.map(async (candidate) => {
+      const targetBuf = await readPhoto(candidate.report.photoFile);
+      if (!targetBuf) return { ...candidate, confirmed: false, secondOpinion: 'photo_unavailable' };
+      const second = await compareFacesRekognition(env, photoBuf, targetBuf);
+      if (!second) return { ...candidate, confirmed: false, secondOpinion: 'no_answer' };
+      checked += 1;
+      return {
+        ...candidate,
+        primaryScore: candidate.score,
+        secondOpinionScore: second.score,
+        secondOpinionProvider: ENGINES.rekognition.provider,
+        score: Math.min(candidate.score, second.score),
+        confirmed: second.score >= threshold,
+        secondOpinion: second.score >= threshold ? 'agrees' : 'disagrees',
+        enginesDisagree: Math.abs(candidate.score - second.score) >= 0.25,
+      };
+    })
+  );
+
+  return { candidates: reviewed.sort((a, b) => b.score - a.score), applied: checked > 0, checked };
+}
+
+/**
  * Ranks open cases against a sighting photo.
  *
  * `source` supplies the candidate cases and a photo reader. Both come from the
@@ -200,30 +239,82 @@ export async function rankMatches(env, photoBuf, hints = {}, source = {}) {
 
       const answered = compared.filter(Boolean);
       if (answered.length) {
-        const sorted = answered.sort((a, b) => b.score - a.score).slice(0, 5);
+        const ranked = answered.sort((a, b) => b.score - a.score).slice(0, 5);
+
+        // Second opinion. One engine proposing a face is a lead; two engines
+        // agreeing is a candidate. Anything Rekognition does not confirm is
+        // withheld rather than shown with a slightly lower number, because the
+        // number is what an officer acts on.
+        const second = await addSecondOpinion(env, photoBuf, ranked, readPhoto);
+        const candidates = second.applied ? second.candidates.filter((c) => c.confirmed) : second.candidates;
+
         return {
-          candidates: sorted,
+          candidates,
           engine: {
             ...ENGINES.aarakshak,
             comparedAgainst: withPhotos.length,
             threshold: Number(env?.AARAKSHAK_THRESHOLD || 0.35),
             elapsedMs: Date.now() - started,
-            sightingQuality: sorted[0]?.sourceQuality ?? null,
-            qualityWarnings: [...new Set(sorted.flatMap((c) => c.warnings || []))],
+            corroborated: second.applied,
+            secondOpinion: second.applied
+              ? {
+                  provider: ENGINES.rekognition.provider,
+                  checked: second.checked,
+                  confirmed: second.candidates.filter((c) => c.confirmed).length,
+                  withheld: second.candidates.filter((c) => !c.confirmed).length,
+                  threshold: confirmThreshold(env),
+                }
+              : null,
+            sightingQuality: ranked[0]?.sourceQuality ?? null,
+            qualityWarnings: [...new Set(ranked.flatMap((c) => c.warnings || []))],
           },
         };
+      }
+
+      // Aarakshak did not answer. Rekognition alone, held to the same bar it is
+      // used to apply as the confirming engine.
+      if (rekognitionConfigured(env)) {
+        const viaRekognition = (
+          await Promise.all(
+            comparable.map(async ({ report, targetBuf }) => {
+              const res = await compareFacesRekognition(env, photoBuf, targetBuf);
+              return res === null ? null : { report, ...res };
+            })
+          )
+        )
+          .filter(Boolean)
+          .filter((c) => c.score >= confirmThreshold(env))
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 5)
+          .map((c) => ({ ...c, confirmed: true, secondOpinion: 'sole_engine' }));
+
+        if (viaRekognition.length) {
+          return {
+            candidates: viaRekognition,
+            engine: {
+              ...ENGINES.rekognition,
+              comparedAgainst: withPhotos.length,
+              elapsedMs: Date.now() - started,
+              threshold: confirmThreshold(env),
+              corroborated: false,
+            },
+          };
+        }
       }
     }
   }
 
+  // Nothing biometric answered. No candidate is returned: there is no honest
+  // way to rank faces without comparing faces, and a number invented here is
+  // one an officer would act on.
   return {
-    candidates: rankWithHeuristic(photoBuf, openCases.slice(0, maxCandidates), hints),
+    candidates: rankWithHeuristic(),
     engine: {
       ...ENGINES.heuristic,
       comparedAgainst: 0,
       reason: withPhotos.length
-        ? 'No biometric provider answered; scores are non-biometric.'
-        : 'No stored case photos to compare against; scores are non-biometric.',
+        ? 'No biometric provider answered, so no face comparison was made and no candidate is offered.'
+        : 'No stored case photos to compare against, so no face comparison was possible.',
     },
   };
 }

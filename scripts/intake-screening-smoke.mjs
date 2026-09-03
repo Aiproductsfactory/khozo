@@ -60,7 +60,7 @@ const AUTHORITIES = [
  * Registers the routes with stubs and returns the sighting handler plus the
  * notifications and records it produced.
  */
-function harness({ verdict, fetchImpl } = {}) {
+function harness({ verdict, fetchImpl, matchResult } = {}) {
   const notifications = [];
   const sightings = [];
 
@@ -88,7 +88,8 @@ function harness({ verdict, fetchImpl } = {}) {
     auditPublicRateLimit: () => {},
     clientIp: () => 'test',
     fixedWindowRateLimit: () => (_req, _res, next) => next(),
-    rankMatches: async () => ({ candidates: [], engine: { provider: 'stub', modelVersion: null, biometric: false } }),
+    rankMatches: async () =>
+      matchResult || { candidates: [], engine: { provider: 'stub', modelVersion: null, biometric: false } },
     detectPerson: async () => ({ verdict, faces: verdict === 'person' ? 1 : 0, provider: 'stub', checkedAt: Date.now() }),
     upload: { single: () => (_req, _res, next) => next() },
     fetchImpl,
@@ -179,6 +180,41 @@ console.log('Khozo intake screening and routing\n');
     rolesOf(notifications).join(',') === 'admin,cwc,ngo,police,super_admin',
     rolesOf(notifications).join(',')
   );
+}
+
+// --- only a face comparison may produce a match -----------------------------
+//
+// A non-biometric scorer once returned `0.45 + hash(photo bytes) * 0.5` for
+// every open case. Those numbers cleared the review threshold and were shown to
+// officers as match confidence: an adult man was presented as an 83% match to a
+// missing girl, above a button reading "Confirm Match & Reunite".
+{
+  const { handler, sightings } = harness({
+    verdict: 'person',
+    matchResult: {
+      // A high score from something that did not compare faces.
+      candidates: [{ report: { id: 'r_1', childName: 'Some Child', state: 'Assam', district: 'Kamrup Metropolitan' }, score: 0.83 }],
+      engine: { provider: 'local-heuristic', modelVersion: 'heuristic', biometric: false },
+    },
+  });
+  await submit(handler, { body: { ...baseBody }, file: photo });
+  check('a non-biometric score never becomes a match', sightings[0]?.matchedReportId === null, `got ${sightings[0]?.matchedReportId}`);
+  check('and never routes a sighting to police review', sightings[0]?.status === 'no_match', `got ${sightings[0]?.status}`);
+  check('the engine that ran is recorded on the sighting', sightings[0]?.matchEngine?.biometric === false);
+}
+
+{
+  const { handler, sightings } = harness({
+    verdict: 'person',
+    matchResult: {
+      candidates: [{ report: { id: 'r_1', childName: 'Some Child', state: 'Assam', district: 'Kamrup Metropolitan' }, score: 0.83, confirmed: true }],
+      engine: { provider: 'aarakshak-live-v1', modelVersion: 'v1.82', biometric: true },
+    },
+  });
+  await submit(handler, { body: { ...baseBody }, file: photo });
+  check('a biometric score above the threshold does become a match', sightings[0]?.matchedReportId === 'r_1');
+  check('and routes to police review', sightings[0]?.status === 'pending_review', `got ${sightings[0]?.status}`);
+  check('recording that the comparison was biometric', sightings[0]?.matchEngine?.biometric === true);
 }
 
 // --- jurisdiction from the phone's coordinates ------------------------------

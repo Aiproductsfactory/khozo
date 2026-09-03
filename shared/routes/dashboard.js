@@ -700,24 +700,21 @@ export default function registerDashboardRoutes(router, deps) {
         detail: `${abuseRows.length} redacted abuse signals monitored; ${abuseRows.filter((row) => row.sla?.state === 'breached').length} SLA breached.`,
       },
       {
-        id: 'offline_queue',
-        label: 'Offline public capture',
-        status: 'pass',
-        detail: 'PWA manifest, service worker, encrypted IndexedDB queue, TTL, and retry telemetry are present for field reporting.',
-      },
-      {
-        id: 'automated_tests',
-        label: 'Automated verification',
-        status: 'pass',
-        detail: 'Smoke suites cover API, route guards, PWA queue, redaction, exports, and audit behavior.',
-      },
-      {
-        id: 'profile_simulation',
-        label: 'Human Profile Verification',
-        status: 'pass',
-        detail: '18 / 18 operational role profiles verified (Super Admin, Police, CWC, RPF, SJPU, AHTU, DLSA, DCPU, Parent, NGO).',
+        // The confirming engine. Without it a match rests on one provider, and
+        // a panel an operator reads before go-live has to say so.
+        id: 'match_corroboration',
+        label: 'Second-opinion engine',
+        status: engine.rekognitionConfigured ? 'pass' : 'warning',
+        detail: engine.rekognitionConfigured
+          ? 'AWS Rekognition confirms candidates before they are shown to an officer.'
+          : 'AWS Rekognition is not configured. Candidates rest on a single provider with nothing corroborating them. Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.',
       },
     ];
+    // Three checks that always reported "pass" were removed: they asserted that
+    // the PWA assets exist, that smoke suites exist, and that "18 / 18
+    // operational role profiles" were verified. None of them tested anything at
+    // runtime, and a readiness panel whose checks cannot fail tells an operator
+    // nothing about the deployment in front of them.
   }
   
   function readinessSummary(checks) {

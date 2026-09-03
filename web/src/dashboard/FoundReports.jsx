@@ -252,7 +252,12 @@ export default function FoundReports() {
         </div>
       )}
 
-      <div className="grid gap-6 md:grid-cols-2">
+      {/*
+        One sighting per row rather than a two-column grid. Cards of unequal
+        height left large empty gaps, and a queue reads as a queue: same shape,
+        top to bottom, in the order it should be worked.
+      */}
+      <div className="space-y-4">
         {visible.map((f) => {
           const matched = f.matchedReport || (f.matchedReportId ? reportsById[f.matchedReportId] : null);
           const scorePct = Math.round((f.matchScore || 0) * 100);
@@ -262,7 +267,7 @@ export default function FoundReports() {
             <div
               key={f.id}
               ref={(node) => { cardRefs.current[f.id] = node; }}
-              className={`card p-6 shadow-sm transition-shadow hover:shadow-md ${
+              className={`card p-5 shadow-sm transition-shadow hover:shadow-md ${
                 highlightId === f.id ? 'ring-2 ring-indigo-500 ring-offset-2' : ''
               }`}
             >
@@ -275,13 +280,13 @@ export default function FoundReports() {
               </div>
 
               {/*
-                The photograph the citizen sent is the thing being reviewed, so
-                it belongs on the card. It used to be reachable only through a
-                modal, leaving the reviewer judging a percentage without ever
-                seeing the face it came from.
+                Photo, detail and candidate across one row. The photograph the
+                citizen sent is the thing being reviewed and used to be reachable
+                only through a modal, leaving the reviewer judging a percentage
+                without ever seeing the face it came from.
               */}
-              <div className="mt-4 flex gap-4">
-                <div className="h-32 w-32 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
+              <div className="mt-4 flex flex-col gap-4 lg:flex-row lg:items-start">
+                <div className="h-28 w-28 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
                   <ProtectedImage
                     src={f.photoUrl || `/api/reports/photo/${f.id}`}
                     alt="Reported sighting"
@@ -321,11 +326,10 @@ export default function FoundReports() {
                     </span>
                   )}
                 </div>
-              </div>
 
-              <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/70 p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex min-w-0 items-center gap-3">
+                <div className="shrink-0 rounded-xl border border-slate-200 bg-slate-50/70 p-4 lg:w-96">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
                     {matched && (
                       <div className="h-12 w-12 shrink-0 overflow-hidden rounded-lg border border-indigo-200 bg-indigo-100">
                         <ProtectedImage
@@ -335,35 +339,55 @@ export default function FoundReports() {
                         />
                       </div>
                     )}
-                    <div className="min-w-0">
-                      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Closest open case</span>
-                      <p className="truncate text-base font-bold capitalize text-gray-900">
-                        {matched ? matched.childName : 'No candidate above the review threshold'}
-                      </p>
-                      {matched && (
-                        <p className="truncate text-xs text-gray-500">
-                          Case #{matched.id} • {matched.address || matched.district}
+                      <div className="min-w-0">
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Closest open case</span>
+                        <p className="truncate text-base font-bold capitalize text-gray-900">
+                          {matched ? matched.childName : 'No candidate'}
                         </p>
-                      )}
+                        {matched && (
+                          <p className="truncate text-xs text-gray-500">
+                            Case #{matched.id} • {matched.address || matched.district}
+                          </p>
+                        )}
+                      </div>
                     </div>
+                    {matched && (
+                      <div className="shrink-0 text-right">
+                        <div className={`text-2xl font-extrabold ${band.className}`}>{scorePct}%</div>
+                        <p className="text-[10px] font-medium text-gray-400">{band.label}</p>
+                      </div>
+                    )}
                   </div>
-                  <div className="shrink-0 text-right">
-                    <div className={`text-2xl font-extrabold ${band.className}`}>{scorePct}%</div>
-                    <p className="text-[10px] font-medium text-gray-400">{band.label}</p>
-                  </div>
-                </div>
 
-                {matched && (
-                  <div className="mt-3 flex items-center justify-between border-t border-slate-200 pt-2.5">
-                    <span className="text-xs text-slate-500">{f.matchEngine?.provider || engineLabel.provider}</span>
-                    <button
-                      onClick={() => setCompareModal({ sighting: f, matched })}
-                      className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800"
-                    >
-                      Side-by-side comparison &rarr;
-                    </button>
-                  </div>
-                )}
+                  {matched ? (
+                    <>
+                      {/*
+                        Whether a second engine corroborated this. One engine
+                        proposing a face is a lead; an officer about to contact a
+                        family needs to know which of the two they are looking at.
+                      */}
+                      <p className="mt-2 text-xs text-slate-500">
+                        {f.matchEngine?.provider || engineLabel.provider}
+                        {f.secondOpinion === 'agrees' && ' · confirmed by AWS Rekognition'}
+                        {f.secondOpinion === 'sole_engine' && ' · single engine'}
+                        {(f.secondOpinion === 'unavailable' || f.secondOpinion === 'no_answer') &&
+                          ' · not corroborated by a second engine'}
+                      </p>
+                      <button
+                        onClick={() => setCompareModal({ sighting: f, matched })}
+                        className="mt-3 w-full rounded-lg border border-indigo-200 bg-white py-2 text-xs font-semibold text-indigo-600 hover:bg-indigo-50"
+                      >
+                        Compare the two photographs
+                      </button>
+                    </>
+                  ) : (
+                    <p className="mt-2 text-xs text-slate-500">
+                      {f.matchEngine && !f.matchEngine.biometric
+                        ? 'No face comparison was made, so no candidate is offered.'
+                        : 'No open case was matched to this photograph.'}
+                    </p>
+                  )}
+                </div>
               </div>
 
               {f.status === 'pending_review' && (
@@ -477,8 +501,12 @@ export default function FoundReports() {
           <div className="card max-w-xl w-full p-6 space-y-5 bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b pb-3">
               <div>
-                <h3 className="text-lg font-bold text-gray-900">Biometric Face Comparison</h3>
-                <p className="text-xs text-gray-500">Aarakshak Live AI • Threshold 0.35</p>
+                <h3 className="text-lg font-bold text-gray-900">Face comparison</h3>
+                {/* Names the engine that produced this score, not a fixed one. */}
+                <p className="text-xs text-gray-500">
+                  {compareModal.sighting.matchEngine?.provider || 'engine not recorded'}
+                  {compareModal.sighting.secondOpinion === 'agrees' && ' · confirmed by AWS Rekognition'}
+                </p>
               </div>
               <button
                 onClick={() => setCompareModal(null)}
@@ -516,9 +544,23 @@ export default function FoundReports() {
               </div>
             </div>
 
-            <div className="rounded-xl bg-indigo-50 p-3.5 text-center">
-              <span className="text-xs font-semibold text-indigo-700 block">AI Match Similarity Confidence</span>
-              <span className="text-3xl font-extrabold text-indigo-900">{Math.round((compareModal.sighting.matchScore || 0) * 100)}%</span>
+            <div className="rounded-xl bg-slate-50 p-3.5 text-center ring-1 ring-slate-200">
+              <span className="block text-xs font-semibold text-slate-600">Face similarity</span>
+              <span className="text-3xl font-extrabold text-slate-900">
+                {Math.round((compareModal.sighting.matchScore || 0) * 100)}%
+              </span>
+              {/* Both engines' numbers, when there are two. A single blended
+                  figure hid which engine said what. */}
+              {compareModal.sighting.secondOpinionScore != null && (
+                <span className="mt-1 block text-xs text-slate-500">
+                  {compareModal.sighting.matchEngine?.provider} {Math.round((compareModal.sighting.primaryScore || 0) * 100)}%
+                  {' · '}
+                  AWS Rekognition {Math.round(compareModal.sighting.secondOpinionScore * 100)}%
+                </span>
+              )}
+              <span className="mt-2 block text-xs text-slate-500">
+                A score is a prompt to look. You are confirming this is the same child.
+              </span>
             </div>
 
             <div className="flex justify-end gap-2 pt-2 border-t">
