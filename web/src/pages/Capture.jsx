@@ -13,6 +13,7 @@ import {
   removeQueuedSighting,
   requestBackgroundSync,
 } from '../offlineQueue.js';
+import { formatCoordinates, getDeviceLocation, readPhotoGps } from '../photoLocation.js';
 
 const ID_PROOF_TYPES = [
   { id: '', label: 'Not provided' },
@@ -22,6 +23,46 @@ const ID_PROOF_TYPES = [
   { id: 'driving_license', label: 'Driving licence' },
   { id: 'other', label: 'Other photo ID' },
 ];
+
+function LocationStatus({ located, hasPhoto, onClear }) {
+  if (!located) return null;
+  const { status, accuracy } = located;
+  if (status === 'locating') {
+    return <p className="mt-1.5 text-xs text-gray-500">Finding where you are…</p>;
+  }
+  if (status === 'denied' || status === 'failed') {
+    return (
+      <p className="mt-1.5 text-xs text-amber-700">
+        {status === 'denied'
+          ? 'Location permission is off, so no location was attached. Type the place, or allow location for this site and tap Use GPS.'
+          : 'Could not get a location fix. Type the place, or tap Use GPS to try again.'}
+      </p>
+    );
+  }
+  const remove = (label) => (
+    <button type="button" className="font-semibold underline underline-offset-2" onClick={onClear}>
+      {label}
+    </button>
+  );
+  if (status === 'photo') {
+    return (
+      <p className="mt-1.5 text-xs text-khozo-dark">
+        Location taken from the photo’s own GPS. Add a landmark if you can. {remove('Remove')}
+      </p>
+    );
+  }
+  const where = `Your phone’s current location is attached${accuracy ? ` (within about ${Math.round(accuracy)} m)` : ''}.`;
+  return (
+    <p className="mt-1.5 text-xs text-khozo-dark">
+      {where}{' '}
+      {hasPhoto ? (
+        <>If the photo was taken somewhere else, {remove('remove it')} and type that place.</>
+      ) : (
+        <>Add a landmark if you can. {remove('Remove')}</>
+      )}
+    </p>
+  );
+}
 
 function buildSightingFormData(form, file) {
   const fd = new FormData();
@@ -52,10 +93,64 @@ export default function Capture() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [queued, setQueued] = useState([]);
+  // { status: 'locating' | 'photo' | 'device' | 'denied' | 'failed', lat, lng, accuracy }
+  const [located, setLocated] = useState(null);
   const fileRef = useRef(null);
+  const locateRun = useRef(0);
+  const autoLocationText = useRef('');
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const setChecked = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.checked }));
+
+  /*
+   * The location is fetched the moment a photo is chosen, not when the reporter
+   * remembers to press a button. The server turns the coordinates into the
+   * state and district that decide which officers are alerted, so a report
+   * without them reaches everyone slowly instead of the right desk at once.
+   * The photo's own GPS is preferred: a gallery picture may have been taken
+   * somewhere other than where the reporter is now.
+   */
+  const locate = async (photo) => {
+    const run = ++locateRun.current;
+    setLocated({ status: 'locating' });
+    let coords = photo ? await readPhotoGps(photo) : null;
+    let status = 'photo';
+    if (!coords) {
+      status = 'device';
+      try {
+        coords = await getDeviceLocation();
+      } catch (e) {
+        if (run === locateRun.current) setLocated({ status: e?.code === 1 ? 'denied' : 'failed' });
+        return;
+      }
+    }
+    // A newer photo or a Use GPS tap has started its own lookup since.
+    if (run !== locateRun.current) return;
+    const text = formatCoordinates(coords);
+    // Read before the update: React runs the updater later, after the ref has moved on.
+    const previousFill = autoLocationText.current;
+    autoLocationText.current = text;
+    setForm((f) => {
+      // What the reporter typed is a landmark an officer can walk to, and it
+      // is never overwritten; only an empty field or our own earlier fill is.
+      const typed = f.foundLocation.trim() && f.foundLocation !== previousFill;
+      return { ...f, lat: coords.lat, lng: coords.lng, foundLocation: typed ? f.foundLocation : text };
+    });
+    setLocated({ status, ...coords });
+  };
+
+  const clearLocation = () => {
+    locateRun.current += 1;
+    const previousFill = autoLocationText.current;
+    autoLocationText.current = '';
+    setForm((f) => ({
+      ...f,
+      lat: null,
+      lng: null,
+      foundLocation: f.foundLocation === previousFill ? '' : f.foundLocation,
+    }));
+    setLocated(null);
+  };
 
   const onFile = (e) => {
     const f = e.target.files?.[0];
@@ -63,6 +158,7 @@ export default function Capture() {
     setFile(f);
     setPreview(URL.createObjectURL(f));
     setStep(2);
+    locate(f);
   };
 
   useEffect(() => {
@@ -79,13 +175,6 @@ export default function Capture() {
     window.addEventListener('online', flush);
     return () => window.removeEventListener('online', flush);
   }, []);
-
-  const useLocation = () => {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition((pos) => {
-      setForm((f) => ({ ...f, foundLocation: `Lat ${pos.coords.latitude.toFixed(4)}, Lng ${pos.coords.longitude.toFixed(4)}`, lat: pos.coords.latitude, lng: pos.coords.longitude }));
-    });
-  };
 
   const submit = async () => {
     setBusy(true);
@@ -183,7 +272,7 @@ export default function Capture() {
               <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={onFile} className="hidden" />
               <div className="mt-6 flex flex-wrap justify-center gap-3">
                 <button className="btn-primary" onClick={() => fileRef.current?.click()}>Capture / Upload photo</button>
-                <button className="btn-ghost" onClick={() => setStep(2)}>Continue without photo</button>
+                <button className="btn-ghost" onClick={() => { setStep(2); locate(null); }}>Continue without photo</button>
               </div>
             </div>
           </div>
@@ -209,8 +298,16 @@ export default function Capture() {
                 <label className="label">Found location</label>
                 <div className="flex gap-2">
                   <input className="field" value={form.foundLocation} onChange={set('foundLocation')} placeholder="Area, landmark, city" />
-                  <button type="button" className="btn-ghost shrink-0" onClick={useLocation}>Use GPS</button>
+                  <button
+                    type="button"
+                    className="btn-ghost shrink-0"
+                    disabled={located?.status === 'locating'}
+                    onClick={() => locate(null)}
+                  >
+                    Use GPS
+                  </button>
                 </div>
+                <LocationStatus located={located} hasPhoto={!!file} onClear={clearLocation} />
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 {/*
@@ -349,7 +446,7 @@ export default function Capture() {
             <div className="flex justify-center gap-3">
               <Link to="/" className="btn-ghost">Done</Link>
               <Link to="/track-sighting" className="btn-ghost">Track status</Link>
-              <button className="btn-primary" onClick={() => { setStep(1); setResult(null); setFile(null); setPreview(null); }}>Report another</button>
+              <button className="btn-primary" onClick={() => { setStep(1); setResult(null); setFile(null); setPreview(null); clearLocation(); }}>Report another</button>
             </div>
           </div>
         )}
