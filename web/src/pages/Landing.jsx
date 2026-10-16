@@ -287,7 +287,7 @@ const STEPS = [
   },
   {
     t: 'Two engines compare faces',
-    d: 'An Indian provider proposes a candidate; a second, independent engine has to agree before any officer sees it.',
+    d: 'Aarakshak, an Indian engine, proposes a candidate. In this demo, AWS Rekognition (Mumbai region) has to agree before any officer sees it; production will use Aarakshak alone.',
   },
   {
     t: 'An officer decides',
@@ -378,10 +378,14 @@ function Trust() {
  *
  * Every claim here was checked against the running code before it was written:
  * the primary engine is Aarakshak (worker/src/match.js), the confirming engine
- * is pinned to ap-south-1 (worker/src/rekognition.js), and a candidate really is
- * withheld unless both agree. A parent handing over a photograph of their child
- * is owed a straight answer about where it goes, and a claim on this page the
- * code did not support would be worse than saying nothing at all.
+ * is AWS Rekognition pinned to ap-south-1 (worker/src/rekognition.js), and a
+ * candidate really is withheld unless both agree. Rekognition is named, and
+ * marked demo-only, because it is not Aarakshak and will not be in production;
+ * leaving it unnamed let "two engines" read as all-Indian.
+ *
+ * A parent handing over a photograph of their child is owed a straight answer
+ * about where it goes, and a claim on this page the code did not support would
+ * be worse than saying nothing at all.
  */
 function Sovereignty() {
   return (
@@ -394,8 +398,8 @@ function Sovereignty() {
               A child’s face never leaves India.
             </h2>
             <p className="mt-4 max-w-md text-lg leading-relaxed text-white/70">
-              Biometric matching for missing children runs on Indian infrastructure, by an Indian
-              provider. Nothing about a child is shipped abroad to be compared.
+              Biometric matching for missing children runs on Aarakshak, an Indian provider, on Indian
+              infrastructure. Nothing about a child is shipped abroad to be compared.
             </p>
             <a
               href="https://aarakshak.com/"
@@ -424,18 +428,18 @@ function Sovereignty() {
               </dd>
             </div>
             <div className="bg-ink p-6">
-              <dt className="text-sm font-bold text-lime-300">Processed in Mumbai</dt>
+              <dt className="text-sm font-bold text-lime-300">AWS Rekognition — demo only</dt>
               <dd className="mt-2 text-sm leading-relaxed text-white/70">
-                The confirming engine is pinned to the{' '}
-                <span className="font-mono text-white">ap-south-1</span> region. Photographs are not sent
-                to overseas regions for comparison.
+                This demo also uses AWS Rekognition as the confirming engine, pinned to the Mumbai{' '}
+                <span className="font-mono text-white">ap-south-1</span> region. It will not be used in
+                production, where matching runs on Aarakshak alone.
               </dd>
             </div>
             <div className="bg-ink p-6">
               <dt className="text-sm font-bold text-lime-300">Two engines must agree</dt>
               <dd className="mt-2 text-sm leading-relaxed text-white/70">
-                One engine proposing a face is a lead, not a match. A candidate reaches an officer only
-                when a second, independent engine confirms it — otherwise it is withheld.
+                One engine proposing a face is a lead, not a match. In this demo a candidate reaches an
+                officer only when the second engine confirms it — otherwise it is withheld.
               </dd>
             </div>
             <div className="bg-ink p-6">
@@ -485,7 +489,96 @@ function ForAgencies() {
   );
 }
 
+/* ---------------------------------------------------------------- origins */
+
+function Origins() {
+  return (
+    <section id="origins" className="mx-auto max-w-6xl px-5 py-16">
+      <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] lg:items-center lg:gap-14">
+        <div>
+          <p className="font-mono text-5xl font-semibold leading-none text-khozo sm:text-6xl">2018</p>
+          <p className="mt-5 text-xs font-bold uppercase tracking-[0.18em] text-khozo-dark">Where Khozo began</p>
+          <h2 className="mt-2 text-2xl font-bold tracking-tight text-ink sm:text-3xl">
+            Data Science for Social Good
+          </h2>
+          <p className="mt-3 text-gray-600">
+            Project Khozo was introduced as a Data Science for Social Good CSR initiative at the{' '}
+            <span className="font-semibold text-ink">Data Science Congress 2018</span> in Mumbai. The
+            Congress was inaugurated by{' '}
+            <span className="font-semibold text-ink">Shri Vijay Goel</span>, then Union Minister of State
+            for Parliamentary Affairs and for Statistics and Programme Implementation.
+          </p>
+        </div>
+        <img
+          src="/assets/dsc-2018-vijay-goel.jpg"
+          alt="Shri Vijay Goel, Minister of State for Parliamentary Affairs and Statistics and Programme Implementation, speaking at the Data Science Congress 2018 in Mumbai"
+          width="1600"
+          height="837"
+          loading="lazy"
+          className="h-auto w-full rounded-2xl shadow-sm ring-1 ring-black/5"
+        />
+      </div>
+    </section>
+  );
+}
+
 /* ------------------------------------------------------- ministry + the app */
+
+/*
+ * Hidden, not removed: the band is kept so it can return for a Department
+ * presentation by flipping this flag. The portrait it uses stays in
+ * web/public/assets for the same reason.
+ */
+const SHOW_PROPOSED_TO = false;
+
+/*
+ * The sovereignty answer, lifted to the top of the page. The full section
+ * (#sovereign) sits below the fold; someone about to hand over a photograph of
+ * a child should not have to scroll to learn it stays in India. Worded to the
+ * same claims Sovereignty() checks against the code.
+ */
+function SovereignBand() {
+  return (
+    <section className="border-b border-black/5 bg-ink text-white">
+      <div className="mx-auto flex max-w-6xl flex-col gap-4 px-5 py-6 sm:flex-row sm:items-center sm:gap-7">
+        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-lime-300/15 ring-1 ring-lime-300/30">
+          <Icon.shield className="h-6 w-6 text-lime-300" />
+        </span>
+        <div className="flex-1">
+          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-lime-300">
+            Sovereign AI · Made in India
+          </p>
+          <h2 className="mt-1 text-lg font-bold leading-snug">
+            Powered by{' '}
+            <a
+              href="https://aarakshak.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline decoration-lime-300/60 underline-offset-4 hover:text-lime-300"
+            >
+              Aarakshak
+            </a>
+            , India’s sovereign AI platform.
+          </h2>
+          <p className="mt-1 text-sm text-white/70">
+            A child’s face is matched on Indian infrastructure — no photograph is sent beyond India’s
+            borders to be compared.
+          </p>
+          <p className="mt-1 text-xs text-white/50">
+            This demo also uses AWS Rekognition (Mumbai region) as a second check. It will not be used in
+            production.
+          </p>
+        </div>
+        <a
+          href="#sovereign"
+          className="inline-flex shrink-0 items-center gap-1.5 text-sm font-semibold text-lime-300 hover:underline"
+        >
+          How we keep it in India <Icon.arrow className="h-4 w-4" />
+        </a>
+      </div>
+    </section>
+  );
+}
 
 function ProposedTo() {
   const [showPortrait, setShowPortrait] = useState(true);
@@ -644,7 +737,8 @@ export default function Landing() {
         setQuery={setQuery}
         onSearch={onSearch}
       />
-      <ProposedTo />
+      <SovereignBand />
+      {SHOW_PROPOSED_TO ? <ProposedTo /> : null}
       {/*
         With no appeal published, the headline already says so at full size —
         repeating it under a "Children on appeal now" heading, above an empty
@@ -660,6 +754,7 @@ export default function Landing() {
       <Trust />
       <Sovereignty />
       <ForAgencies />
+      <Origins />
       <GetApp />
       <Footer />
     </div>
