@@ -16,7 +16,7 @@
  */
 import process from 'node:process';
 
-import { aarakshakGalleryIndex } from '../shared/face-index.js';
+import { aarakshakGalleryIndex, cleanApiKey } from '../shared/face-index.js';
 
 const KHOZO_CASE_ID = /^r_[A-Za-z0-9_-]{4,40}$/;
 
@@ -57,16 +57,38 @@ async function readKey() {
   });
 }
 
+/**
+ * What arrived at the prompt, described without giving the key away: its
+ * length, the invisible characters removed (by code point), anything outside
+ * the characters keys are made of, and whether it starts with Aarakshak's
+ * `fr_live_` type marker.
+ */
+function describeKey(raw, key) {
+  const removed = new Map();
+  for (const ch of String(raw).replace(/[\r\n]+$/, '')) {
+    if (!key.includes(ch) && /[\p{Cc}\p{Cf}\p{Z}\s]/u.test(ch)) {
+      const code = `U+${ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`;
+      removed.set(code, (removed.get(code) || 0) + 1);
+    }
+  }
+  const unusual = [...new Set([...key].filter((ch) => !/[A-Za-z0-9_\-.]/.test(ch)))]
+    .map((ch) => `U+${ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`);
+  return { length: key.length, removed: [...removed].map(([code, n]) => `${code} x${n}`), unusual, marker: key.startsWith('fr_live_') };
+}
+
 const url = process.env.AARAKSHAK_GALLERY_URL || 'https://aarakshak.com';
 const expected = process.env.AARAKSHAK_GALLERY_NAME || 'khozo-sandbox';
 const raw = await readKey();
-const key = String(raw || '').trim();
+const key = cleanApiKey(raw);
+const seen = describeKey(raw, key);
 if (!key) {
-  console.error('No key given.');
+  console.error(/\u0016/.test(String(raw))
+    ? 'No key arrived: Ctrl+V reached the prompt as a keystroke, not a paste. Right-click to paste instead.'
+    : 'No key given.');
   process.exit(2);
 }
-if (key !== String(raw).replace(/[\r\n]+$/, '')) {
-  console.log('Note: the key had spaces or a byte-order mark around it; they were removed (the Worker removes them too).');
+if (seen.removed.length) {
+  console.log(`Note: removed invisible characters that are never part of a key: ${seen.removed.join(', ')} (the Worker removes them too).`);
 }
 
 const gallery = aarakshakGalleryIndex({ url, key, gallery: expected });
@@ -74,7 +96,9 @@ console.log(`\nAarakshak gallery check (read-only) - ${url}`);
 const info = await gallery.info();
 if (!info) {
   console.log('\nNo answer from GET /api/v2/gallery (the reason and X-Request-ID are above).');
-  console.log('A 401 or 403 means the key was not accepted: check it with Aarakshak, out of band.');
+  console.log(`The key as sent: ${seen.length} characters, ${seen.marker ? 'starts' : 'does NOT start'} with fr_live_, ${seen.unusual.length ? `unusual characters ${seen.unusual.join(', ')}` : 'only letters, digits, _ - .'}.`);
+  console.log('A 401 or 403 means Aarakshak did not accept it. Compare the length and the start with');
+  console.log('what Aarakshak sent, and give them the X-Request-ID - never the key - to look it up.');
   process.exit(1);
 }
 const ids = await gallery.listCaseIds();

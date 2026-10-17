@@ -59,6 +59,19 @@ const TIMEOUT_MS = 12000;
 
 const cleanSecret = (value) => String(value || '').trim();
 
+/**
+ * An API key as it was meant to be typed. A pasted key can carry more than
+ * the byte-order mark trim() removes (worker/src/match.js): a zero-width space
+ * from a chat app or an email, a non-breaking space, or the markers a terminal
+ * wraps around a paste (ESC[200~ ... ESC[201~). None of them is ever part of a
+ * key, so all are removed wherever they are.
+ */
+export function cleanApiKey(value) {
+  return String(value || '')
+    .replace(/\u001b\[20[01]~/g, '')
+    .replace(/[\p{Cc}\p{Cf}\p{Z}\s]/gu, '');
+}
+
 function readEnv(env, name) {
   if (env && env[name] != null && env[name] !== '') return env[name];
   return typeof process !== 'undefined' ? process.env?.[name] : undefined;
@@ -166,7 +179,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 export function aarakshakGalleryIndex({ url, key, gallery = '', fetchImpl = fetch, timeoutMs = TIMEOUT_MS, retryDelayMs = 1000 } = {}) {
   // The host alone; a URL given with /api/v2 (or v1) on the end is accepted.
   const base = String(url || '').replace(/\/+$/, '').replace(/\/api\/v\d+$/, '');
-  const apiKey = cleanSecret(key);
+  const apiKey = cleanApiKey(key);
   const expectedGallery = cleanSecret(gallery);
 
   async function call(method, path, { headers = {}, body } = {}) {
@@ -346,7 +359,7 @@ export function aarakshakGalleryIndex({ url, key, gallery = '', fetchImpl = fetc
  */
 export function createFaceIndex(env = {}, { fetchImpl } = {}) {
   const url = cleanSecret(readEnv(env, 'AARAKSHAK_GALLERY_URL'));
-  const key = cleanSecret(readEnv(env, 'AARAKSHAK_GALLERY_KEY'));
+  const key = cleanApiKey(readEnv(env, 'AARAKSHAK_GALLERY_KEY'));
   if (url && key) {
     return aarakshakGalleryIndex({
       url,

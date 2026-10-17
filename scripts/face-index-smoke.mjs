@@ -113,14 +113,14 @@ function fakeGallery() {
 
 {
   const fake = fakeGallery();
-  const g = aarakshakGalleryIndex({ url: 'https://gallery.example/api/v2/', key: ' sandbox-key ', gallery: 'khozo-sandbox', fetchImpl: fake.fetchImpl, retryDelayMs: 0 });
+  const g = aarakshakGalleryIndex({ url: 'https://gallery.example/api/v2/', key: ' sand​box-key﻿ ', gallery: 'khozo-sandbox', fetchImpl: fake.fetchImpl, retryDelayMs: 0 });
   const quietWarn = console.warn;
   const warnings = [];
   console.warn = (...a) => warnings.push(a.join(' '));
   try {
     const enrolled = await g.enroll('r_aaaa1111', photo('A', 'case'));
     const req = fake.requests.at(-1);
-    check('enrolment posts the case to /api/v2/cases with the key and an Idempotency-Key',
+    check('enrolment posts the case to /api/v2/cases with the key, invisible characters removed, and an Idempotency-Key',
       req.method === 'POST' && req.path === '/api/v2/cases' && req.headers['x-api-key'] === 'sandbox-key' && /^khozo-enrol-r_aaaa1111-/.test(req.headers['idempotency-key'] || ''),
       JSON.stringify({ path: req.path, headers: req.headers }));
     const fields = [...req.body.matchAll(/; name="([^"]+)"/g)].map((m) => m[1]);
