@@ -8,7 +8,29 @@ import { currentLocale, msg, t, useT } from '../i18n.jsx';
 import { useDisplay } from '../useDisplay.js';
 import { useBackClose } from '../useBackClose.js';
 import { ActionMessage, ActionToast, useAction } from './useAction.jsx';
-import { ConfirmMatchDialog, telHref } from './Reunite.jsx';
+import { ConfirmMatchDialog, EngineScores, MatchEvidence, currentCandidate, photoCheckFlag, telHref } from './Reunite.jsx';
+import { POLICE_ROLES } from '../../../shared/scope.js';
+
+// Who may search a sighting again (POST /reports/found/:id/rematch): police
+// roles. Who may place a sighting in a district (POST /found/:id/place): the
+// national desk, state desks and police, within their own state.
+const SEARCH_AGAIN_ROLES = POLICE_ROLES;
+const PLACEMENT_ROLES = ['super_admin', 'admin', 'state_nodal', 'sara', 'crime_bureau', ...POLICE_ROLES];
+
+/** Whether a sighting's search can be run again: a photo, and not closed by an officer. */
+function searchable(f) {
+  return Boolean(txt(f.photoFile) || txt(f.photoUrl)) && !f.anonymizedAt && !['matched', 'rejected'].includes(f.status);
+}
+
+/** "Compared with 18 of 240 open cases", from the record of the last search. */
+function comparedLine(engine) {
+  if (!engine || typeof engine !== 'object' || !engine.biometric) return '';
+  const compared = Number(engine.comparedAgainst) || 0;
+  const open = Number(engine.pool?.openWithPhotos);
+  return Number.isFinite(open) && open > 0
+    ? t('Compared with {x} of {y} open cases', { x: compared, y: open })
+    : t('Compared with {x} open cases', { x: compared });
+}
 
 const CWC_OUTCOMES = [
   { id: 'child_located_safe', label: msg('Child located safe') },
@@ -118,6 +140,14 @@ export default function FoundReports({ view = 'matches' }) {
   const cardRefs = useRef({});
 
   const canConfirm = ['super_admin', 'admin', 'police', 'sjpu'].includes(user.role);
+  const canSearchAgain = SEARCH_AGAIN_ROLES.includes(user.role);
+  const canPlace = PLACEMENT_ROLES.includes(user.role);
+  // { [sightingId]: { linked, engine } } after "Search again" answers.
+  const [searches, setSearches] = useState({});
+  // { [sightingId]: { state, district } } while "Set district" is open.
+  const [placements, setPlacements] = useState({});
+  // The national re-match batch: { processed, linked, remaining, running }.
+  const [batch, setBatch] = useState(null);
   const canCwcFollowup = ['super_admin', 'admin', 'cwc', 'dcpu', 'state_nodal', 'sara'].includes(user.role);
   const canFormalizeIntake = ['super_admin', 'admin', 'police', 'sjpu', 'cwc', 'dcpu', 'cci', 'saa', 'state_nodal', 'sara'].includes(user.role);
 
@@ -230,14 +260,60 @@ export default function FoundReports({ view = 'matches' }) {
     : { text: t('No comparison run yet'), biometric: false, provider: 'none' };
 
   // Reject or refer. Confirming a match goes through the dialog instead.
+  // Rejecting a linked sighting is "not this person": the sighting moves to the
+  // next candidate the engines proposed, or back to its queue.
   const review = (f, decision) => action.run(
     `review:${f.id}`,
     async () => {
       await api.post(`/reports/found/${f.id}/review`, { decision });
       load();
     },
-    decision === 'refer_cwc' ? msg('Referred to 1098/CWC.') : msg('Match rejected.')
+    decision === 'refer_cwc'
+      ? msg('Referred to 1098/CWC.')
+      : f.matchedReportId ? msg('Marked as not this person.') : msg('Match rejected.')
   );
+
+  // Runs the face search again for one sighting, from where it was reported.
+  const searchAgain = (f) => action.run(`rematch:${f.id}`, async () => {
+    const data = await api.post(`/reports/found/${f.id}/rematch`);
+    setSearches((rows) => ({ ...rows, [f.id]: { linked: Boolean(data?.linked), engine: data?.engine && typeof data.engine === 'object' ? data.engine : null } }));
+    load();
+  });
+
+  // Places a sighting the reporter gave no district for.
+  const placeSighting = (f) => action.run(`place:${f.id}`, async () => {
+    const form = placements[f.id] || {};
+    await api.post(`/reports/found/${f.id}/place`, {
+      state: txt(form.state) || txt(user.jurisdiction?.state),
+      district: txt(form.district),
+    });
+    setPlacements((rows) => {
+      const next = { ...rows };
+      delete next[f.id];
+      return next;
+    });
+    load();
+  }, msg('Sighting placed in the district.'));
+
+  // The national desk re-runs the search for every sighting that needs it,
+  // a batch at a time, until none is left.
+  const runBatch = () => action.run('rematch-batch', async () => {
+    let since = null;
+    let processed = 0;
+    let linked = 0;
+    let last = null;
+    for (let round = 0; round < 50; round += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      last = await api.post('/dashboard/rematch-sightings', { limit: 10, ...(since ? { since } : {}) });
+      since = last?.since || since;
+      processed += Number(last?.processed) || 0;
+      linked += Number(last?.linked) || 0;
+      setBatch({ processed, linked, remaining: Number(last?.remaining) || 0, running: true });
+      if (!last || !(Number(last.remaining) > 0) || !(Number(last.processed) > 0)) break;
+    }
+    setBatch({ processed, linked, remaining: Number(last?.remaining) || 0, running: false });
+    load();
+  });
 
   // The dialog's submit: throws on refusal, so the reason shows in the dialog.
   const confirmMatch = async (verification) => {
@@ -324,9 +400,35 @@ export default function FoundReports({ view = 'matches' }) {
           configured, which tells a reviewer a score is biometric when it may
           not be.
         */}
-        <div className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600 ring-1 ring-slate-200">
-          <span className={`h-1.5 w-1.5 rounded-full ${engineLabel.biometric ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-          {engineLabel.text}
+        <div className="flex flex-col items-end gap-2">
+          <div className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600 ring-1 ring-slate-200">
+            <span className={`h-1.5 w-1.5 rounded-full ${engineLabel.biometric ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+            {engineLabel.text}
+          </div>
+          {/*
+            After an outage, or once a second engine or new settings are in
+            place: search again every stored sighting whose last search had no
+            face comparison, fell short of the budget or ran under other
+            settings. The national desk only.
+          */}
+          {user.role === 'super_admin' && (
+            <div className="text-right">
+              <button
+                type="button"
+                onClick={runBatch}
+                disabled={action.pending}
+                className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-indigo-600 ring-1 ring-indigo-200 hover:bg-indigo-50"
+              >
+                {action.busy('rematch-batch') ? t('Searching stored sightings again…') : t('Search stored sightings again')}
+              </button>
+              {batch && (
+                <p className="mt-1 text-[11px] text-slate-500">
+                  {t('{n} searched again, {linked} sent for review, {remaining} left', { n: batch.processed, linked: batch.linked, remaining: batch.remaining })}
+                </p>
+              )}
+              <ActionMessage action={action} id="rematch-batch" />
+            </div>
+          )}
         </div>
       </div>
 
@@ -394,6 +496,18 @@ export default function FoundReports({ view = 'matches' }) {
           const adultFlow = sightingAdult || matchedAdult;
           const cwc = f.cwcFollowup && typeof f.cwcFollowup === 'object' ? f.cwcFollowup : null;
           const familyPhone = matched ? txt(matched.parentPhone) : '';
+          // The candidates the engines proposed, best first, that this desk may
+          // open; the current one is the one being decided.
+          const current = currentCandidate(f);
+          const proposedCandidates = asList(f.matchCandidates).filter((c) => c && c.status === 'proposed');
+          const rejectedCount = asList(f.matchCandidates).filter((c) => c && c.status === 'rejected').length;
+          const hasNext = proposedCandidates.some((c) => c.reportId !== f.matchedReportId);
+          const casePhotoFlag = matched ? photoCheckFlag(matched.photoCheck) : null;
+          const lastSearch = comparedLine(f.matchEngine);
+          const searched = searches[f.id];
+          const reported = f.reportedLocation && typeof f.reportedLocation === 'object' ? f.reportedLocation : f;
+          const needsPlacing = canPlace && !txt(reported.district) && !f.anonymizedAt && !['matched', 'rejected'].includes(f.status);
+          const placing = placements[f.id];
           return (
             <ErrorBoundary key={f.id}>
             <div
@@ -447,7 +561,7 @@ export default function FoundReports({ view = 'matches' }) {
                     <ProtectedImage
                       src={txt(f.photoUrl) || `/api/reports/photo/${f.id}`}
                       alt={t('Reported sighting')}
-                      className="h-full w-full object-cover"
+                      className="h-full w-full object-contain"
                       fallback={
                         <div className="grid h-full w-full place-items-center px-2 text-center text-[11px] text-slate-400">
                           {t('No photo — text report')}
@@ -494,7 +608,7 @@ export default function FoundReports({ view = 'matches' }) {
                         <ProtectedImage
                           src={txt(matched.photoUrl) || `/api/reports/photo/${matched.id}`}
                           alt={d(matched.childName)}
-                          className="h-full w-full object-cover"
+                          className="h-full w-full object-contain"
                         />
                       </div>
                     )}
@@ -521,17 +635,43 @@ export default function FoundReports({ view = 'matches' }) {
                   {matched ? (
                     <>
                       {/*
-                        Whether a second engine corroborated this. One engine
-                        proposing a face is a lead; an officer about to contact a
-                        family needs to know which of the two they are looking at.
+                        Whether a second engine corroborated this, or looked at
+                        all. One engine proposing a face is a lead; an officer
+                        about to contact a family needs to know which of the
+                        two they are looking at.
                       */}
-                      <p className="mt-2 text-xs text-slate-500">
-                        {txt(f.matchEngine?.provider) || engineLabel.provider}
-                        {f.secondOpinion === 'agrees' && ` · ${t('confirmed by AWS Rekognition')}`}
-                        {f.secondOpinion === 'sole_engine' && ` · ${t('single engine')}`}
-                        {(f.secondOpinion === 'unavailable' || f.secondOpinion === 'no_answer') &&
-                          ` · ${t('not corroborated by a second engine')}`}
-                      </p>
+                      <div className="mt-2">
+                        <EngineScores candidate={current} provider={txt(f.matchEngine?.provider) || engineLabel.provider} />
+                      </div>
+                      {casePhotoFlag && (
+                        <p className={`mt-2 rounded-lg px-2 py-1 text-[11px] font-semibold ring-1 ${casePhotoFlag.className}`}>{t(casePhotoFlag.label)}</p>
+                      )}
+                      {proposedCandidates.length > 1 && (
+                        <div className="mt-3">
+                          <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">{t('Candidates, best first')}</p>
+                          <ol className="mt-1 space-y-1">
+                            {proposedCandidates.map((c) => (
+                              <li
+                                key={c.reportId}
+                                className={`flex items-center justify-between gap-2 rounded-lg px-2 py-1 text-xs ${
+                                  c.reportId === f.matchedReportId ? 'bg-indigo-50 font-semibold ring-1 ring-indigo-200' : 'bg-white ring-1 ring-slate-200'
+                                }`}
+                              >
+                                <span className="min-w-0 truncate">
+                                  {txt(c.rank) ? `${txt(c.rank)}. ` : ''}{d(c.report?.childName) || t('Case #{id}', { id: txt(c.reportId) })}
+                                </span>
+                                <span className="shrink-0 text-slate-500">
+                                  {Math.round((Number(c.score) || 0) * 100)}%
+                                  {c.corroborated ? ` · ${t('two engines')}` : c.notChecked ? ` · ${t('not checked')}` : ''}
+                                </span>
+                              </li>
+                            ))}
+                          </ol>
+                        </div>
+                      )}
+                      {rejectedCount > 0 && (
+                        <p className="mt-2 text-[11px] text-slate-500">{t('{n} candidate(s) already marked as not this person', { n: rejectedCount })}</p>
+                      )}
                       <button
                         onClick={() => setCompareModal({ sighting: f, matched })}
                         className="mt-3 w-full rounded-lg border border-indigo-200 bg-white py-2 text-sm font-semibold text-indigo-600 hover:bg-indigo-50 sm:text-xs"
@@ -546,8 +686,75 @@ export default function FoundReports({ view = 'matches' }) {
                         : t('No open case was matched to this photograph.')}
                     </p>
                   )}
+                  {lastSearch && <p className="mt-2 text-[11px] text-slate-500">{lastSearch}</p>}
+                  {canSearchAgain && searchable(f) && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => searchAgain(f)}
+                        disabled={action.pending}
+                        className="mt-2 w-full rounded-lg border border-slate-200 bg-white py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                      >
+                        {action.busy(`rematch:${f.id}`) ? t('Searching the open cases…') : t('Search again')}
+                      </button>
+                      <ActionMessage action={action} id={`rematch:${f.id}`} />
+                      {searched && !action.busy(`rematch:${f.id}`) && (
+                        <p className="mt-1 text-[11px] text-slate-600">
+                          {searched.linked
+                            ? t('A possible match was found and sent for review.')
+                            : searched.engine && !searched.engine.biometric
+                              ? t('No face comparison was made. Try again later.')
+                              : t('Searched again: no new candidate.')}
+                        </p>
+                      )}
+                    </>
+                  )}
                 </div>
               </div>
+
+              {/*
+                A sighting with no district reaches every review desk, and its
+                search is spent nearest-first from nowhere. Placing it routes it
+                to that district's desks and searches again from there.
+              */}
+              {needsPlacing && (
+                <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50/60 p-3">
+                  {placing ? (
+                    <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+                      <input
+                        className="field py-2 text-xs"
+                        value={placing.state ?? txt(user.jurisdiction?.state)}
+                        onChange={(e) => setPlacements((rows) => ({ ...rows, [f.id]: { ...placing, state: e.target.value } }))}
+                        placeholder={t('State')}
+                        disabled={user.role !== 'super_admin' && Boolean(txt(user.jurisdiction?.state))}
+                      />
+                      <input
+                        className="field py-2 text-xs"
+                        value={placing.district || ''}
+                        onChange={(e) => setPlacements((rows) => ({ ...rows, [f.id]: { ...placing, district: e.target.value } }))}
+                        placeholder={t('District')}
+                      />
+                      <button
+                        type="button"
+                        className="btn-primary px-4 py-2 text-xs"
+                        disabled={action.pending || !txt(placing.district) || !(txt(placing.state) || txt(user.jurisdiction?.state))}
+                        onClick={() => placeSighting(f)}
+                      >
+                        {t('Set district')}
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="text-xs font-semibold text-amber-800 underline"
+                      onClick={() => setPlacements((rows) => ({ ...rows, [f.id]: { state: txt(user.jurisdiction?.state), district: '' } }))}
+                    >
+                      {t('Set district')}
+                    </button>
+                  )}
+                  <ActionMessage action={action} id={`place:${f.id}`} />
+                </div>
+              )}
 
               {f.status === 'pending_review' && (
                 <>
@@ -563,7 +770,9 @@ export default function FoundReports({ view = 'matches' }) {
                         {matchedAdult ? t('Confirm match…') : t('Confirm & reunite…')}
                       </button>
                     )}
-                    <button onClick={() => review(f, 'rejected')} disabled={action.pending} className="btn-ghost py-2.5 text-xs">{t('Reject')}</button>
+                    <button onClick={() => review(f, 'rejected')} disabled={action.pending} className="btn-ghost py-2.5 text-xs">
+                      {f.matchedReportId ? (hasNext ? t('Not this person — show next') : t('Not this person')) : t('Reject')}
+                    </button>
                     {!adultFlow && (
                       <button onClick={() => review(f, 'refer_cwc')} disabled={action.pending} className="btn-ghost py-2.5 text-xs">{t('Refer to 1098/CWC')}</button>
                     )}
@@ -786,6 +995,11 @@ export default function FoundReports({ view = 'matches' }) {
                   ? t('A score is a prompt to look. You are confirming this is the same person. Verify with them before anyone else is told.')
                   : t('A score is a prompt to look. You are confirming this is the same child.')}
               </span>
+            </div>
+
+            {/* Both engines, photo quality, and the sighting beside the case. */}
+            <div className="rounded-xl bg-white p-3.5 ring-1 ring-slate-200">
+              <MatchEvidence sighting={compareModal.sighting} report={compareModal.matched} />
             </div>
 
             <div className="safe-bottom sticky bottom-0 -mx-4 flex flex-col-reverse gap-2 border-t bg-white px-4 py-3 sm:-mx-6 sm:flex-row sm:justify-end sm:px-6 sm:pb-6">

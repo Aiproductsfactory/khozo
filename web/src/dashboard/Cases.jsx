@@ -13,7 +13,8 @@ import { useDisplay } from '../useDisplay.js';
 import { useBackClose } from '../useBackClose.js';
 import { POLICE_ROLES } from '../../../shared/scope.js';
 import { ActionMessage, ActionToast, useAction } from './useAction.jsx';
-import { ConfirmMatchDialog, FamilyContactList, FamilyContactPanel, ReopenCasePanel } from './Reunite.jsx';
+import { ConfirmMatchDialog, FamilyContactList, FamilyContactPanel, ReopenCasePanel, photoCheckFlag } from './Reunite.jsx';
+import { preparePhoto } from '../photoPrep.js';
 
 const FORMAL_ACTION_ROLES = ['super_admin', 'admin', 'police', 'sjpu'];
 const WORKFLOW_ROLES = ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'dcrb', 'dlsa', 'cwc', 'dcpu', 'rpf', 'cci', 'saa', 'jjb', 'state_nodal', 'sara', 'crime_bureau'];
@@ -30,6 +31,20 @@ const REMATCH_ROLES = POLICE_ROLES;
 const CASE_TRANSFER_ROLES = ['super_admin', 'admin', 'state_nodal'];
 // Taking a found or closed case back to missing (POST /reports/:id/reopen).
 const REOPEN_ROLES = POLICE_ROLES;
+// Replacing a case photo that cannot be matched (POST /reports/:id/photo).
+const PHOTO_REPLACE_ROLES = POLICE_ROLES;
+
+/** A small flag for a case whose photo cannot be matched: no face, or a group photo. */
+function PhotoCheckChip({ report }) {
+  const t = useT();
+  const flag = photoCheckFlag(report?.photoCheck);
+  if (!flag || report?.photoCheck?.verdict === 'unchecked') return null;
+  return (
+    <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ${flag.className}`}>
+      {report.photoCheck.verdict === 'multiple_faces' ? t('Group photo') : t('Photo not usable for matching')}
+    </span>
+  );
+}
 const CCI_CARE_ROLES = ['super_admin', 'admin', 'cwc', 'dcpu', 'cci', 'saa', 'state_nodal', 'sara'];
 const JJB_PROCEEDING_ROLES = ['super_admin', 'admin', 'cwc', 'dcpu', 'jjb', 'state_nodal'];
 const STATE_ESCALATION_ROLES = ['super_admin', 'admin', 'state_nodal', 'sara'];
@@ -442,6 +457,9 @@ export default function Cases() {
   const [caseNote, setCaseNote] = useState('');
   // { caseId, count, engine } after "Search earlier sightings" answers.
   const [rematch, setRematch] = useState(null);
+  // A replacement case photo being chosen, and what the server said of it.
+  const [photoReplace, setPhotoReplace] = useState({ caseId: '', file: null, consent: false });
+  const [photoResult, setPhotoResult] = useState(null);
   const canAct = FORMAL_ACTION_ROLES.includes(user.role);
 
   /** Filter options drawn from the caseload, so nothing offered returns zero. */
@@ -497,6 +515,7 @@ export default function Cases() {
   const canRematch = REMATCH_ROLES.includes(user.role);
   const canTransferCase = CASE_TRANSFER_ROLES.includes(user.role);
   const canReopen = REOPEN_ROLES.includes(user.role);
+  const canReplacePhoto = PHOTO_REPLACE_ROLES.includes(user.role);
   const canRecordCciCare = CCI_CARE_ROLES.includes(user.role);
   const canRecordJjbProceeding = JJB_PROCEEDING_ROLES.includes(user.role);
   const canRecordStateEscalation = STATE_ESCALATION_ROLES.includes(user.role);
@@ -693,6 +712,25 @@ export default function Cases() {
       load();
     });
   };
+
+  /*
+   * Replaces a case photo that has no face in it, or shows a group: the new
+   * one is checked for a face, replaces the old one in the search, and is
+   * compared with the sightings already received. Nobody outside the police
+   * is told anything.
+   */
+  const replacePhoto = (r) => action.run('photo', async () => {
+    const chosen = photoReplace.caseId === r.id ? photoReplace.file : null;
+    if (!chosen) return;
+    const form = new FormData();
+    form.set('photo', await preparePhoto(chosen));
+    if (photoReplace.consent) form.set('photoConsent', 'true');
+    const data = await api.postForm(`/reports/${r.id}/photo`, form);
+    if (data?.report) showReport(data.report);
+    setPhotoReplace({ caseId: '', file: null, consent: false });
+    setPhotoResult({ caseId: r.id, photoCheck: data?.photoCheck || null, sightingMatches: Number(data?.sightingMatches) || 0 });
+    load();
+  }, msg('Photo replaced.'));
 
   const exportHandoff = (r, targetSystem = 'trackchild') => action.run('export', async () => {
     const params = new URLSearchParams({
@@ -1083,8 +1121,12 @@ export default function Cases() {
               >
                 {t('Matched — pending verification · {pct}%', { pct: Math.round((Number(r.pendingMatch.score) || 0) * 100) })}
                 {r.pendingMatch.corroborated ? ` · ${t('two engines')}` : ''}
+                {r.pendingMatch.notChecked ? ` · ${t('not checked by a second engine')}` : ''}
               </Link>
             ) : null}
+            {photoCheckFlag(r.photoCheck) && r.photoCheck?.verdict !== 'unchecked' && (
+              <span className="mx-4 -mt-1 mb-3 block"><PhotoCheckChip report={r} /></span>
+            )}
             <dl className="grid grid-cols-2 gap-x-4 gap-y-2 border-t border-black/5 px-4 py-3 text-sm">
               <div className="min-w-0">
                 <dt className="text-gray-500">{t('FIR no.')}</dt>
@@ -1164,8 +1206,10 @@ export default function Cases() {
                       >
                         {t('Matched — pending verification · {pct}%', { pct: Math.round((Number(r.pendingMatch.score) || 0) * 100) })}
                         {r.pendingMatch.corroborated ? ` · ${t('two engines')}` : ''}
+                        {r.pendingMatch.notChecked ? ` · ${t('not checked by a second engine')}` : ''}
                       </Link>
                     ) : null}
+                    <div><PhotoCheckChip report={r} /></div>
                   </td>
                   <td className="px-4 py-3 text-gray-600">{txt(r.workflowStatus) || '-'}</td>
                   <td className="px-4 py-3 text-gray-600">{d(r.foundLocation) || '-'}</td>
@@ -1274,6 +1318,64 @@ export default function Cases() {
                 </div>
               ))}
             </dl>
+
+            {/*
+              Whether this photo can be matched at all. A photo with no face,
+              or of a group, is never refused at registration; it is flagged
+              here, and police can replace it.
+            */}
+            {(photoCheckFlag(selected.photoCheck) || (canReplacePhoto && !selected.anonymizedAt)) && (
+              <div className="mt-6 rounded-xl border border-black/5 p-4">
+                <p className="text-sm font-medium">{t('Case photo')}</p>
+                {photoCheckFlag(selected.photoCheck) ? (
+                  <p className={`mt-2 rounded-lg px-3 py-2 text-xs font-semibold ring-1 ${photoCheckFlag(selected.photoCheck).className}`}>
+                    {t(photoCheckFlag(selected.photoCheck).label)}
+                  </p>
+                ) : selected.photoCheck?.verdict === 'usable' ? (
+                  <p className="mt-1 text-xs text-emerald-700">{t('One face found: the photo can be used for matching.')}</p>
+                ) : null}
+                {canReplacePhoto && !selected.anonymizedAt && (
+                  <>
+                    <p className="mt-2 text-xs text-gray-600">
+                      {t('Replace it with a clear, recent photo of the person alone. The new photo is checked for a face and compared with the sightings already received.')}
+                    </p>
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      className="mt-3 block w-full text-xs"
+                      onChange={(e) => setPhotoReplace({ caseId: selected.id, file: e.target.files?.[0] || null, consent: photoReplace.caseId === selected.id && photoReplace.consent })}
+                    />
+                    {!selected.photoConsent && (
+                      <label className="mt-2 flex gap-2 text-xs">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5"
+                          checked={photoReplace.caseId === selected.id && photoReplace.consent}
+                          onChange={(e) => setPhotoReplace((prev) => ({ ...prev, caseId: selected.id, consent: e.target.checked }))}
+                        />
+                        <span>{t('Consent to use this photo has been recorded')}</span>
+                      </label>
+                    )}
+                    <button
+                      type="button"
+                      className="btn-ghost mt-2 w-full"
+                      disabled={action.pending || photoReplace.caseId !== selected.id || !photoReplace.file || (!selected.photoConsent && !photoReplace.consent)}
+                      onClick={() => replacePhoto(selected)}
+                    >
+                      {action.busy('photo') ? t('Uploading the photo…') : t('Replace photo')}
+                    </button>
+                    <ActionMessage action={action} id="photo" />
+                    {photoResult?.caseId === selected.id && !action.busy('photo') && (
+                      <p className="mt-2 text-xs text-gray-600">
+                        {photoResult.sightingMatches > 0
+                          ? t('Checked against earlier sightings: {n} possible match(es) sent for review', { n: photoResult.sightingMatches })
+                          : t('Checked against earlier sightings: no possible match found.')}
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
 
             {(selected.hasIdentificationProfile || selected.hasVulnerabilityProfile) && (
               <div className="mt-6 rounded-xl border border-black/5 p-4">

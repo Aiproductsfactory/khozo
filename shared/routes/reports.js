@@ -13,9 +13,11 @@
 
 import { nanoid } from 'nanoid';
 
-import { POLICE_ROLES, canAccessReport, isPoliceOnly, scopeFoundReports, scopeReports } from '../scope.js';
+import { POLICE_ROLES, canAccessReport, isPoliceOnly, sameDistrict, sameState, scopeFoundReports, scopeReports } from '../scope.js';
 import { resolveSightingLocation } from '../geocode.js';
-import { isReverseMatchCandidate, wasLinkRejected } from '../match-pool.js';
+import { expectedAgeAt, isForwardPoolCase, isFoundChildIntake, isRematchEligible } from '../match-pool.js';
+import { createSightingMatcher, engineRecordOf, engineSummary, evidenceOf, isReverseLinked } from '../sighting-matching.js';
+import { detectImageMime } from '../photo-format.js';
 import { sendSms, smsGatewayConfigured } from '../sms.js';
 // The case vocabulary, validation and public-redaction rules are shared with the
 // Cloudflare Worker build so the two runtimes cannot drift apart. See
@@ -146,6 +148,7 @@ import {
   publicReporterName,
   optionalNumber,
   validateImageFile,
+  storedImageMime,
   validateMissingReport,
   validateFoundReport,
   inferLocationScope,
@@ -173,6 +176,8 @@ export default function registerReportRoutes(router, deps) {
     claimFoundReport = null,
     detectPerson,
     upload,
+    // Optional: removes a replaced case photo from storage (POST /:id/photo).
+    deletePhoto = null,
     // Injectable so the reverse geocoder can be stubbed in tests rather than
     // reaching OpenStreetMap from a test run.
     fetchImpl = fetch,
@@ -180,6 +185,12 @@ export default function registerReportRoutes(router, deps) {
   } = deps;
 
   const protectedRoute = [authRequired, passwordChangeRequired];
+
+  // Linking sightings and cases, both directions, the candidate list an
+  // officer walks, the case photo check and the one-to-many index
+  // (shared/sighting-matching.js). `deps.faceIndex` is the index provider
+  // (shared/face-index.js); without one the pairwise budget is the search.
+  const matcher = createSightingMatcher(deps);
 
   // ---- Strict request bodies (readFields in shared/case-domain.js) -----------
   //
@@ -478,63 +489,8 @@ export default function registerReportRoutes(router, deps) {
   // A sighting is linked to a case by the forward search (a new sighting
   // against the open cases, POST /found) and by the reverse search (a newly
   // registered case against the stored sightings, POST / and POST /:id/rematch).
-  // The rule, the evidence kept on the record and the officers' alert are the
-  // same whichever way round the link was found, so they live here once.
-
-  /**
-   * Whether a comparison result is put in front of an officer.
-   *
-   * Calibrated against real Aarakshak output: photographs of the same person
-   * score 0.48-0.86, different people score below 0.07. 0.6 sat inside the
-   * genuine-match range and routed real matches away from police review. This
-   * only decides whether an officer is shown the candidate - a human still
-   * confirms - so it is set to catch matches, not to be conservative. A
-   * candidate reaches an officer only when a biometric engine compared the
-   * faces: the non-biometric scorer produces no candidates, and this guard makes
-   * that a property of the route rather than of one module.
-   */
-  function isStrongMatch(candidate, engine) {
-    return Boolean(candidate) && Boolean(engine?.biometric) && candidate.score >= MATCH_REVIEW_THRESHOLD;
-  }
-
-  /** What the comparison found, as kept on the sighting for the reviewer. */
-  function matchEvidence(best, matchEngine) {
-    // Photo quality is recorded for the reviewer but deliberately does NOT gate
-    // routing. Gating on it was tried and rejected: the provider raises
-    // `low_detector_confidence` on plenty of genuine matches too, so the filter
-    // dropped a real one. Surfacing an extra face for a human to reject costs an
-    // officer a minute; suppressing a real match costs a child.
-    const lowQualityPhoto = Boolean(best?.lowQuality || best?.warnings?.length);
-    return {
-      photoQualityWarnings: best?.warnings?.length ? best.warnings : null,
-      lowQualityPhoto: lowQualityPhoto || null,
-      matchScore: best ? best.score : 0,
-      // Both engines' numbers, kept rather than recomputed-and-dropped. The row
-      // deliberately shows the LOWER of the two, so an officer looking at 52%
-      // cannot tell from that number alone whether one engine was conservative
-      // or the two disagreed. These fields are what the compare view reads to
-      // answer that; without them it silently renders a single-engine story.
-      primaryScore: best?.primaryScore ?? null,
-      secondOpinionScore: best?.secondOpinionScore ?? null,
-      secondOpinionProvider: best?.secondOpinionProvider || null,
-      secondOpinion: best?.secondOpinion || null,
-      enginesDisagree: best?.enginesDisagree ?? null,
-      // Kept on the record, not just returned once. A reviewer deciding what a
-      // score means has to know whether it came from a face comparison or from
-      // the non-biometric fallback, and an auditor has to know months later.
-      matchEngine: {
-        provider: matchEngine.provider,
-        modelVersion: matchEngine.modelVersion || null,
-        biometric: Boolean(matchEngine.biometric),
-        // Survives even when every candidate was withheld, which is the case
-        // where the queue would otherwise read as "nothing was found" when what
-        // actually happened is "two engines looked and would not agree".
-        corroborated: Boolean(matchEngine.corroborated),
-        secondOpinion: matchEngine.secondOpinion || null,
-        comparedAgainst: matchEngine.comparedAgainst ?? null,
-      },
-    };
-  }
+  // The rule, the evidence kept on the record and the candidate list live in
+  // shared/sighting-matching.js; the alerts a new sighting raises stay here.
 
   /** "Near the bus stand, Surat, Gujarat": a place, for an alert. */
   function placeText(foundLocation, { state, district } = {}) {
@@ -603,171 +559,6 @@ export default function registerReportRoutes(router, deps) {
     return officers;
   }
 
-  /**
-   * The sighting fields a reverse link overwrites, as they were before it. Kept
-   * on the link so an officer who rejects it puts the sighting back exactly
-   * where it was: in its own district, in the CWC or police workflow it was in.
-   */
-  const LINK_RESTORED_FIELDS = [
-    'status', 'state', 'district', 'referralStatus', 'referredTo1098',
-    'matchScore', 'primaryScore', 'secondOpinionScore', 'secondOpinionProvider', 'secondOpinion',
-    'enginesDisagree', 'matchEngine', 'photoQualityWarnings', 'lowQualityPhoto',
-  ];
-
-  function previousSightingFields(sighting) {
-    return Object.fromEntries(LINK_RESTORED_FIELDS.map((key) => [key, sighting[key] ?? null]));
-  }
-
-  /** A sighting whose current link to a case was made by the reverse search. */
-  function isReverseLinked(sighting) {
-    return Boolean(
-      sighting?.matchedReportId &&
-      sighting.reverseMatch?.previous &&
-      sighting.reverseMatch.reportId === sighting.matchedReportId
-    );
-  }
-
-  /**
-   * The reverse search: compares a case's photo with the stored sightings and
-   * links each one the engines agree on, exactly as the forward search links a
-   * strong match - the sighting moves to the Matches queue (`pending_review`,
-   * `matchedReportId`), takes the case's jurisdiction so the case's officers
-   * see it, and keeps the engines' evidence. The police officers who can open
-   * the case are alerted, without being told who the person is (alertSighting);
-   * nobody else is told anything new.
-   *
-   * What the link overwrote is kept on it (`reverseMatch.previous`): a
-   * lookalike linked to a sighting a CWC desk was already following up must not
-   * take that sighting away from them for good. An officer who rejects the link
-   * restores it (POST /found/:id/review), and the same case is not proposed for
-   * it again (`rejectedLinks`).
-   *
-   * Exists because the forward search only ever looks at the cases that exist
-   * when a sighting arrives. A child photographed at a railway station on
-   * Monday and reported missing on Wednesday was never compared with that
-   * photo; now registering the case is what compares them.
-   *
-   * Runs inside the request, never after the response: the Worker's store
-   * replica is flushed at the end of the request, so work left running after it
-   * could be lost. A failure here never fails the registration that triggered
-   * it - the case is already stored, and an officer can run /rematch.
-   *
-   * The person who sent the sighting is told nothing, and their receipt cannot
-   * show it: its stage depends on nothing but time (publicSightingStatus).
-   */
-  async function matchStoredSightings(report, { trigger, actor }) {
-    const result = (sightingMatches, engine) => ({ sightingMatches, engine: engineSummary(engine) });
-    if (!report?.photoFile || report.anonymizedAt) {
-      return result(0, { provider: 'none', biometric: false, reason: 'The case has no photo to compare.' });
-    }
-    if (typeof rankSightingMatches !== 'function') {
-      return result(0, { provider: 'none', biometric: false, reason: 'Reverse matching is not available on this runtime.' });
-    }
-    try {
-      const photo = await readPhoto(report.photoFile);
-      if (!photo) return result(0, { provider: 'none', biometric: false, reason: 'The case photo could not be read.' });
-      const { candidates, engine } = await rankSightingMatches(photo, {
-        state: report.state,
-        district: report.district,
-        reportId: report.id,
-      });
-
-      const eligible = (row) => isReverseMatchCandidate(row) && !wasLinkRejected(row, report.id);
-      const linkPatch = (row, candidate) => ({
-        ...matchEvidence(candidate, engine),
-        matchedReportId: report.id,
-        // The case's jurisdiction, as on a forward match, so the officers
-        // who own the case are the ones who see the sighting.
-        state: report.state || null,
-        district: report.district || null,
-        status: 'pending_review',
-        referralStatus: 'Police review pending',
-        reverseMatch: {
-          reportId: report.id,
-          trigger,
-          previousStatus: row.status,
-          previous: previousSightingFields(row),
-          matchedAt: new Date().toISOString(),
-        },
-      });
-
-      let linked = 0;
-      for (const candidate of candidates) {
-        if (!isStrongMatch(candidate, engine)) continue;
-        // Re-read rather than trust the ranking's snapshot: a sighting another
-        // request linked, reviewed or anonymised in the meantime is not taken
-        // over. On Express the store is live, so checking and writing with no
-        // await between them is enough. The Worker's store is a copy read when
-        // the request began, seconds of comparisons ago, so there the check
-        // and the write happen together against the database (claimFoundReport).
-        const current = findFoundReport(candidate.sighting?.id);
-        if (!current || !eligible(current)) continue;
-        let sighting;
-        if (typeof claimFoundReport === 'function') {
-          // eslint-disable-next-line no-await-in-loop
-          sighting = await claimFoundReport(current.id, (row) => linkPatch(row, candidate), eligible);
-          if (!sighting) continue;
-        } else {
-          const patch = linkPatch(current, candidate);
-          updateFoundReport(current.id, patch);
-          sighting = { ...current, ...patch };
-        }
-        const previousStatus = sighting.reverseMatch.previousStatus;
-        addActivity({
-          actor: 'Khozo matching',
-          action: 'Linked an earlier sighting to a newly registered case for police review',
-          target: sighting.foundLocation,
-          icon: 'upload',
-          scope: { state: sighting.state, district: sighting.district, matchedReportId: report.id },
-        });
-        addAudit({
-          actorName: 'Khozo matching',
-          actorRole: 'system',
-          action: 'sighting.reverse_matched',
-          targetType: 'foundReport',
-          targetId: sighting.id,
-          summary: `Linked earlier sighting at ${sighting.foundLocation} to case ${report.id} for police review`,
-          scope: { matchedReportId: report.id, state: sighting.state, district: sighting.district },
-          metadata: {
-            reportId: report.id,
-            trigger,
-            triggeredByRole: actor?.role || null,
-            previousStatus,
-            matchScore: sighting.matchScore,
-            matchEngine: sighting.matchEngine,
-          },
-        });
-        // Only the case's police officers hear about it. Every desk was told
-        // about this sighting when it arrived; a second alert to them now would
-        // be the news that it matched someone.
-        alertSighting(sighting, {
-          matchedReport: report,
-          broadcast: false,
-          matchedBody: `An earlier sighting at ${sightingWhere(sighting)} may match a newly registered case.`,
-        });
-        linked += 1;
-      }
-      return result(linked, engine);
-    } catch (err) {
-      console.warn('[reports] reverse sighting match failed:', err?.message || err);
-      return result(0, { provider: 'none', biometric: false, reason: 'The comparison could not be completed.' });
-    }
-  }
-
-  /** The engine as an officer is told about it: no candidate, no score. */
-  function engineSummary(engine) {
-    if (!engine) return null;
-    return {
-      provider: engine.provider || 'none',
-      modelVersion: engine.modelVersion || null,
-      biometric: Boolean(engine.biometric),
-      corroborated: Boolean(engine.corroborated),
-      comparedAgainst: engine.comparedAgainst ?? 0,
-      pool: engine.pool || null,
-      note: engine.reason || engine.note || null,
-    };
-  }
-
   const foundReportLimit = fixedWindowRateLimit({
     name: 'public_found_report',
     limit: 10,
@@ -799,7 +590,7 @@ export default function registerReportRoutes(router, deps) {
 
   async function storePhoto(key, file) {
     if (!file) return { photoUrl: null, photoFile: null };
-    const photoFile = await savePhoto(key, file.buffer, file.mimetype);
+    const photoFile = await savePhoto(key, file.buffer, storedImageMime(file));
     return {
       photoUrl: photoFile ? `/api/reports/photo/${key}` : null,
       photoFile,
@@ -832,9 +623,22 @@ export default function registerReportRoutes(router, deps) {
       }
     }
 
-    const buffer = record.photoFile ? await readPhoto(record.photoFile) : null;
+    let buffer = record.photoFile ? await readPhoto(record.photoFile) : null;
+    let served = record.photoFile;
+    // A sighting the reverse search reached through its found-child intake
+    // (shared/sighting-matching.js) is reviewed on the intake's copy of the
+    // photo when its own has gone with the sighting's retention period. Who
+    // may see it is decided by the sighting, above: it is the same person.
+    const viaIntakeId = found?.reverseMatch?.viaIntakeReportId;
+    if (!buffer && viaIntakeId && found.matchedReportId) {
+      const intake = findReport(viaIntakeId);
+      if (intake?.photoFile && !intake.anonymizedAt) {
+        buffer = await readPhoto(intake.photoFile);
+        served = intake.photoFile;
+      }
+    }
     if (!buffer) return res.status(404).end();
-    res.type(photoMimeType(record.photoFile)).send(buffer);
+    res.type(detectImageMime(buffer) || photoMimeType(served)).send(buffer);
   });
 
   // ---- Missing-child reports / FIRs -----------------------------------------
@@ -1017,7 +821,11 @@ export default function registerReportRoutes(router, deps) {
         pendingByCase.set(f.matchedReportId, {
           foundReportId: f.id,
           score: f.matchScore || 0,
-          corroborated: Boolean(f.matchEngine?.corroborated),
+          // The current candidate's own corroboration where it is recorded
+          // (shared/sighting-matching.js), the search's for older records.
+          corroborated: f.matchCorroborated ?? Boolean(f.matchEngine?.corroborated),
+          // Rekognition was asked and did not answer: one engine's lead only.
+          notChecked: Boolean(f.matchNotChecked),
           at: f.createdAt || null,
         });
       }
@@ -1189,18 +997,32 @@ export default function registerReportRoutes(router, deps) {
     });
     }
     // Two-way matching: a case registered with a photo is compared with the
-    // sightings already stored, inside this request (see matchStoredSightings).
-    // Bulk imports arrive here one row at a time, so they are covered too.
+    // sightings already stored, inside this request (matchStoredSightings in
+    // shared/sighting-matching.js). Bulk imports arrive here one row at a
+    // time, so they are covered too. Alongside it, the photo is screened for a
+    // face (`photoCheck`): a photo with no face, or a group photo, cannot be
+    // matched, and the officer is told so on the case rather than finding out
+    // when nothing ever matches. Neither ever blocks the registration.
     //
     // A citizen or NGO intake waits for an officer's verification first: each
     // comparison is a paid provider call, the demo parent and NGO logins are
     // public, and an unverified registration should not be able to spend the
-    // comparison budget. verify-intake runs the same search.
-    const reverse = report.photoFile && !isPendingCitizenIntake(report)
-      ? await matchStoredSightings(report, { trigger: 'registration', actor: req.user })
+    // comparison budget. verify-intake runs the same search and check.
+    //
+    // One after the other, not together: the Worker holds at most six
+    // outbound connections, and the reverse search already uses five.
+    const searchable = Boolean(report.photoFile) && !isPendingCitizenIntake(report);
+    const photoCheck = searchable ? await matcher.checkCasePhoto(req.file?.buffer) : null;
+    const reverse = searchable
+      ? await matcher.matchStoredSightings(report, { trigger: 'registration', actor: req.user, photo: req.file?.buffer })
       : { sightingMatches: 0 };
+    if (photoCheck) {
+      updateReport(report.id, { photoCheck });
+      report.photoCheck = photoCheck;
+    }
+    if (searchable) await matcher.indexCase(findReport(report.id) || report, req.file?.buffer);
     res.status(201).json({
-      report: isCitizenRole(req.user.role) ? citizenCaseView(report) : report,
+      report: isCitizenRole(req.user.role) ? citizenCaseView(report) : { ...(findReport(report.id) || report), photoCheck: report.photoCheck || null },
       // How many stored sightings were linked to this case for police review.
       // Told to the officers who register formal cases. A parent or NGO
       // registering a case gets null whatever was found: a family is not told
@@ -1253,21 +1075,25 @@ export default function registerReportRoutes(router, deps) {
     // is compared against: the comparison budget is spent on the sighting's own
     // district and state before anywhere else (shared/match-pool.js).
     const locationScope = await resolveSightingLocation({ ...b, lat: validation.lat, lng: validation.lng }, { fetchImpl });
-    const [screening, matchResult] = await Promise.all([
+    const [screening, search] = await Promise.all([
       detectPerson(req.file?.buffer || null),
-      rankMatches(req.file?.buffer || null, {
+      // With a one-to-many index configured this asks it for a shortlist
+      // first (shared/sighting-matching.js forwardSearch).
+      matcher.forwardSearch(req.file?.buffer || null, {
         gender: b.gender,
         ageApprox: validation.ageApprox,
         state: locationScope.state,
         district: locationScope.district,
       }),
     ]);
-    const { candidates, engine: matchEngine } = matchResult;
+    const { candidates, engine: matchEngine } = search;
     const canRunMatch = !!req.file;
-    const best = candidates[0];
-    // The same rule the reverse search applies (isStrongMatch above).
-    const hasStrongMatch = canRunMatch && isStrongMatch(best, matchEngine);
-    const matchedScope = hasStrongMatch ? { state: best.report.state || null, district: best.report.district || null } : {};
+    // The strong candidates, best first (up to five, an officer walks them),
+    // by the same rule the reverse search applies (isStrongMatch).
+    const link = canRunMatch ? matcher.newSightingFields(search, { trigger: 'submitted' }) : null;
+    const matchedCase = link?.matchedReport || null;
+    const hasStrongMatch = Boolean(matchedCase);
+    const matchedScope = hasStrongMatch ? { state: matchedCase.state || null, district: matchedCase.district || null } : {};
     // The phone's coordinates fill in the jurisdiction the reporter did not
     // type. What they did type always wins; a failed lookup changes nothing.
     const confidentialReporter = isTruthy(b.confidentialReporter);
@@ -1303,9 +1129,14 @@ export default function registerReportRoutes(router, deps) {
       // who may not know about the match (the alert every desk gets, the
       // reporter's receipt) is worded from it.
       reportedLocation: { state: locationScope.state || null, district: locationScope.district || null },
-      matchedReportId: hasStrongMatch ? best.report.id : null,
-      // Scores, both engines' numbers and the engine itself (matchEvidence).
-      ...matchEvidence(best, matchEngine),
+      matchedReportId: hasStrongMatch ? matchedCase.id : null,
+      // Every candidate an officer may walk through, and the current one's
+      // scores: both engines' numbers, whether the second engine answered.
+      matchCandidates: link?.matchCandidates || [],
+      ...(link?.evidence || evidenceOf(null)),
+      // The search itself: the engine that answered, how much it compared,
+      // the thresholds and configuration it ran under.
+      matchEngine: link?.matchEngine || engineRecordOf(matchEngine, { trigger: 'submitted' }),
       status: hasStrongMatch ? 'pending_review' : 'no_match',
       photoConsent: req.file ? true : isTruthy(b.photoConsent),
       dataPurpose: adultSighting
@@ -1338,7 +1169,7 @@ export default function registerReportRoutes(router, deps) {
       targetId: fr.id,
       summary: `Public sighting submitted at ${fr.foundLocation}`,
       scope: { matchedReportId: fr.matchedReportId, state: fr.state, district: fr.district },
-      metadata: { personCategory, matchScore: fr.matchScore, status: fr.status, matchEngine, matchAttempted: canRunMatch, confidentialReporter, idProofType, idProofCaptured: fr.idProofVerified },
+      metadata: { personCategory, matchScore: fr.matchScore, status: fr.status, matchEngine: fr.matchEngine, candidateCount: fr.matchCandidates.length, matchAttempted: canRunMatch, confidentialReporter, idProofType, idProofCaptured: fr.idProofVerified },
     });
     // A confirmed biometric match overrides the screen for the officers who own
     // the matched case: the screen is a cheap guard against uploads with no
@@ -1350,7 +1181,7 @@ export default function registerReportRoutes(router, deps) {
     // their inboxes (alertSighting).
     const caseOfficerIds = new Set(
       alertSighting(fr, {
-        matchedReport: hasStrongMatch ? best.report : null,
+        matchedReport: hasStrongMatch ? matchedCase : null,
         broadcast: fr.screening.raisesAlert,
       }).map((u) => u.id)
     );
@@ -1415,7 +1246,7 @@ export default function registerReportRoutes(router, deps) {
     const officerView =
       Boolean(req.user) &&
       POLICE_ROLES.includes(req.user.role) &&
-      (!hasStrongMatch || canAccessReport(req.user, best.report));
+      (!hasStrongMatch || canAccessReport(req.user, matchedCase));
     if (!officerView) {
       return res.status(201).json({
         foundReport: {
@@ -1472,40 +1303,78 @@ export default function registerReportRoutes(router, deps) {
           personCategory: personCategoryOf(c.report),
           ageBand: c.report.age == null ? 'Unknown' : `${Math.max(0, c.report.age - 1)}-${c.report.age + 1}`,
           gender: c.report.gender,
+          corroborated: Boolean(c.corroborated),
+          notChecked: Boolean(c.notChecked),
         })),
     });
   });
+
+  /**
+   * What the review screen shows of a case a sighting may match: who, the
+   * age they would be when the sighting was taken (age at missing plus the
+   * years since), sex, when they went missing and how to recognise them, and
+   * whether their photo can be matched at all.
+   */
+  function caseForReview(report, sighting) {
+    return {
+      id: report.id,
+      personCategory: personCategoryOf(report),
+      childName: report.childName,
+      age: report.age,
+      expectedAge: expectedAgeAt(report, sighting?.createdAt || Date.now()),
+      gender: report.gender,
+      dateOfMissing: report.dateOfMissing || null,
+      address: report.address,
+      state: report.state,
+      district: report.district,
+      parentName: report.parentName,
+      parentPhone: report.parentPhone,
+      status: report.status,
+      photoUrl: report.photoUrl || (report.photoFile ? `/api/reports/photo/${report.id}` : null),
+      photoCheck: report.photoCheck || null,
+      identificationMark: report.identificationProfile?.identificationMark || null,
+      birthMark: report.identificationProfile?.birthMark || null,
+      retentionUntil: report.retentionUntil,
+      dataPurpose: report.dataPurpose,
+    };
+  }
+
+  /**
+   * A sighting as a review desk sees it. The reporter is masked as they asked,
+   * and the candidate list holds only cases this desk may open: an unscoped
+   * list would describe records in other districts, and police-only ones to
+   * every desk.
+   */
+  function reviewerSightingView(f, reportsById) {
+    const matched = f.matchedReportId ? reportsById[f.matchedReportId] : null;
+    const candidates = (Array.isArray(f.matchCandidates) ? f.matchCandidates : [])
+      .filter((c) => c && reportsById[c.reportId])
+      .map((c) => ({ ...c, report: caseForReview(reportsById[c.reportId], f) }));
+    return {
+      ...f,
+      // The cases an officer turned down, only those this desk may open.
+      rejectedLinks: (Array.isArray(f.rejectedLinks) ? f.rejectedLinks : []).filter((l) => l && reportsById[l.reportId]),
+      personCategory: personCategoryOf(f),
+      reporterName: publicReporterName(f),
+      reporterPhone: f.confidentialReporter ? null : f.reporterPhone || null,
+      reporterPhoneVisible: f.confidentialReporter ? null : f.reporterPhone || null,
+      matchCandidates: candidates,
+      matchedReport: matched ? caseForReview(matched, f) : null,
+    };
+  }
+
+  /** The same view for one sighting, or null when this desk can no longer see it. */
+  function reviewerSightingFor(user, f) {
+    if (!f || scopeFoundReports(user, [f], listReports()).length !== 1) return null;
+    const reportsById = Object.fromEntries(scopeReports(user, listReports()).map((r) => [r.id, r]));
+    return reviewerSightingView(f, reportsById);
+  }
 
   router.get('/found/all', protectedRoute, requireRole(...REVIEW_ROLES), (req, res) => {
     const scopedFound = scopeFoundReports(req.user, listFoundReports(), listReports());
     const reportsById = Object.fromEntries(scopeReports(req.user, listReports()).map((r) => [r.id, r]));
     res.json({
-      foundReports: scopedFound.map((f) => {
-        const matched = f.matchedReportId ? reportsById[f.matchedReportId] : null;
-        return {
-          ...f,
-          personCategory: personCategoryOf(f),
-          reporterName: publicReporterName(f),
-          reporterPhone: f.confidentialReporter ? null : f.reporterPhone || null,
-          reporterPhoneVisible: f.confidentialReporter ? null : f.reporterPhone || null,
-          matchedReport: matched ? {
-            id: matched.id,
-            personCategory: personCategoryOf(matched),
-            childName: matched.childName,
-            age: matched.age,
-            gender: matched.gender,
-            address: matched.address,
-            state: matched.state,
-            district: matched.district,
-            parentName: matched.parentName,
-            parentPhone: matched.parentPhone,
-            status: matched.status,
-            photoUrl: matched.photoUrl || (matched.photoFile ? `/api/reports/photo/${matched.id}` : null),
-            retentionUntil: matched.retentionUntil,
-            dataPurpose: matched.dataPurpose,
-          } : null,
-        };
-      }),
+      foundReports: scopedFound.map((f) => reviewerSightingView(f, reportsById)),
     });
   });
 
@@ -1515,18 +1384,22 @@ export default function registerReportRoutes(router, deps) {
    *
    * Confirming is for police and command roles only, and marks the case found.
    *
-   * A link the reverse search made (a newly registered case matched a sighting
-   * already on file) is undone, not closed, when an officer rejects it or
-   * refers the sighting on: the sighting goes back to the district, status and
-   * referral it had before (`reverseMatch.previous`), so a CWC desk that was
-   * following it up gets it back, and the case is recorded in `rejectedLinks`
-   * so it is not proposed for that sighting again. A lookalike must not be able
-   * to take a child-protection referral out of the CWC queue for good.
+   * Rejecting a linked sighting says "not this person" about its current
+   * candidate, not about the sighting: the candidate is marked rejected and
+   * recorded in `rejectedLinks` (never proposed for this sighting again, in
+   * either direction), and the sighting moves to the next candidate the
+   * engines proposed - that case's police officers are alerted - or, when
+   * none is left, back to where it belongs: the reporter's own district in the
+   * no-match queue, or, for a link the reverse search made, the district,
+   * status and referral it had before (`reverseMatch.previous`), so a CWC desk
+   * that was following it up gets it back. Referring to Childline/CWC does the
+   * same and ends in the CWC queue. A lookalike must not be able to take a
+   * child-protection referral out of the CWC queue for good.
    *
    * The reporter's receipt does not change whichever way it is decided: its
    * stage depends only on time (publicSightingStatus).
    */
-  router.post('/found/:id/review', protectedRoute, requireRole(...REVIEW_ROLES), (req, res) => {
+  router.post('/found/:id/review', protectedRoute, requireRole(...REVIEW_ROLES), async (req, res) => {
     const f = findFoundReport(req.params.id);
     if (!f) return res.status(404).json({ error: 'Found report not found' });
     const visible = scopeFoundReports(req.user, [f], listReports()).length === 1;
@@ -1566,34 +1439,67 @@ export default function registerReportRoutes(router, deps) {
       reviewedByRole: req.user.role,
     };
 
-    const undoReverseLink = decision !== 'matched' && isReverseLinked(f);
-    const restored = undoReverseLink
-      ? {
-          ...f.reverseMatch.previous,
-          matchedReportId: null,
-          reverseMatch: null,
-          rejectedLinks: [
-            ...(Array.isArray(f.rejectedLinks) ? f.rejectedLinks : []),
-            {
-              reportId: f.matchedReportId,
-              decision,
-              trigger: f.reverseMatch.trigger || null,
-              matchScore: f.matchScore ?? null,
-              linkedAt: f.reverseMatch.matchedAt || null,
-              decidedAt: new Date().toISOString(),
-              decidedById: req.user.id,
-              decidedByRole: req.user.role,
-            },
-          ],
-        }
-      : null;
+    // A linked sighting walks its candidate list (shared/sighting-matching.js).
+    if (decision !== 'matched' && f.matchedReportId) {
+      const unlinkedReportId = f.matchedReportId;
+      const wasReverse = isReverseLinked(f);
+      const { patch, next } = matcher.walkPatch(f, decision, req.user);
+      updateFoundReport(f.id, { ...patch, ...reviewed });
+      const after = findFoundReport(f.id);
+      if (decision === 'refer_cwc') {
+        addActivity({ actor: req.user.name, action: 'Referred sighting to 1098/CWC', target: f.foundLocation, icon: 'referral', actorId: req.user.id, scope: { state: after.state, district: after.district, matchedReportId: after.matchedReportId } });
+      }
+      addAudit({
+        actorId: req.user.id,
+        actorName: req.user.name,
+        actorRole: req.user.role,
+        action: decision === 'refer_cwc' ? 'sighting.referred_cwc' : 'sighting.rejected',
+        targetType: 'foundReport',
+        targetId: f.id,
+        summary: decision === 'refer_cwc'
+          ? `Referred sighting at ${f.foundLocation} to 1098/CWC`
+          : next
+            ? `Rejected the closest case for the sighting at ${f.foundLocation}; the next candidate is proposed`
+            : wasReverse
+              ? `Rejected the link between the sighting at ${f.foundLocation} and a newly registered case; the sighting is back where it was`
+              : `Rejected sighting match at ${f.foundLocation}; the sighting is back in its queue`,
+        scope: { matchedReportId: unlinkedReportId },
+        // Which case comes next is recorded on its own row below, scoped to
+        // that case: this row is readable by the desks of the case rejected,
+        // and the next may be one they may not open.
+        metadata: {
+          unlinkedReportId,
+          direction: wasReverse ? 'reverse' : 'forward',
+          ...(wasReverse && !next ? { reverseLinkUndone: true } : {}),
+          advanced: Boolean(next),
+          restoredStatus: after.status,
+          noteLength: reviewNote ? reviewNote.length : 0,
+        },
+      });
+      if (next) {
+        addAudit({
+          actorName: 'Khozo matching',
+          actorRole: 'system',
+          action: 'sighting.candidate_advanced',
+          targetType: 'foundReport',
+          targetId: f.id,
+          summary: `Proposed the next candidate case for the sighting at ${f.foundLocation}`,
+          scope: { matchedReportId: next.id, state: after.state, district: after.district },
+          metadata: { reportId: next.id, matchScore: after.matchScore, decision },
+        });
+        matcher.alertCaseOfficers(after, next, `A sighting at ${sightingWhere(after)} may match a case.`);
+      }
+      // The sighting as this desk now sees it; null when it has moved to a
+      // case this desk may not open.
+      return res.json({ foundReport: reviewerSightingFor(req.user, after), advanced: Boolean(next) });
+    }
 
     if (decision === 'refer_cwc') {
       updateFoundReport(f.id, {
-        ...(restored || {}),
         ...reviewed,
         status: 'referred_cwc',
         referredTo1098: true,
+        referredCwcAt: reviewed.reviewedAt,
         referralStatus: 'Referred to Childline/CWC',
       });
       const after = findFoundReport(f.id);
@@ -1607,25 +1513,20 @@ export default function registerReportRoutes(router, deps) {
         targetId: f.id,
         summary: `Referred sighting at ${f.foundLocation} to 1098/CWC`,
         scope: { matchedReportId: f.matchedReportId },
-        metadata: {
-          ...(undoReverseLink ? { reverseLinkUndone: true, unlinkedReportId: f.matchedReportId } : {}),
-          noteLength: reviewNote ? reviewNote.length : 0,
-        },
+        metadata: { noteLength: reviewNote ? reviewNote.length : 0 },
       });
       return res.json({ foundReport: after });
     }
 
-    if (restored) {
-      updateFoundReport(f.id, { ...restored, ...reviewed });
-    } else {
-      const reviewedStatus = decision === 'matched' ? 'matched' : 'rejected';
-      updateFoundReport(f.id, {
-        ...reviewed,
-        ...(verification ? { verification } : {}),
-        status: reviewedStatus,
-        referralStatus: decision === 'matched' ? 'Police match confirmed' : 'Police rejected match',
-      });
-    }
+    const reviewedStatus = decision === 'matched' ? 'matched' : 'rejected';
+    updateFoundReport(f.id, {
+      ...reviewed,
+      ...(verification ? { verification } : {}),
+      // The candidate the officer verified is recorded as confirmed.
+      ...(decision === 'matched' && f.matchedReportId ? { matchCandidates: matcher.confirmedCandidates(f, req.user) } : {}),
+      status: reviewedStatus,
+      referralStatus: decision === 'matched' ? 'Police match confirmed' : 'Police rejected match',
+    });
     if (decision === 'matched' && matchedCase) {
       const r = matchedCase;
       updateReport(f.matchedReportId, matchConfirmedPatch(r, req.user, {
@@ -1634,6 +1535,8 @@ export default function registerReportRoutes(router, deps) {
         matchScore: f.matchScore,
         foundReportId: f.id,
       }));
+      // Found: no longer a face anyone is looking for.
+      await matcher.unindexCase(findReport(r.id));
       addActivity({ actor: req.user.name, action: 'Confirmed sighting match', target: r.childName, icon: 'check', actorId: req.user.id, scope: { state: r.state, district: r.district, reportId: r.id } });
       addAudit({
         actorId: req.user.id,
@@ -1660,7 +1563,7 @@ export default function registerReportRoutes(router, deps) {
         scope: { state: f.state, district: f.district },
         metadata: { matchScore: f.matchScore, verification, noteLength: reviewNote ? reviewNote.length : 0 },
       });
-    } else if (decision === 'rejected') {
+    } else {
       addAudit({
         actorId: req.user.id,
         actorName: req.user.name,
@@ -1668,16 +1571,9 @@ export default function registerReportRoutes(router, deps) {
         action: 'sighting.rejected',
         targetType: 'foundReport',
         targetId: f.id,
-        summary: undoReverseLink
-          ? `Rejected the link between the sighting at ${f.foundLocation} and a newly registered case; the sighting is back where it was`
-          : `Rejected sighting match at ${f.foundLocation}`,
+        summary: `Rejected sighting at ${f.foundLocation}`,
         scope: { matchedReportId: f.matchedReportId },
-        metadata: {
-          ...(undoReverseLink
-            ? { reverseLinkUndone: true, unlinkedReportId: f.matchedReportId, restoredStatus: restored.status }
-            : {}),
-          noteLength: reviewNote ? reviewNote.length : 0,
-        },
+        metadata: { noteLength: reviewNote ? reviewNote.length : 0 },
       });
     }
     if (decision === 'matched' && matchedCase) {
@@ -1751,7 +1647,15 @@ export default function registerReportRoutes(router, deps) {
     res.json({ foundReport: findFoundReport(f.id) });
   });
 
-  router.post('/found/:id/formal-intake', protectedRoute, requireRole(...FOUND_INTAKE_ROLES), (req, res) => {
+  /**
+   * Opens a formal record for a found child (or woman, or person) taken into
+   * care. The sighting's photo is copied onto the new record, kept for the case
+   * retention period rather than the sighting's, and screened for a face
+   * (`photoCheck`): a missing case registered later is compared with it
+   * (shared/match-pool.js selectSightingCandidates), so the child stays
+   * findable after the sighting's own retention runs out.
+   */
+  router.post('/found/:id/formal-intake', protectedRoute, requireRole(...FOUND_INTAKE_ROLES), async (req, res) => {
     const f = findFoundReport(req.params.id);
     if (!f) return res.status(404).json({ error: 'Found report not found' });
     const visible = scopeFoundReports(req.user, [f], listReports()).length === 1;
@@ -1803,6 +1707,13 @@ export default function registerReportRoutes(router, deps) {
       vulnerabilityCategories: req.body?.vulnerabilityCategories || ['unaccompanied', 'shelter_required'],
       producedByType: req.body?.producedByType || 'cwc',
     });
+    // The sighting's photo, copied: the intake keeps it as long as a case
+    // record is kept, and the sighting's own copy goes with its retention.
+    const sightingPhoto = f.photoFile && !f.anonymizedAt ? await readPhoto(f.photoFile) : null;
+    const photo = sightingPhoto?.length
+      ? await storePhoto(reportId, { buffer: sightingPhoto, mimetype: detectImageMime(sightingPhoto) || photoMimeType(f.photoFile) })
+      : { photoUrl: null, photoFile: null };
+    const photoCheck = photo.photoFile ? await matcher.checkCasePhoto(sightingPhoto) : null;
     const intakeRecord = {
       id: `cci_${now}_${Math.random().toString(36).slice(2, 7)}`,
       admissionType: 'temporary_shelter',
@@ -1853,7 +1764,10 @@ export default function registerReportRoutes(router, deps) {
       hasIdentificationProfile: childProfile.hasIdentificationProfile,
       hasVulnerabilityProfile: true,
       dateOfMissing: null,
-      photoUrl: f.photoUrl || null,
+      photoUrl: photo.photoUrl || f.photoUrl || null,
+      photoFile: photo.photoFile,
+      photoCopiedFrom: photo.photoFile ? f.id : null,
+      photoCheck,
       photoConsent: Boolean(f.photoConsent),
       dataPurpose: 'found_child_protection_intake',
       retentionUntil: retentionUntil(REPORT_PHOTO_RETENTION_DAYS),
@@ -1934,6 +1848,8 @@ export default function registerReportRoutes(router, deps) {
         nextReviewDate,
         noteLength: note.length,
         reporterConfidential: Boolean(f.confidentialReporter),
+        photoCopied: Boolean(photo.photoFile),
+        photoCheck: photoCheck?.verdict || null,
       },
     });
     addAudit({
@@ -1955,6 +1871,248 @@ export default function registerReportRoutes(router, deps) {
       },
     });
     res.status(201).json({ foundReport: findFoundReport(f.id), report: findReport(report.id), careRecord: intakeRecord });
+  });
+
+  // ---- Searching again, placing a sighting, replacing a case photo ----------
+
+  /**
+   * Runs the forward search again for one sighting: its photo against the
+   * open cases, as when it arrived (shared/sighting-matching.js
+   * rematchSighting). For when the first search could not compare - a provider
+   * was down, the budget was spent elsewhere, the settings have changed since -
+   * and for an officer who wants to look again. The new candidates replace the
+   * proposed ones; cases an officer rejected stay rejected. A search in which
+   * no face was compared changes nothing but the record of the attempt.
+   *
+   * Police roles, for a sighting in their scope. The person who sent it is told
+   * nothing. The answer carries the sighting only while this officer can still
+   * see it: a sighting that now points at a case outside their jurisdiction
+   * has moved to that case's officers.
+   */
+  router.post('/found/:id/rematch', protectedRoute, requireRole(...POLICE_ROLES), async (req, res) => {
+    const f = findFoundReport(req.params.id);
+    if (!f) return res.status(404).json({ error: 'Found report not found' });
+    if (scopeFoundReports(req.user, [f], listReports()).length !== 1) {
+      return res.status(403).json({ error: 'Found report is outside your jurisdiction' });
+    }
+    if (!f.photoFile) return res.status(409).json({ error: 'This sighting has no photo to compare' });
+    if (f.anonymizedAt) return res.status(409).json({ error: 'Anonymised sightings are not compared with cases' });
+    if (!isRematchEligible(f)) return res.status(409).json({ error: 'This sighting is closed and is not searched again' });
+
+    const result = await matcher.rematchSighting(f, { trigger: 'rematch', actor: req.user });
+    if (!result.ok) return res.status(result.conflict ? 409 : 422).json({ error: result.reason });
+    const after = result.sighting;
+    addAudit({
+      actorId: req.user.id,
+      actorName: req.user.name,
+      actorRole: req.user.role,
+      action: 'sighting.rematched',
+      targetType: 'foundReport',
+      targetId: f.id,
+      summary: `Searched the open cases again for the sighting at ${f.foundLocation}`,
+      scope: { state: after.state, district: after.district, matchedReportId: after.matchedReportId || null },
+      metadata: {
+        trigger: 'rematch',
+        provider: after.matchEngine?.provider || null,
+        biometric: Boolean(after.matchEngine?.biometric),
+        comparedAgainst: after.matchEngine?.comparedAgainst ?? 0,
+        configHash: after.matchEngine?.configHash || null,
+        linked: result.linked,
+      },
+    });
+    res.json({
+      foundReport: reviewerSightingFor(req.user, findFoundReport(f.id)),
+      engine: engineSummary(result.engine),
+      linked: result.linked,
+    });
+  });
+
+  /**
+   * A place name as an officer typed it: trimmed, single-spaced, without a
+   * trailing "District". Compared with others through sameDistrict
+   * (shared/scope.js), which folds the known spellings together.
+   *
+   * TODO(jurisdiction): canonical state and district codes replace this once
+   * the gazetteer lands; until then this is the same normalisation the
+   * comparisons use, applied to what is stored.
+   */
+  function placeName(value) {
+    return cleanText(value, 80).replace(/\s+/g, ' ').replace(/\s+district$/i, '').trim();
+  }
+
+  /** Who may place a sighting: the national desk, state desks and police. */
+  const PLACEMENT_ROLES = [...new Set(['super_admin', 'admin', 'state_nodal', 'sara', 'crime_bureau', ...POLICE_ROLES])];
+
+  /**
+   * Places a sighting the reporter gave no district for (or the wrong one):
+   * sets its reported state and district, routes it to that district's desks,
+   * and runs the forward search again from there, since the comparison budget
+   * is spent on the sighting's own district first (shared/match-pool.js).
+   *
+   * The super admin may place a sighting anywhere; a state desk or a police
+   * officer only within their own state, and only a sighting they can see. A
+   * sighting linked to a case keeps the case's jurisdiction until an officer
+   * decides the link; its reported place is what changes.
+   */
+  router.post('/found/:id/place', protectedRoute, requireRole(...PLACEMENT_ROLES), async (req, res) => {
+    const f = findFoundReport(req.params.id);
+    if (!f) return res.status(404).json({ error: 'Found report not found' });
+    if (scopeFoundReports(req.user, [f], listReports()).length !== 1) {
+      return res.status(403).json({ error: 'Found report is outside your jurisdiction' });
+    }
+    const read = readFields(req.body, { state: ['text', 80], district: ['text', 80] });
+    if (read.error) return res.status(400).json({ error: read.error });
+    const state = placeName(read.body.state);
+    const district = placeName(read.body.district);
+    if (!state || !district) return res.status(400).json({ error: 'Give the state and the district the sighting belongs to' });
+    if (req.user.role !== 'super_admin' && !sameState(state, req.user.jurisdiction?.state)) {
+      return res.status(403).json({ error: 'You can place a sighting only in your own state' });
+    }
+    if (f.anonymizedAt || ['matched', 'rejected'].includes(f.status)) {
+      return res.status(409).json({ error: 'A closed sighting cannot be placed' });
+    }
+
+    const previous = reportedLocationOf(f);
+    const now = new Date().toISOString();
+    updateFoundReport(f.id, {
+      reportedLocation: { state, district },
+      // A linked sighting is in the case's jurisdiction until the link is
+      // decided; an unlinked one is where it was reported.
+      ...(f.matchedReportId ? {} : { state, district }),
+      // Where a rejected reverse link puts it back, too.
+      ...(f.reverseMatch?.previous ? { reverseMatch: { ...f.reverseMatch, previous: { ...f.reverseMatch.previous, state, district } } } : {}),
+      locationSource: 'officer',
+      placement: {
+        state,
+        district,
+        previous,
+        at: now,
+        byId: req.user.id,
+        byName: req.user.name,
+        byRole: req.user.role,
+      },
+    });
+    const placed = findFoundReport(f.id);
+    addActivity({ actor: req.user.name, action: 'Placed a sighting in a district', target: placed.foundLocation, icon: 'referral', actorId: req.user.id, scope: { state: placed.state, district: placed.district, matchedReportId: placed.matchedReportId } });
+    addAudit({
+      actorId: req.user.id,
+      actorName: req.user.name,
+      actorRole: req.user.role,
+      action: 'sighting.placed',
+      targetType: 'foundReport',
+      targetId: f.id,
+      summary: `Placed the sighting at ${f.foundLocation} in ${district}, ${state}`,
+      scope: { state, district, matchedReportId: placed.matchedReportId || null },
+      metadata: { from: previous, to: { state, district } },
+    });
+
+    // Routing: the desks of the district it now belongs to are told it is
+    // theirs, as an unmatched sighting raises it (where and when, never who).
+    if (!placed.matchedReportId) {
+      const desks = listUsers().filter((u) =>
+        REVIEW_ROLES.includes(u.role) &&
+        u.id !== req.user.id &&
+        sameState(u.jurisdiction?.state, state) &&
+        sameDistrict(u.jurisdiction?.district, district)
+      );
+      if (desks.length) {
+        const category = personCategoryOf(placed);
+        notifyAuthorities({
+          kind: 'sighting_reported',
+          title: category === 'woman' ? 'Woman spotted' : category === 'adult' ? 'Person spotted' : 'Child spotted',
+          body: `A sighting at ${placeText(placed.foundLocation, { state, district })} was placed in your district.`,
+          priority: 'normal',
+          recipients: desks,
+          scope: { state, district, foundReportId: placed.id, matched: false },
+        });
+      }
+    }
+
+    // The search, from the sighting's new place.
+    let search = null;
+    if (placed.photoFile && isRematchEligible(placed)) {
+      search = await matcher.rematchSighting(placed, { trigger: 'placed', actor: req.user });
+    }
+    res.json({
+      foundReport: reviewerSightingFor(req.user, findFoundReport(f.id)),
+      engine: search?.ok ? engineSummary(search.engine) : null,
+      linked: Boolean(search?.linked),
+    });
+  });
+
+  /**
+   * Replaces a case's photo: the one on file has no face in it, is a group
+   * photo, or a better one has come in. The new photo is screened for a face
+   * (`photoCheck`), replaces the old one in the one-to-many index, and is
+   * compared with the stored sightings (the reverse search) as a newly
+   * registered case's would be. Audited.
+   *
+   * Police roles, for a case in their scope. Registration never refuses a
+   * photo for being unusable; this is how it is put right.
+   */
+  router.post('/:id/photo', protectedRoute, requireRole(...POLICE_ROLES), upload.single('photo'), async (req, res) => {
+    const r = findReport(req.params.id);
+    if (!r) return res.status(404).json({ error: 'Report not found' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
+    if (r.anonymizedAt) return res.status(409).json({ error: 'Anonymised cases cannot be given a new photo' });
+    const read = readFields(req.body, { photoConsent: 'flag' });
+    if (read.error) return res.status(400).json({ error: read.error });
+    if (!req.file) return res.status(400).json({ error: 'Attach the new photo' });
+    const imageError = validateImageFile(req.file, isAdultCase(r) ? 'Photo' : 'Child photo');
+    if (imageError) return res.status(400).json({ error: imageError });
+    if (!r.photoConsent && !isTruthy(read.body.photoConsent)) {
+      return res.status(400).json({ error: 'Photo consent is required before uploading a child image' });
+    }
+
+    const previous = { photoFile: r.photoFile || null, photoCheck: r.photoCheck || null };
+    // A new key each time, so no cache - the browser's or a CDN's - can go on
+    // showing the old face under the case.
+    const version = Date.now().toString(36);
+    const photoFile = await savePhoto(`${r.id}-${version}`, req.file.buffer, storedImageMime(req.file));
+    if (!photoFile) return res.status(500).json({ error: 'The photo could not be stored. Try again.' });
+    const photoCheck = await matcher.checkCasePhoto(req.file.buffer);
+    const now = new Date().toISOString();
+    updateReport(r.id, {
+      photoFile,
+      photoUrl: `/api/reports/photo/${r.id}?v=${version}`,
+      photoConsent: true,
+      photoCheck,
+      photoReplacedAt: now,
+      photoReplacedById: req.user.id,
+      photoHistory: [
+        ...(Array.isArray(r.photoHistory) ? r.photoHistory : []),
+        { replacedAt: now, byId: req.user.id, byRole: req.user.role, previousVerdict: previous.photoCheck?.verdict || null },
+      ],
+    });
+    if (previous.photoFile && previous.photoFile !== photoFile && typeof deletePhoto === 'function') {
+      await Promise.resolve(deletePhoto(previous.photoFile)).catch(() => {});
+    }
+    const updated = findReport(r.id);
+    // The index holds the new face, not the old one.
+    if (isForwardPoolCase(updated)) await matcher.indexCase(updated, req.file.buffer);
+    const searchable = !['found', 'closed'].includes(updated.status) && !isPendingCitizenIntake(updated) && !isFoundChildIntake(updated);
+    const reverse = searchable
+      ? await matcher.matchStoredSightings(updated, { trigger: 'photo_replaced', actor: req.user, photo: req.file.buffer })
+      : { sightingMatches: 0, engine: null };
+    addActivity({ actor: req.user.name, action: 'Replaced the case photo', target: r.childName, icon: 'upload', actorId: req.user.id, scope: { state: r.state, district: r.district, reportId: r.id } });
+    addAudit({
+      actorId: req.user.id,
+      actorName: req.user.name,
+      actorRole: req.user.role,
+      action: 'case.photo_replaced',
+      targetType: 'report',
+      targetId: r.id,
+      summary: `Replaced the photo of ${r.childName}`,
+      scope: { state: r.state, district: r.district, reportId: r.id },
+      metadata: {
+        photoCheck: photoCheck.verdict,
+        faces: photoCheck.faces,
+        previousPhotoCheck: previous.photoCheck?.verdict || null,
+        sightingMatches: reverse.sightingMatches,
+        provider: reverse.engine?.provider || null,
+      },
+    });
+    res.json({ report: findReport(r.id), photoCheck, sightingMatches: reverse.sightingMatches, engine: reverse.engine || null });
   });
 
   /**
@@ -1983,11 +2141,21 @@ export default function registerReportRoutes(router, deps) {
       matchScore: 'number',
       sendSms: 'flag',
       personConsent: 'flag',
+      // The sighting this confirms, when there is one. It must be linked to
+      // this case; the rescue alert is then sent for where it was seen.
+      foundReportId: ['text', 60],
     });
     if (read.error) return res.status(400).json({ error: read.error });
     const verification = parseVerification(req.body?.verification, req.user);
     if (!verification) return res.status(400).json({ error: VERIFICATION_REQUIRED });
     const b = read.body;
+    let sightingToConfirm = null;
+    if (b.foundReportId) {
+      sightingToConfirm = findFoundReport(b.foundReportId);
+      if (!sightingToConfirm || sightingToConfirm.matchedReportId !== r.id || !['pending_review', 'matched'].includes(sightingToConfirm.status)) {
+        return res.status(409).json({ error: 'That sighting is not linked to this case' });
+      }
+    }
     const foundLocation = b.foundLocation || '';
     const consent = req.body?.personConsent === true;
     const adult = isAdultCase(r);
@@ -1996,9 +2164,36 @@ export default function registerReportRoutes(router, deps) {
 
     updateReport(r.id, matchConfirmedPatch(r, req.user, {
       verification,
-      foundLocation: foundLocation || r.foundLocation || 'Reported location',
-      matchScore: b.matchScore != null && b.matchScore !== '' ? Number(b.matchScore) : r.matchScore,
+      foundLocation: foundLocation || sightingToConfirm?.foundLocation || r.foundLocation || 'Reported location',
+      matchScore: b.matchScore != null && b.matchScore !== '' ? Number(b.matchScore) : sightingToConfirm?.matchScore ?? r.matchScore,
+      foundReportId: sightingToConfirm?.id || null,
     }));
+    if (sightingToConfirm?.status === 'pending_review') {
+      updateFoundReport(sightingToConfirm.id, {
+        reviewDecision: 'matched',
+        reviewedAt: new Date().toISOString(),
+        reviewedById: req.user.id,
+        reviewedByName: req.user.name,
+        reviewedByRole: req.user.role,
+        verification,
+        matchCandidates: matcher.confirmedCandidates(sightingToConfirm, req.user),
+        status: 'matched',
+        referralStatus: 'Police match confirmed',
+      });
+      addAudit({
+        actorId: req.user.id,
+        actorName: req.user.name,
+        actorRole: req.user.role,
+        action: 'sighting.match_confirmed',
+        targetType: 'foundReport',
+        targetId: sightingToConfirm.id,
+        summary: `Confirmed sighting match for ${r.childName} (${verification.methodLabel})`,
+        scope: { state: r.state, district: r.district, reportId: r.id },
+        metadata: { matchScore: sightingToConfirm.matchScore, verification, via: 'confirm_match' },
+      });
+    }
+    // Found: no longer a face anyone is looking for.
+    await matcher.unindexCase(findReport(r.id));
 
     let family;
     if (!familyMayBeTold) family = { sent: false, reason: 'consent_required', phone: null };
@@ -2024,14 +2219,24 @@ export default function registerReportRoutes(router, deps) {
     // because that is where somebody has to physically go, and its id travels
     // in the scope so tapping the notification opens that sighting rather than
     // a list the officer then has to search.
-    const confirmedSighting = listFoundReports()
-      .filter((f) => f.matchedReportId === r.id)
-      .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))[0];
+    //
+    // The sighting is the one this confirmation is about: the one named in
+    // the request, or else one an officer already confirmed for this case.
+    // It used to be "the newest sighting linked to this case", which could be
+    // a lookalike still awaiting review, and sent the rescue to the wrong place.
+    const confirmedSighting = sightingToConfirm
+      ? findFoundReport(sightingToConfirm.id)
+      : listFoundReports()
+        .filter((f) => f.matchedReportId === r.id && f.status === 'matched')
+        .sort((a, b) => String(b.reviewedAt || '').localeCompare(String(a.reviewedAt || '')))[0] || null;
     // Where the child was seen, not where the case was filed — a case opened in
     // one district is routinely closed by a sighting in another, and the rescue
-    // belongs to the sighting. An officer's explicit entry outranks both.
-    const rescueState = confirmedSighting?.state || r.state;
-    const rescueDistrict = confirmedSighting?.district || r.district;
+    // belongs to the sighting. A linked sighting carries the case's
+    // jurisdiction, so it is the reporter's own place that is used. An
+    // officer's explicit entry outranks both.
+    const seenAt = confirmedSighting ? reportedLocationOf(confirmedSighting) : null;
+    const rescueState = seenAt?.state || r.state;
+    const rescueDistrict = seenAt?.district || r.district;
     const rescueLocation =
       foundLocation || confirmedSighting?.foundLocation || r.foundLocation || 'location under review';
     const rescueWhere = `${rescueLocation}${rescueState ? `, ${[rescueDistrict, rescueState].filter(Boolean).join(', ')}` : ''}`;
@@ -2074,7 +2279,7 @@ export default function registerReportRoutes(router, deps) {
    * was told - is cleared from the live record and kept in `reopenHistory`,
    * and the reason is a workflow event and an audit row.
    */
-  router.post('/:id/reopen', protectedRoute, requireRole(...POLICE_ROLES), (req, res) => {
+  router.post('/:id/reopen', protectedRoute, requireRole(...POLICE_ROLES), async (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
     if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
@@ -2130,6 +2335,8 @@ export default function registerReportRoutes(router, deps) {
       scope: { state: r.state, district: r.district, reportId: r.id },
       metadata: { previousStatus: r.status, reason, reasonLength: reason.length },
     });
+    // Missing again, so its face is searched for again.
+    await matcher.indexCase(findReport(r.id));
     res.json({ report: findReport(r.id) });
   });
 
@@ -2152,13 +2359,17 @@ export default function registerReportRoutes(router, deps) {
     if (!r.photoFile) return res.status(409).json({ error: 'This case has no photo to compare with sightings' });
     if (r.status === 'found') return res.status(409).json({ error: 'Found cases are not compared with sightings' });
     if (r.status === 'closed') return res.status(409).json({ error: 'Closed cases are not compared with sightings' });
+    // A found child in care is matched by the missing cases registered after
+    // it (the reverse search covers open found-child intakes); comparing it
+    // with sightings would only find its own.
+    if (isFoundChildIntake(r)) return res.status(409).json({ error: 'A found-child intake is not compared with sightings' });
     // The same rule registration follows: an unverified intake is a stranger's
     // photograph until an officer verifies it, and verifying it runs this search.
     if (isPendingCitizenIntake(r)) {
       return res.status(409).json({ error: 'Citizen/NGO intake must be verified before it is compared with sightings' });
     }
 
-    const reverse = await matchStoredSightings(r, { trigger: 'rematch', actor: req.user });
+    const reverse = await matcher.matchStoredSightings(r, { trigger: 'rematch', actor: req.user });
     addAudit({
       actorId: req.user.id,
       actorName: req.user.name,
@@ -2488,7 +2699,7 @@ export default function registerReportRoutes(router, deps) {
     res.status(201).json({ report: findReport(r.id), checklistRecord });
   });
 
-  router.post('/:id/close-case', protectedRoute, requireRole(...CASE_CLOSE_ROLES), (req, res) => {
+  router.post('/:id/close-case', protectedRoute, requireRole(...CASE_CLOSE_ROLES), async (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
     if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
@@ -2547,6 +2758,8 @@ export default function registerReportRoutes(router, deps) {
       scope: { state: r.state, district: r.district, reportId: r.id },
       metadata: closure,
     });
+    // Closed: no longer a face anyone is looking for.
+    await matcher.unindexCase(findReport(r.id));
     res.json({ report: findReport(r.id) });
   });
 
@@ -3837,12 +4050,16 @@ export default function registerReportRoutes(router, deps) {
       scope: { state: r.state, district: r.district, reportId: r.id },
       metadata: { firNo: patch.firNo, noteLength: event.note ? event.note.length : 0 },
     });
-    // Registration skipped the search for this intake (it was unverified then);
-    // now that an officer has verified it, compare it with stored sightings.
+    // Registration skipped the search and the photo check for this intake (it
+    // was unverified then); now that an officer has verified it, run both.
     const verified = findReport(r.id);
+    const photo = verified.photoFile ? await readPhoto(verified.photoFile) : null;
+    const photoCheck = photo && !verified.photoCheck ? await matcher.checkCasePhoto(photo) : null;
     const reverse = verified.photoFile
-      ? await matchStoredSightings(verified, { trigger: 'intake_verified', actor: req.user })
+      ? await matcher.matchStoredSightings(verified, { trigger: 'intake_verified', actor: req.user, photo })
       : { sightingMatches: 0 };
+    if (photoCheck) updateReport(r.id, { photoCheck });
+    if (photo) await matcher.indexCase(findReport(r.id), photo);
     res.json({ report: findReport(r.id), sightingMatches: reverse.sightingMatches });
   });
 

@@ -72,13 +72,18 @@ score.
 - [ ] Place and time: could the person have reached where the sighting was taken?
 - [ ] Photo-quality warnings shown on the sighting.
 - [ ] **Engines disagree** flag, and whether two engines or only one compared the faces.
-      One engine alone is a weaker lead.
+      One engine alone is a weaker lead; so is a candidate flagged **Not checked by a second
+      engine** (the second engine was asked and did not answer, or cannot read the photo).
+- [ ] The age the missing person **would be now** (shown beside the sighting's estimate:
+      their age when they went missing plus the years since), not their age on the FIR.
+- [ ] A case photo flagged **not usable for matching** or **group photo**: replace it with a
+      clear photo of the person alone (Cases → Case photo).
 
 **Then decide:**
 
 | If | Do |
 |---|---|
-| Clearly a different person | **Reject.** A sighting linked by a newly registered case goes back to where it was. |
+| Clearly a different person | **Not this person — show next.** The sighting moves to the next candidate the engines proposed (that case's officers are alerted), or, with none left, back to its own district and queue; a sighting linked by a newly registered case goes back to where it was. The same case is never proposed for it again. |
 | A child, and you cannot verify quickly | **Refer to CWC/1098**, and keep looking. |
 | Possibly the same person | **Go and verify in person** (section 5). Do not confirm yet. |
 

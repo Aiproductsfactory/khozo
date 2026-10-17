@@ -7,17 +7,32 @@ import { Router } from 'express';
 import multer from 'multer';
 
 import registerReportRoutes from '../../../shared/routes/reports.js';
+import { PHOTO_TOO_LARGE } from '../../../shared/case-domain.js';
+import { createFaceIndex } from '../../../shared/face-index.js';
+import { PHOTO_MAX_BYTES } from '../../../shared/photo-format.js';
 import {
   listReports, addReport, findReport, updateReport,
   listFoundReports, addFoundReport, findFoundReport, updateFoundReport,
   listUsers, addActivity, addAudit, addNotification,
-  savePhoto, readPhoto, photoMimeType,
+  savePhoto, readPhoto, deletePhoto, photoMimeType,
 } from '../store.js';
 import { authRequired, optionalAuth, passwordChangeRequired, requireRole } from '../auth.js';
-import { rankMatches, rankSightingMatches, detectPerson } from '../match.js';
+import { rankMatches, rankSightingMatches, detectPerson, matchEngineInfo } from '../match.js';
 import { auditPublicRateLimit, clientIp, fixedWindowRateLimit } from '../rateLimit.js';
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
+const multipart = multer({ storage: multer.memoryStorage(), limits: { fileSize: PHOTO_MAX_BYTES } });
+
+/**
+ * multer, answering as the Worker's router does: a photo over 8 MB is a 413
+ * with a sentence the console can show, not Express's default error page.
+ */
+const upload = {
+  single: (field) => (req, res, next) => multipart.single(field)(req, res, (err) => {
+    if (!err) return next();
+    if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: PHOTO_TOO_LARGE });
+    return res.status(400).json({ error: 'The upload could not be read' });
+  }),
+};
 
 export default registerReportRoutes(Router(), {
   listReports, addReport, findReport, updateReport,
@@ -29,6 +44,11 @@ export default registerReportRoutes(Router(), {
   rankMatches,
   rankSightingMatches,
   detectPerson,
+  matchEngineInfo,
+  // The one-to-many index: none unless AARAKSHAK_GALLERY_URL and
+  // AARAKSHAK_GALLERY_KEY are set (shared/face-index.js).
+  faceIndex: createFaceIndex(process.env),
+  deletePhoto,
   upload,
   settings: {
     foundReportLimit: process.env.KHOZO_FOUND_REPORT_LIMIT,

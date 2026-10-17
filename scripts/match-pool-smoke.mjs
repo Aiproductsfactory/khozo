@@ -16,8 +16,9 @@
  */
 import process from 'node:process';
 
-import { selectMatchCandidates, selectSightingCandidates } from '../shared/match-pool.js';
-import { rankMatches, rankSightingMatches } from '../worker/src/match.js';
+import { expectedAgeAt, isRematchEligible, selectMatchCandidates, selectSightingCandidates } from '../shared/match-pool.js';
+import { configHashOf } from '../shared/match-config.js';
+import { detectPerson, matchEngineInfo, rankMatches, rankSightingMatches } from '../worker/src/match.js';
 
 const checks = [];
 const check = (name, ok, detail = '') => {
@@ -120,11 +121,71 @@ check('a sighting an officer unlinked from a case is not proposed for that case 
 check('but is still compared with other cases',
   selectSightingCandidates([turnedDown], { reportId: 'r_other' }, 50, NOW).sightings.length === 1);
 
+// --- What the forward pool leaves out, and the soft tie-break ---------------------
+const closedOut = selectMatchCandidates([
+  report('open_case', 'Gujarat', 'Ahmedabad', '2026-07-01'),
+  report('closed_case', 'Gujarat', 'Ahmedabad', '2026-07-02', { status: 'closed' }),
+  report('found_case', 'Gujarat', 'Ahmedabad', '2026-07-03', { status: 'found' }),
+  report('intake_case', 'Gujarat', 'Ahmedabad', '2026-07-04', { status: 'under_review', caseOrigin: 'found_child_intake' }),
+  report('rejected_case', 'Gujarat', 'Ahmedabad', '2026-07-05'),
+], { state: 'Gujarat', district: 'Ahmedabad', excludeReportIds: ['rejected_case'] }, 25).reports.map((r) => r.id);
+check('closed and found cases, found-child intakes and rejected pairs are never in the forward pool',
+  closedOut.join() === 'open_case', closedOut.join());
+
+const AT = Date.parse('2026-10-17T00:00:00Z');
+check('the age a missing child would be now is the age at missing plus the years since',
+  expectedAgeAt({ age: 9, dateOfMissing: '2019-10-01' }, AT) === 16 && expectedAgeAt({ age: 9, dateOfMissing: '2026-10-01' }, AT) === 9 && expectedAgeAt({ age: null }, AT) === null);
+const fitPool = [
+  report('boy_recent', 'Gujarat', 'Ahmedabad', '2026-10-01', { gender: 'Male', age: 9 }),
+  report('girl_long_ago', 'Gujarat', 'Ahmedabad', '2019-10-01', { gender: 'Female', age: 9 }),
+  report('girl_recent', 'Gujarat', 'Ahmedabad', '2026-09-01', { gender: 'Female', age: 9 }),
+  report('surat_girl', 'Gujarat', 'Surat', '2019-10-01', { gender: 'Female', age: 9 }),
+];
+const fitted = selectMatchCandidates(fitPool, { state: 'Gujarat', district: 'Ahmedabad', gender: 'Female', ageApprox: 16 }, 25, AT).reports.map((r) => r.id);
+check('within a tier, a case whose sex and age today fit the sighting comes first',
+  fitted[0] === 'girl_long_ago', fitted.join());
+check('the tie-break never filters, and never outranks the nearest-first tiers',
+  fitted.length === 4 && fitted[3] === 'surat_girl' && fitted.includes('boy_recent'), fitted.join());
+
+// With a one-to-many index: its shortlist first, then the cases it does not hold.
+const indexed = (id, extra = {}) => report(id, 'Gujarat', 'Ahmedabad', '2026-08-01', { faceIndex: { provider: 'gallery', status: 'enrolled' }, ...extra });
+const shortlisted = selectMatchCandidates(
+  [indexed('i1'), indexed('i2'), indexed('i3_closed', { status: 'closed' }), report('not_indexed', 'Gujarat', 'Ahmedabad', '2026-01-01'), indexed('i4')],
+  { state: 'Gujarat', district: 'Ahmedabad', shortlist: ['i2', 'i3_closed', 'gone', 'i1'], indexProvider: 'gallery' },
+  25
+);
+check('with an index, its shortlist is compared in its order, cases it does not hold fill the budget, and nothing else',
+  shortlisted.reports.map((r) => r.id).join() === 'i2,i1,not_indexed' && shortlisted.pool.source === 'index' && shortlisted.pool.indexHits === 4 && shortlisted.pool.unindexed === 1,
+  `${shortlisted.reports.map((r) => r.id).join()} ${JSON.stringify(shortlisted.pool)}`);
+
+// The reverse pool covers open found-child intakes whose sighting is no longer comparable.
+const intakeRow = (id, sourceId, extra = {}) => ({ id, caseOrigin: 'found_child_intake', status: 'under_review', state: 'Gujarat', district: 'Ahmedabad', photoFile: `${id}.jpg`, sourceFoundReportId: sourceId, createdAt: NOW - HOUR, ...extra });
+const withIntakes = selectSightingCandidates(
+  [
+    sighting('src_anon', 'Gujarat', 'Ahmedabad', 300, { status: 'formalized_case', anonymizedAt: '2026-10-01' }),
+    sighting('src_live', 'Gujarat', 'Ahmedabad', 2, { status: 'formalized_case' }),
+    sighting('src_closed', 'Gujarat', 'Ahmedabad', 300, { status: 'formalized_case', anonymizedAt: '2026-10-01' }),
+  ],
+  { state: 'Gujarat', district: 'Ahmedabad', reportId: 'r_new' },
+  50,
+  NOW,
+  { intakeReports: [intakeRow("in_anon", "src_anon"), intakeRow("in_live", "src_live"), intakeRow("in_closed", "src_closed", { status: "closed" })] }
+);
+check('the reverse search covers an open found-child intake whose sighting can no longer be compared, once',
+  withIntakes.sightings.map((s) => s.id).sort().join() === 'in_anon,src_live' && withIntakes.pool.foundChildIntakes === 1,
+  withIntakes.sightings.map((s) => s.id).join());
+check('a sighting a screen called "no person" can still be searched again',
+  isRematchEligible(sighting('np', 'Gujarat', 'Ahmedabad', 1, { screening: { verdict: 'no_person' } }), NOW) &&
+    !isRematchEligible(sighting('closed', 'Gujarat', 'Ahmedabad', 1, { status: 'matched' }), NOW));
+
 // --- The Worker engine, both directions, against stubbed providers -----------
 // Photos are marker strings: "FACE:<person>:<case|sighting>". Aarakshak scores
 // the same person 0.9; Rekognition agrees (95%) except for person Q, where it
 // disagrees (40%) and the candidate must be withheld.
-const photo = (person, role) => Buffer.from(`FACE:${person}:${role};`);
+// A JPEG's first bytes, then the marker: Rekognition is only asked about
+// photos it can read (JPEG or PNG), so the stand-in photos must look like one.
+const JPEG_HEAD = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]);
+const photo = (person, role) => Buffer.concat([JPEG_HEAD, Buffer.from(`FACE:${person}:${role};`)]);
 const facesIn = (text) => [...text.matchAll(/FACE:(\w+):(\w+);/g)].map((m) => ({ person: m[1], role: m[2] }));
 const sent = [];
 // How many Aarakshak calls are open at once, and faces whose call fails: the
@@ -133,6 +194,13 @@ const sent = [];
 let inFlight = 0;
 let maxInFlight = 0;
 const failingFaces = new Set();
+// Faces Aarakshak finds no face in; faces Rekognition fails on; Aarakshak
+// calls that fail once (a transient fault); faces with two people in them.
+const aarakshakNoFace = new Set();
+const rekognitionFails = new Set();
+let aarakshakFailOnce = 0;
+const groupFaces = new Set();
+const aarakshakTypes = [];
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (url, init = {}) => {
   const target = String(url);
@@ -143,9 +211,16 @@ globalThis.fetch = async (url, init = {}) => {
     maxInFlight = Math.max(maxInFlight, inFlight);
     try {
       await new Promise((resolve) => setTimeout(resolve, 3));
+      aarakshakTypes.push(...[...Buffer.from(init.body).toString('latin1').matchAll(/Content-Type: (image\/\w+)/g)].map((m) => m[1]));
+      if (aarakshakFailOnce > 0) {
+        aarakshakFailOnce -= 1;
+        return new Response('temporarily unavailable', { status: 503 });
+      }
       if (faces.some((face) => failingFaces.has(face.person))) return new Response('upstream error', { status: 500 });
+      if (faces.some((face) => aarakshakNoFace.has(face.person))) return new Response(JSON.stringify({ detail: 'No detectable face in one of the images' }), { status: 422 });
       const same = faces.length === 2 && faces[0].person === faces[1].person;
-      return new Response(JSON.stringify({ score: same ? 0.9 : 0.02, source_faces: [{}], target_faces: [{}] }), { status: 200 });
+      const group = faces.some((face) => groupFaces.has(face.person));
+      return new Response(JSON.stringify({ score: same ? 0.9 : 0.02, source_faces: group ? [{}, {}] : [{}], target_faces: [{}] }), { status: 200 });
     } finally {
       inFlight -= 1;
     }
@@ -154,13 +229,17 @@ globalThis.fetch = async (url, init = {}) => {
     const body = JSON.parse(init.body);
     const faces = [body.SourceImage.Bytes, body.TargetImage.Bytes].map((b) => facesIn(Buffer.from(b, 'base64').toString('latin1'))[0]);
     sent.push({ provider: 'rekognition', roles: faces.map((f) => f.role) });
+    if (faces.some((face) => rekognitionFails.has(face.person))) return new Response('{"__type":"InternalServerError"}', { status: 500 });
     const same = faces[0].person === faces[1].person;
     const similarity = same ? (faces[0].person === 'Q' ? 40 : 95) : 1;
     return new Response(JSON.stringify({ SourceImageFace: {}, FaceMatches: similarity > 1 ? [{ Similarity: similarity }] : [] }), { status: 200 });
   }
   throw new Error(`unexpected fetch to ${target}`);
 };
-for (const key of ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AARAKSHAK_API_KEY', 'KHOZO_REVERSE_MATCH_CANDIDATES']) delete process.env[key];
+for (const key of [
+  'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AARAKSHAK_API_KEY', 'AARAKSHAK_API_URL', 'KHOZO_REVERSE_MATCH_CANDIDATES',
+  'KHOZO_MATCH_CANDIDATES', 'KHOZO_REKOGNITION_ENDPOINT', 'KHOZO_REKOGNITION_CONFIRM', 'KHOZO_SECOND_OPINION_TOP_N', 'AARAKSHAK_THRESHOLD',
+]) delete process.env[key];
 
 const store = new Map();
 const caseRow = (id, person) => {
@@ -229,6 +308,75 @@ try {
   const nothingToCompare = await rankSightingMatches({ AARAKSHAK_API_KEY: 'k' }, photo('P', 'case'), hints, { foundReports: [], readPhoto });
   check('reverse with no stored sighting photos says so', nothingToCompare.candidates.length === 0 &&
     /No stored sighting photos/.test(nothingToCompare.engine.reason || ''), nothingToCompare.engine.reason);
+
+  // --- No single-engine veto, and the "not checked" lane ---------------------------
+  const quiet = console.warn;
+  console.warn = () => {};
+  try {
+    // Aarakshak finds no face in the sighting: unknown, not a score of 0.
+    // Rekognition compares it on its own, held to its confirmation bar.
+    const noFaceCases = [...engineCases, caseRow('r_NF', 'NF')];
+    aarakshakNoFace.add('NF');
+    const noVeto = await rankMatches(both, photo('NF', 'sighting'), hints, { reports: noFaceCases, readPhoto });
+    const lead = noVeto.candidates.find((c) => c.report.id === 'r_NF');
+    check('Aarakshak finding no face is not a veto: Rekognition compares instead',
+      lead?.secondOpinion === 'sole_engine' && lead.score === 0.95 && lead.engines?.aarakshak === 'no_face' && lead.engines?.rekognition === 'answered' &&
+        lead.enginesAnswered.join() === 'rekognition' && noVeto.engine.biometric === true,
+      JSON.stringify(lead || noVeto.engine));
+    const aloneOnly = await rankMatches({ AARAKSHAK_API_KEY: 'k' }, photo('NF', 'sighting'), hints, { reports: noFaceCases.slice(0, 1), readPhoto });
+    aarakshakNoFace.clear();
+    check('with no second engine, "no face" everywhere is said as such, not as an outage',
+      aloneOnly.candidates.length === 0 && aloneOnly.engine.biometric === false && aloneOnly.engine.noFace === true &&
+        /No face could be found/.test(aloneOnly.engine.reason), JSON.stringify(aloneOnly.engine));
+
+    // Rekognition is configured but does not answer: kept, flagged, never confirmed.
+    rekognitionFails.add('P');
+    const unanswered = await rankMatches(both, photo('P', 'sighting'), hints, { reports: engineCases, readPhoto });
+    rekognitionFails.clear();
+    const notChecked = unanswered.candidates.find((c) => c.report.id === 'r_P');
+    check('a candidate Rekognition did not answer for is kept as an uncorroborated lead, flagged "not checked"',
+      notChecked?.notChecked === true && notChecked.notCheckedReason === 'no_answer' && notChecked.corroborated === false && notChecked.confirmed === false &&
+        notChecked.score === 0.9 && notChecked.enginesAnswered.join() === 'aarakshak' && unanswered.engine.secondOpinion?.notChecked >= 1,
+      JSON.stringify(notChecked));
+
+    // A WebP Rekognition cannot read: not asked, and said so.
+    const WEBP_HEAD = Buffer.concat([Buffer.from('RIFF'), Buffer.from([0x20, 0, 0, 0]), Buffer.from('WEBPVP8 ')]);
+    const webp = Buffer.concat([WEBP_HEAD, Buffer.from('FACE:P:sighting;')]);
+    aarakshakTypes.length = 0;
+    sent.length = 0;
+    const webpResult = await rankMatches(both, webp, hints, { reports: engineCases, readPhoto });
+    const webpLead = webpResult.candidates.find((c) => c.report.id === 'r_P');
+    check('a WebP photo is matched by Aarakshak and lands in the "not checked" lane for Rekognition',
+      webpLead?.notChecked === true && webpLead.notCheckedReason === 'unsupported_format' && !sent.some((c) => c.provider === 'rekognition'),
+      JSON.stringify(webpLead));
+    check('and is sent to Aarakshak as what it is', aarakshakTypes.includes('image/webp'), aarakshakTypes.slice(0, 4).join());
+
+    // One transient fault is retried rather than losing the comparison.
+    aarakshakFailOnce = 1;
+    const retried = await rankMatches({ AARAKSHAK_API_KEY: 'k' }, photo('P', 'sighting'), hints, { reports: engineCases.slice(0, 1), readPhoto });
+    check('the Worker retries Aarakshak once on a 5xx', retried.candidates[0]?.report?.id === 'r_P' && retried.engine.comparedAgainst === 1, JSON.stringify(retried.engine));
+    aarakshakFailOnce = 0;
+  } finally {
+    console.warn = quiet;
+  }
+
+  // Every result carries the thresholds and settings it was produced under.
+  const info = matchEngineInfo(both);
+  check('every result is stored with its thresholds and engine settings',
+    forwardConfirmed.engine.thresholds?.review === 0.35 && forwardConfirmed.engine.thresholds?.rekognitionConfirm === 0.8 &&
+      configHashOf(forwardConfirmed.engine.settings) === configHashOf(info.settings) &&
+      configHashOf(info.settings) !== configHashOf(matchEngineInfo({ AARAKSHAK_API_KEY: 'k' }).settings),
+    JSON.stringify(forwardConfirmed.engine.thresholds));
+
+  // The face screen: no single-engine veto there either, and it counts faces.
+  aarakshakNoFace.add('SC');
+  const screened = await detectPerson(both, photo('SC', 'case'));
+  aarakshakNoFace.clear();
+  check('the screen asks Rekognition when Aarakshak sees no face', screened.verdict === 'person' && screened.provider === 'aws-rekognition', JSON.stringify(screened));
+  groupFaces.add('GR');
+  const group = await detectPerson({ AARAKSHAK_API_KEY: 'k' }, photo('GR', 'case'));
+  groupFaces.clear();
+  check('the screen counts the faces in a group photo', group.verdict === 'person' && group.faces === 2, JSON.stringify(group));
 } finally {
   globalThis.fetch = realFetch;
 }

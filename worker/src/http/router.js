@@ -14,7 +14,24 @@
  * `next()`, matching Express's behaviour closely enough for these routes.
  */
 
+import { PHOTO_TOO_LARGE } from '../../../shared/case-domain.js';
+import { PHOTO_MAX_BYTES } from '../../../shared/photo-format.js';
+
 const PARAM_PATTERN = /:([A-Za-z_][\w]*)/g;
+
+/**
+ * The most a multipart body may carry beyond its one photo: the form's text
+ * fields. A body declaring more than photo + this is refused before it is read.
+ */
+const MULTIPART_FIELDS_ALLOWANCE = 512 * 1024;
+
+/** A body the router refuses to parse, answered as Express's multer would be. */
+class BodyRejected extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
 
 /** Compiles an Express path pattern (`/found/:id/review`) into a matcher. */
 function compilePath(pattern) {
@@ -140,12 +157,20 @@ async function readBody(request) {
   }
 
   if (contentType.includes('multipart/form-data') || contentType.includes('application/x-www-form-urlencoded')) {
+    // The photo limit Express applies (multer, 8 MB), applied here too: a
+    // declared length over it is refused before the body is read at all, and
+    // a file part over it once it has been.
+    const declared = Number(request.headers.get('content-length'));
+    if (Number.isFinite(declared) && declared > PHOTO_MAX_BYTES + MULTIPART_FIELDS_ALLOWANCE) {
+      throw new BodyRejected(413, PHOTO_TOO_LARGE);
+    }
     const form = await request.formData().catch(() => null);
     if (!form) return { body: {}, file: null };
     const body = {};
     let file = null;
     for (const [key, value] of form.entries()) {
       if (value && typeof value === 'object' && typeof value.arrayBuffer === 'function') {
+        if ((value.size ?? 0) > PHOTO_MAX_BYTES) throw new BodyRejected(413, PHOTO_TOO_LARGE);
         // Only the first file part matters: every route uses `upload.single`.
         if (!file) {
           file = {
@@ -185,7 +210,17 @@ export async function handleRequest(router, request, { basePath = '', context = 
     const params = route.match(pathname);
     if (!params) continue;
 
-    if (!parsed) parsed = await readBody(request);
+    if (!parsed) {
+      try {
+        parsed = await readBody(request);
+      } catch (err) {
+        if (!(err instanceof BodyRejected)) throw err;
+        return new Response(JSON.stringify({ error: err.message }), {
+          status: err.status,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+    }
 
     const req = {
       method: request.method,

@@ -36,6 +36,7 @@ import {
 import * as store from '../server/src/store.js';
 import { isPostgres } from '../server/src/db.js';
 import { detectPerson, matchEngineInfo, probeMatchProviders, rankMatches, rankSightingMatches } from '../server/src/match.js';
+import { createFaceIndex } from '../shared/face-index.js';
 
 const PORT = Number(process.env.PORT || 4500);
 
@@ -96,6 +97,7 @@ function buildDeps(env) {
     detectPerson,
     matchEngineInfo,
     probeMatchProviders,
+    faceIndex: createFaceIndex(env),
 
     upload: { single: () => (_req, _res, next) => next() },
 

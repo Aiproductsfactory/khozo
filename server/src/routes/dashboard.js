@@ -3,16 +3,18 @@
 import { Router } from 'express';
 
 import registerDashboardRoutes from '../../../shared/routes/dashboard.js';
+import { createFaceIndex } from '../../../shared/face-index.js';
 import {
   listReports, listFoundReports, listActivity, listUsers,
   listAudit, verifyAuditChain, updateFoundReport, updateReport,
   addActivity, addAudit, addUser, findUserByEmail,
-  listNotifications, markNotificationsRead,
+  listNotifications, markNotificationsRead, addNotification,
+  findReport, findFoundReport,
   readPhoto,
 } from '../store.js';
 import { isPostgres } from '../db.js';
 import { authRequired, passwordChangeRequired, publicUser, requireRole } from '../auth.js';
-import { matchEngineInfo, probeMatchProviders } from '../match.js';
+import { detectPerson, matchEngineInfo, probeMatchProviders, rankMatches, rankSightingMatches } from '../match.js';
 import { auditPublicRateLimit, clientIp, fixedWindowRateLimit } from '../rateLimit.js';
 
 export default registerDashboardRoutes(Router(), {
@@ -21,6 +23,11 @@ export default registerDashboardRoutes(Router(), {
   addActivity, addAudit, addUser, findUserByEmail,
   listNotifications, markNotificationsRead,
   readPhoto, probeMatchProviders,
+  // The re-match batch (shared/routes/matching-admin.js) runs the forward
+  // search, links, and alerts a newly linked case's officers.
+  findReport, findFoundReport, addNotification,
+  rankMatches, rankSightingMatches, detectPerson,
+  faceIndex: createFaceIndex(process.env),
   isPostgres,
   authRequired, passwordChangeRequired, publicUser, requireRole,
   auditPublicRateLimit, clientIp, fixedWindowRateLimit,

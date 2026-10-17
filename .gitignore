@@ -22,3 +22,6 @@ graphify-out/
 # python cache
 __pycache__/
 *.pyc
+
+# Agent worktrees
+.claude/worktrees/

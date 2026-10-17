@@ -122,8 +122,9 @@ function facePhotoFile(label, role = 'sighting') {
  * route exists to recover from.
  */
 async function startFakeAarakshak() {
-  // `pairs` records [source role, target role] for every two-face comparison.
-  const fake = { down: false, calls: 0, pairs: [], key: 'smoke-aarakshak-key', url: null, server: null };
+  // `pairs` records [source role, target role] for every two-face comparison;
+  // `probes` counts a photo compared with itself (the person/face screen).
+  const fake = { down: false, downOnce: 0, calls: 0, pairs: [], probes: 0, key: 'smoke-aarakshak-key', url: null, server: null };
   fake.server = http.createServer((req, res) => {
     const chunks = [];
     req.on('data', (chunk) => chunks.push(chunk));
@@ -133,23 +134,28 @@ async function startFakeAarakshak() {
         res.writeHead(401, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ detail: 'invalid api key' }));
       }
-      if (fake.down) {
+      if (fake.down || fake.downOnce > 0) {
+        if (fake.downOnce > 0) fake.downOnce -= 1;
         res.writeHead(503, { 'Content-Type': 'text/plain' });
         return res.end('service unavailable');
       }
-      const faces = [...Buffer.concat(chunks).toString('latin1').matchAll(/KHOZO-SMOKE-FACE:([A-Za-z0-9_-]+):(\w+);/g)];
+      const body = Buffer.concat(chunks).toString('latin1');
+      const faces = [...body.matchAll(/KHOZO-SMOKE-FACE:([A-Za-z0-9_-]+):(\w+);/g)];
       if (faces.length < 2) {
         res.writeHead(422, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ detail: 'No detectable face in one of the images' }));
       }
-      fake.pairs.push([faces[0][2], faces[1][2]]);
+      if (faces[0][0] === faces[1][0]) fake.probes += 1;
+      else fake.pairs.push([faces[0][2], faces[1][2]]);
+      // A group photo: the screen reports two faces in it.
+      const group = /KHOZO-SMOKE-GROUP;/.test(body);
       const same = faces[0][1] === faces[1][1];
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({
         score: same ? 0.91 : 0.03,
         decision_band: same ? 'strong_match' : 'no_match',
-        source_faces: [{}],
-        target_faces: [{}],
+        source_faces: group ? [{}, {}] : [{}],
+        target_faces: group ? [{}, {}] : [{}],
         source_quality_score: 0.9,
         target_quality_score: 0.9,
       }));
@@ -1066,7 +1072,24 @@ async function twoWayMatchingChecks({ superAdmin, sjpu, cwc, dlsa, ngo, parent, 
   );
   await request('POST', `/reports/found/${toReject.foundReport.id}/review`, { token: sjpu.token, body: { decision: 'rejected', note: 'Different child; the scar is on the other arm' } });
   assert((await storedCase(caseN.report.id)).status === 'found', 'confirming a match marks the case found');
-  assert((await storedSighting(toReject.foundReport.id)).status === 'rejected', 'a rejected forward match is closed');
+  // "Not this person" is about the candidate, not the sighting: with no other
+  // candidate left it goes back to the no-match queue, at the reporter's own
+  // place, and the case it was rejected for is never proposed for it again.
+  const rejectedStored = await storedSighting(toReject.foundReport.id);
+  assert(
+    rejectedStored.status === 'no_match' && !rejectedStored.matchedReportId && rejectedStored.district === where.district,
+    `a rejected forward match with no other candidate goes back to its queue: ${JSON.stringify({ status: rejectedStored.status, matchedReportId: rejectedStored.matchedReportId })}`
+  );
+  assert(
+    rejectedStored.rejectedLinks?.some((l) => l.reportId === caseM.report.id && l.direction === 'forward') &&
+      rejectedStored.matchCandidates?.find((c) => c.reportId === caseM.report.id)?.status === 'rejected',
+    'the rejected case is recorded on the sighting and its candidate marked rejected'
+  );
+  const searchedAgain = await request('POST', `/reports/found/${toReject.foundReport.id}/rematch`, { token: sjpu.token });
+  assert(
+    searchedAgain.linked === false && !(await storedSighting(toReject.foundReport.id)).matchedReportId,
+    'searching again never proposes a case an officer rejected for the sighting'
+  );
   const confirmedSighting = await storedSighting(toConfirm.foundReport.id);
   assert(
     confirmedSighting.verification?.verifiedBy === SMOKE_VERIFICATION.verifiedBy && confirmedSighting.verification.method === 'in_person' &&
@@ -1261,6 +1284,299 @@ async function strictInputChecks({ superAdmin, sjpu }) {
   await expectStatus(409, () => request('POST', `/reports/${strictCase.report.id}/reopen`, { token: superAdmin.token, body: { reason: 'Reopening it a second time' } }), 'reopen a case that is already open');
 }
 
+/**
+ * The candidate list, searching again, placing a sighting, and the case photo
+ * check, against the stand-in face engine, on both runtimes.
+ *
+ *   walk      a sighting keeps every strong candidate; "not this person" moves
+ *             it to the next, alerting that case's officers, and a rejected
+ *             pair is never proposed again; a desk sees only the candidates it
+ *             may open
+ *   rescue    confirm-match alerts for the sighting it confirms, at the place
+ *             the child was seen, not for the newest linked sighting
+ *   pool      closed cases and found-child intakes are never compared with a
+ *             new sighting; a found-child intake keeps a copy of the photo and
+ *             is reached by the reverse search
+ *   rematch   POST /found/:id/rematch and the super-admin batch re-run the
+ *             forward search; one retry absorbs a single provider fault
+ *   place     POST /found/:id/place sets an unplaced sighting's district and
+ *             searches from there
+ *   photo     a case photo is screened (usable / no face / group photo / not
+ *             checked), can be replaced, and uploads are held to 8 MB and to
+ *             real JPEG, PNG or WebP bytes
+ */
+async function candidateAndPhotoChecks({ superAdmin, admin, sjpu, cwc, parent, fake }) {
+  const mumbai = { state: 'Maharashtra', district: 'Mumbai' };
+  const thane = { state: 'Maharashtra', district: 'Thane' };
+  let phone = 9000001100;
+  const nextPhone = () => String(phone++);
+  const caseForm = (fields, photo) => {
+    const form = new FormData();
+    addDeclaration(form, 'Smoke Candidate Declarant');
+    // Several smoke children share an age and a district; duplicate detection
+    // is not what these checks are about.
+    form.set('allowDuplicate', 'true');
+    for (const [key, value] of Object.entries({ ...mumbai, gender: 'Male', age: '9', ...fields })) form.set(key, value);
+    if (photo) {
+      form.set('photoConsent', 'true');
+      form.set('photo', photo);
+    }
+    return form;
+  };
+  const sightingForm = (photo, { at = mumbai, foundLocation = 'Near Dadar flower market' } = {}) => {
+    const form = new FormData();
+    form.set('foundLocation', foundLocation);
+    if (at?.state) form.set('state', at.state);
+    if (at?.district) form.set('district', at.district);
+    form.set('note', 'Candidate smoke sighting');
+    form.set('reporterPhone', nextPhone());
+    form.set('photoConsent', 'true');
+    form.set('photo', photo);
+    return form;
+  };
+  const register = (token, fields, photo) => request('POST', '/reports', { token, form: caseForm(fields, photo) });
+  const sight = (photo, options) => request('POST', '/reports/found', { form: sightingForm(photo, options) });
+  const stored = async (id) => (await request('GET', '/reports/found/all', { token: superAdmin.token })).foundReports.find((row) => row.id === id);
+  const storedCase = async (id) => (await request('GET', `/reports/${id}`, { token: superAdmin.token })).report;
+  const inbox = async (account) => (await request('GET', '/dashboard/notifications', { token: account.token })).notifications;
+  const groupPhoto = (label) => new File([Buffer.concat([TINY_PNG, Buffer.from(`KHOZO-SMOKE-FACE:${label}:case;KHOZO-SMOKE-GROUP;`)])], `group-${label}.png`, { type: 'image/png' });
+
+  // --- The candidate list, and walking it -------------------------------------
+  // Two open cases of the same face: one in Mumbai, one in Thane.
+  const k1 = await register(sjpu.token, { childName: 'Kiran Walk One', parentPhone: '9876500301' }, facePhotoFile('K', 'case'));
+  const k2 = await register(superAdmin.token, { childName: 'Kiran Walk Two', parentPhone: '9876500302', ...thane }, facePhotoFile('K', 'case'));
+  const walked = await sight(facePhotoFile('K'));
+  const first = await stored(walked.foundReport.id);
+  const proposed = (first.matchCandidates || []).filter((c) => c.status === 'proposed');
+  assert(
+    proposed.length === 2 && proposed[0].reportId === k1.report.id && proposed[1].reportId === k2.report.id &&
+      proposed[0].rank === 1 && proposed[1].rank === 2 && first.matchedReportId === k1.report.id,
+    `a sighting keeps every strong candidate, nearest first: ${JSON.stringify(proposed.map((c) => [c.reportId, c.rank]))}`
+  );
+  assert(
+    proposed.every((c) => c.aarakshakScore >= 0.35 && c.rekognitionScore === null && c.corroborated === false &&
+      c.enginesAnswered.join() === 'aarakshak' && c.engines?.rekognition === 'not_configured'),
+    `each candidate records which engines answered: ${JSON.stringify(proposed[0])}`
+  );
+  assert(
+    first.matchEngine?.configHash && /^[0-9a-f]{16}$/.test(first.matchEngine.configHash) && first.matchEngine.thresholds?.review === 0.35 &&
+      first.matchEngine.pool?.openWithPhotos >= 2 && first.matchEngine.comparedAgainst >= 2,
+    `a search is stored with its thresholds and configuration hash: ${JSON.stringify(first.matchEngine)}`
+  );
+  const sjpuView = (await request('GET', '/reports/found/all', { token: sjpu.token })).foundReports.find((row) => row.id === walked.foundReport.id);
+  assert(
+    sjpuView?.matchCandidates?.length === 1 && sjpuView.matchCandidates[0].reportId === k1.report.id && sjpuView.matchCandidates[0].report?.expectedAge >= 9,
+    'a desk sees only the candidates it may open, with the age each would be now'
+  );
+  await expectStatus(403, () => request('POST', `/reports/found/${walked.foundReport.id}/review`, { token: parent.token, body: { decision: 'rejected' } }), 'a parent rejects a candidate');
+  const notThisPerson = await request('POST', `/reports/found/${walked.foundReport.id}/review`, { token: sjpu.token, body: { decision: 'rejected', note: 'Not him: no scar on the chin' } });
+  assert(notThisPerson.advanced === true && notThisPerson.foundReport === null, `rejecting the closest case moves to the next, which this desk cannot open: ${JSON.stringify(notThisPerson)}`);
+  const second = await stored(walked.foundReport.id);
+  assert(
+    second.matchedReportId === k2.report.id && second.status === 'pending_review' && second.district === 'Thane' &&
+      second.reportedLocation?.district === 'Mumbai' &&
+      second.matchCandidates.find((c) => c.reportId === k1.report.id)?.status === 'rejected' &&
+      second.rejectedLinks?.some((l) => l.reportId === k1.report.id),
+    `the next candidate is proposed, in its case's jurisdiction: ${JSON.stringify({ matchedReportId: second.matchedReportId, district: second.district, status: second.status })}`
+  );
+  const adminAlert = (await inbox(admin)).find((row) => row.scope?.foundReportId === walked.foundReport.id && row.scope?.matched === true && row.scope?.district === 'Thane');
+  assert(adminAlert && adminAlert.priority === 'high' && !adminAlert.body.includes('Kiran'), "the next case's police officers are alerted, without a name");
+  const lastOne = await request('POST', `/reports/found/${walked.foundReport.id}/review`, { token: superAdmin.token, body: { decision: 'rejected' } });
+  assert(lastOne.advanced === false, 'with no candidate left nothing is proposed');
+  const rested = await stored(walked.foundReport.id);
+  assert(
+    rested.status === 'no_match' && !rested.matchedReportId && rested.state === 'Maharashtra' && rested.district === 'Mumbai' &&
+      rested.matchCandidates.filter((c) => c.status === 'rejected').length === 2,
+    `the sighting goes back to the reporter's own district and queue: ${JSON.stringify({ status: rested.status, district: rested.district })}`
+  );
+  const again = await request('POST', `/reports/found/${walked.foundReport.id}/rematch`, { token: sjpu.token });
+  assert(again.linked === false && !(await stored(walked.foundReport.id)).matchedReportId, 'a rejected pair is never proposed again');
+  const reverseAgain = await request('POST', `/reports/${k1.report.id}/rematch`, { token: sjpu.token });
+  assert(reverseAgain.sightingMatches === 0, 'not from the case side either');
+  await expectStatus(403, () => request('POST', `/reports/found/${walked.foundReport.id}/rematch`, { token: cwc.token }), 'a CWC desk searches a sighting again');
+  await expectStatus(404, () => request('POST', '/reports/found/f_not_a_sighting/rematch', { token: sjpu.token }), 'search again for an unknown sighting');
+
+  // --- The rescue alert goes where the confirmed sighting was seen -------------
+  const rescueCase = await register(sjpu.token, { childName: 'Rescue Smoke Child', parentPhone: '9876500303' }, facePhotoFile('RS', 'case'));
+  const seenInPune = await sight(facePhotoFile('RS'), { at: { state: 'Maharashtra', district: 'Pune' }, foundLocation: 'Swargate bus depot' });
+  const seenInNashik = await sight(facePhotoFile('RS'), { at: { state: 'Maharashtra', district: 'Nashik' }, foundLocation: 'Nashik Road station' });
+  assert((await stored(seenInPune.foundReport.id)).matchedReportId === rescueCase.report.id && (await stored(seenInNashik.foundReport.id)).matchedReportId === rescueCase.report.id, 'precondition: both sightings are linked');
+  await expectStatus(409, () => request('POST', `/reports/${rescueCase.report.id}/confirm-match`, {
+    token: sjpu.token,
+    body: { sendSms: false, foundReportId: walked.foundReport.id, verification: SMOKE_VERIFICATION },
+  }), 'confirm a case with a sighting that is not linked to it');
+  await request('POST', `/reports/${rescueCase.report.id}/confirm-match`, {
+    token: sjpu.token,
+    body: { sendSms: false, foundReportId: seenInPune.foundReport.id, verification: SMOKE_VERIFICATION },
+  });
+  const rescue = (await inbox(sjpu)).find((row) => row.kind === 'match_confirmed' && row.scope?.reportId === rescueCase.report.id);
+  assert(
+    rescue?.scope?.foundReportId === seenInPune.foundReport.id && /Swargate bus depot/.test(rescue.body) && /Pune/.test(rescue.body) && !/Nashik/.test(rescue.body),
+    `the rescue alert is for the confirmed sighting, where it was seen: ${JSON.stringify(rescue)}`
+  );
+  const confirmedPune = await stored(seenInPune.foundReport.id);
+  assert(confirmedPune.status === 'matched' && confirmedPune.matchCandidates.find((c) => c.reportId === rescueCase.report.id)?.status === 'confirmed', 'the confirmed sighting and its candidate are marked confirmed');
+
+  // --- The pool: closed cases and found-child intakes are not compared ---------
+  const closedCase = await register(sjpu.token, { childName: 'Closed Smoke Child', parentPhone: '9876500304' }, facePhotoFile('CL', 'case'));
+  await request('POST', `/reports/${closedCase.report.id}/close-case`, { token: sjpu.token, body: { reason: 'restored_family', foundLocation: 'Home', note: 'Closed before any sighting' } });
+  const afterClose = await sight(facePhotoFile('CL'));
+  assert(!(await stored(afterClose.foundReport.id)).matchedReportId, 'a closed case is not compared with a new sighting');
+
+  const foundChild = await sight(facePhotoFile('FI'));
+  const intake = await request('POST', `/reports/found/${foundChild.foundReport.id}/formal-intake`, {
+    token: cwc.token,
+    body: { childName: 'Unknown child FI', intakeAuthority: 'Smoke Shelter Home', note: 'Taken into care after the sighting smoke check.', ageApprox: '9', gender: 'Male' },
+  });
+  const tenYears = Date.now() + 3000 * 86400000;
+  assert(
+    intake.report.photoFile && intake.report.photoFile !== (await stored(foundChild.foundReport.id)).photoFile &&
+      intake.report.photoCheck?.verdict === 'usable' && Date.parse(intake.report.retentionUntil) > tenYears,
+    `a found-child intake keeps its own copy of the photo, screened, for the case retention period: ${JSON.stringify({ photoFile: intake.report.photoFile, photoCheck: intake.report.photoCheck, retentionUntil: intake.report.retentionUntil })}`
+  );
+  const intakePhoto = await fetch(`${base}/reports/photo/${intake.report.id}`, { headers: { Authorization: `Bearer ${cwc.token}` } });
+  assert(intakePhoto.ok && (await intakePhoto.arrayBuffer()).byteLength > 0, 'the intake photo is served to the desk that holds the child');
+  const sameChildAgain = await sight(facePhotoFile('FI'), { at: thane });
+  assert((await stored(sameChildAgain.foundReport.id)).matchedReportId !== intake.report.id, 'a sighting is never matched with a found-child intake');
+  // The intake stands in for its sighting once the sighting itself may no
+  // longer be compared: here, after a privacy officer anonymised it.
+  await request('POST', `/dashboard/privacy/retention/foundReport/${foundChild.foundReport.id}`, {
+    token: superAdmin.token,
+    body: { decision: 'anonymize', approvalReference: 'SMOKE-ORDER-77', approvalType: 'privacy_officer' },
+  });
+  await request('POST', `/dashboard/privacy/retention/foundReport/${sameChildAgain.foundReport.id}`, {
+    token: superAdmin.token,
+    body: { decision: 'anonymize', approvalReference: 'SMOKE-ORDER-78', approvalType: 'privacy_officer' },
+  });
+  const missingFI = await register(sjpu.token, { childName: 'Farhan Intake Smoke', parentPhone: '9876500305' }, facePhotoFile('FI', 'case'));
+  const viaIntake = await stored(foundChild.foundReport.id);
+  assert(
+    missingFI.sightingMatches === 1 && viaIntake.matchedReportId === missingFI.report.id && viaIntake.reverseMatch?.viaIntakeReportId === intake.report.id,
+    `the reverse search reaches a found child in care through the intake: ${JSON.stringify({ sightingMatches: missingFI.sightingMatches, matchedReportId: viaIntake.matchedReportId, reverseMatch: viaIntake.reverseMatch })}`
+  );
+  await expectStatus(409, () => request('POST', `/reports/${intake.report.id}/rematch`, { token: sjpu.token }), 'compare a found-child intake with sightings');
+
+  // --- Searching again, one sighting and in batches -----------------------------
+  fake.down = true;
+  const missedSighting = await sight(facePhotoFile('RM'));
+  const missedCase = await register(sjpu.token, { childName: 'Rehan Rematch Smoke', parentPhone: '9876500306' }, facePhotoFile('RM', 'case'));
+  const batchSighting = await sight(facePhotoFile('RB'));
+  const batchCase = await register(sjpu.token, { childName: 'Ritu Batch Smoke', gender: 'Female', parentPhone: '9876500307' }, facePhotoFile('RB', 'case'));
+  fake.down = false;
+  const missed = await stored(missedSighting.foundReport.id);
+  assert(!missed.matchedReportId && missed.matchEngine?.biometric === false, 'precondition: no face was compared during the outage');
+  assert(missedCase.report.photoCheck?.verdict === 'unchecked' && missedCase.report.photoCheck.faces === null, `a case photo no engine could screen is "not checked": ${JSON.stringify(missedCase.report.photoCheck)}`);
+  const searched = await request('POST', `/reports/found/${missedSighting.foundReport.id}/rematch`, { token: sjpu.token });
+  assert(
+    searched.linked === true && searched.engine?.biometric === true && searched.engine.comparedAgainst >= 1 &&
+      searched.foundReport?.matchedReportId === missedCase.report.id,
+    `searching a sighting again links what the outage missed: ${JSON.stringify({ linked: searched.linked, engine: searched.engine })}`
+  );
+  const rematchAudit = (await request('GET', '/dashboard/audit', { token: superAdmin.token })).audit.find((row) => row.action === 'sighting.rematched' && row.targetId === missedSighting.foundReport.id);
+  assert(rematchAudit?.metadata?.linked === true && rematchAudit.metadata.configHash, 'searching again is audited with the configuration it ran under');
+
+  await expectStatus(403, () => request('POST', '/dashboard/rematch-sightings', { token: sjpu.token, body: {} }), 'a police desk runs the re-match batch');
+  let since = null;
+  let batchRuns = 0;
+  let lastBatch = null;
+  do {
+    // eslint-disable-next-line no-await-in-loop
+    lastBatch = await request('POST', '/dashboard/rematch-sightings', { token: superAdmin.token, body: { limit: 20, ...(since ? { since } : {}) } });
+    since = lastBatch.since;
+    batchRuns += 1;
+    assert(lastBatch.processed <= 20, 'a batch is at most 20 sightings');
+  } while (lastBatch.remaining > 0 && batchRuns < 12);
+  assert(lastBatch.remaining === 0, `the batch runs to the end: ${JSON.stringify(lastBatch)}`);
+  assert((await stored(batchSighting.foundReport.id)).matchedReportId === batchCase.report.id, 'the batch links the sighting the outage missed');
+  const quiet = await request('POST', '/dashboard/rematch-sightings', { token: superAdmin.token, body: { limit: 20, since } });
+  assert(quiet.processed === 0 && quiet.remaining === 0, 'a sighting searched in this run is not searched again in it');
+
+  // One provider fault is retried rather than losing the comparison.
+  const retryCase = await register(sjpu.token, { childName: 'Retry Smoke Child', parentPhone: '9876500308' }, facePhotoFile('RT', 'case'));
+  fake.downOnce = 1;
+  const retried = await sight(facePhotoFile('RT'));
+  fake.downOnce = 0;
+  assert((await stored(retried.foundReport.id)).matchedReportId === retryCase.report.id, 'a single provider fault is retried');
+
+  // --- Placing a sighting --------------------------------------------------------
+  fake.down = true;
+  const unplaced = await sight(facePhotoFile('PL'), { at: null, foundLocation: 'Outside a temple, place not given' });
+  const placeCase = await register(superAdmin.token, { childName: 'Pooja Placement Smoke', gender: 'Female', parentPhone: '9876500309', ...thane }, facePhotoFile('PL', 'case'));
+  fake.down = false;
+  assert(!(await stored(unplaced.foundReport.id)).district, 'precondition: the sighting has no district');
+  const place = (account, body) => request('POST', `/reports/found/${unplaced.foundReport.id}/place`, { token: account.token, body });
+  await expectStatus(403, () => place(cwc, { state: 'Maharashtra', district: 'Thane' }), 'a CWC desk places a sighting');
+  await expectStatus(403, () => place(sjpu, { state: 'Gujarat', district: 'Surat' }), 'a police desk places a sighting in another state');
+  await expectStatus(400, () => place(admin, { state: 'Maharashtra' }), 'a placement with no district');
+  const placed = await place(admin, { state: ' Maharashtra ', district: 'Thane district' });
+  const afterPlace = await stored(unplaced.foundReport.id);
+  assert(
+    afterPlace.reportedLocation?.state === 'Maharashtra' && afterPlace.reportedLocation?.district === 'Thane' && afterPlace.locationSource === 'officer' &&
+      placed.linked === true && afterPlace.matchedReportId === placeCase.report.id,
+    `placing a sighting sets its district and searches from there: ${JSON.stringify({ reportedLocation: afterPlace.reportedLocation, linked: placed.linked, matchedReportId: afterPlace.matchedReportId })}`
+  );
+  const placedAudit = (await request('GET', '/dashboard/audit', { token: superAdmin.token })).audit.find((row) => row.action === 'sighting.placed' && row.targetId === unplaced.foundReport.id);
+  assert(placedAudit?.metadata?.to?.district === 'Thane', 'a placement is audited');
+  const unplacedText = new FormData();
+  unplacedText.set('foundLocation', 'Bus shelter, place unknown');
+  unplacedText.set('note', 'Child alone, no photo');
+  unplacedText.set('reporterPhone', nextPhone());
+  const textUnplaced = await request('POST', '/reports/found', { form: unplacedText });
+  await request('POST', `/reports/found/${textUnplaced.foundReport.id}/place`, { token: admin.token, body: { state: 'Maharashtra', district: 'Mumbai' } });
+  assert(
+    (await inbox(cwc)).some((row) => row.scope?.foundReportId === textUnplaced.foundReport.id && /placed in your district/.test(row.body) && row.scope.matched === false),
+    "the desks of the district a sighting is placed in are told it is theirs"
+  );
+
+  // --- The case photo check, and replacing a photo ------------------------------
+  const usable = await register(sjpu.token, { childName: 'Usable Photo Smoke', parentPhone: '9876500310' }, facePhotoFile('PC1', 'case'));
+  assert(usable.report.photoCheck?.verdict === 'usable' && usable.report.photoCheck.faces === 1, `a case photo with one face is usable: ${JSON.stringify(usable.report.photoCheck)}`);
+  const group = await register(sjpu.token, { childName: 'Group Photo Smoke', parentPhone: '9876500311' }, groupPhoto('PC2'));
+  assert(group.report.photoCheck?.verdict === 'multiple_faces' && group.report.photoCheck.faces === 2, `a group photo is flagged: ${JSON.stringify(group.report.photoCheck)}`);
+  const noFace = await register(sjpu.token, { childName: 'No Face Photo Smoke', parentPhone: '9876500312' }, tinyPngFile());
+  assert(noFace.report.photoCheck?.verdict === 'no_face' && noFace.report.status === 'missing', `a photo with no face is flagged and the case still registered: ${JSON.stringify(noFace.report.photoCheck)}`);
+  const parentCase = await register(parent.token, { childName: 'Parent Photo Smoke', parentPhone: '9876500313' }, facePhotoFile('PC4', 'case'));
+  assert(!('photoCheck' in parentCase.report), 'a family is not shown the photo check');
+
+  const waitingSighting = await sight(facePhotoFile('PC3'));
+  const replaceForm = (photo, consent = false) => {
+    const form = new FormData();
+    if (photo) form.set('photo', photo);
+    if (consent) form.set('photoConsent', 'true');
+    return form;
+  };
+  const replace = (account, id, form) => request('POST', `/reports/${id}/photo`, { token: account.token, form });
+  await expectStatus(403, () => replace(cwc, noFace.report.id, replaceForm(facePhotoFile('PC3', 'case'))), 'a CWC desk replaces a case photo');
+  await expectStatus(403, () => replace(parent, noFace.report.id, replaceForm(facePhotoFile('PC3', 'case'))), 'a parent replaces a case photo');
+  await expectStatus(404, () => replace(sjpu, 'r_not_a_case', replaceForm(facePhotoFile('PC3', 'case'))), 'replace the photo of an unknown case');
+  await expectStatus(400, () => replace(sjpu, noFace.report.id, replaceForm(null)), 'replace a photo without a photo');
+  const notAnImage = await expectStatus(400, () => replace(sjpu, noFace.report.id, replaceForm(new File([Buffer.from('this is a text file, honestly')], 'fake.png', { type: 'image/png' }))), 'replace a photo with bytes that are no image');
+  assert(/does not look like a JPG, PNG or WebP image/.test(notAnImage.error), `the refusal says why: ${notAnImage.error}`);
+  const replaced = await replace(sjpu, noFace.report.id, replaceForm(facePhotoFile('PC3', 'case')));
+  assert(
+    replaced.photoCheck?.verdict === 'usable' && replaced.report.photoCheck?.verdict === 'usable' && replaced.report.photoFile !== noFace.report.photoFile &&
+      /\?v=/.test(replaced.report.photoUrl) && replaced.sightingMatches === 1,
+    `a replaced photo is checked again and compared with the stored sightings: ${JSON.stringify({ photoCheck: replaced.photoCheck, sightingMatches: replaced.sightingMatches })}`
+  );
+  assert((await stored(waitingSighting.foundReport.id)).matchedReportId === noFace.report.id, 'the sighting the new photo matches is linked for review');
+  const replaceAudit = (await request('GET', '/dashboard/audit', { token: superAdmin.token })).audit.find((row) => row.action === 'case.photo_replaced' && row.targetId === noFace.report.id);
+  assert(replaceAudit?.metadata?.photoCheck === 'usable' && replaceAudit.metadata.previousPhotoCheck === 'no_face', 'replacing a photo is audited');
+  const servedPhoto = await fetch(`${base}/reports/photo/${noFace.report.id}`, { headers: { Authorization: `Bearer ${sjpu.token}` } });
+  assert(servedPhoto.ok && Buffer.from(await servedPhoto.arrayBuffer()).includes(Buffer.from('KHOZO-SMOKE-FACE:PC3:case;')), 'the case serves the new photo');
+  assert((await storedCase(noFace.report.id)).photoCheck?.verdict === 'usable', 'the case keeps the new check');
+
+  // --- Upload limits ----------------------------------------------------------------
+  const tooLarge = Buffer.concat([TINY_PNG, Buffer.alloc(8 * 1024 * 1024 + 1024, 0x20)]);
+  const largeForm = sightingForm(new File([tooLarge], 'huge.png', { type: 'image/png' }));
+  const refusedLarge = await expectStatus(413, () => request('POST', '/reports/found', { form: largeForm }), 'a sighting photo over 8 MB');
+  assert(/larger than 8 MB/.test(refusedLarge.error || ''), `a photo over 8 MB is refused with the reason: ${JSON.stringify(refusedLarge)}`);
+  const fakeJpeg = sightingForm(new File([Buffer.from('GIF89a this is not a jpeg at all')], 'photo.jpg', { type: 'image/jpeg' }));
+  const refusedBytes = await expectStatus(400, () => request('POST', '/reports/found', { form: fakeJpeg }), 'a sighting photo whose bytes are no image');
+  assert(refusedBytes.error === 'Sighting photo does not look like a JPG, PNG or WebP image', `refused by its bytes: ${refusedBytes.error}`);
+  const gif = sightingForm(new File([Buffer.from('GIF89a')], 'photo.gif', { type: 'image/gif' }));
+  await expectStatus(400, () => request('POST', '/reports/found', { form: gif }), 'a sighting photo of a type other than JPEG, PNG or WebP');
+}
+
 let fakeAarakshak;
 
 async function run() {
@@ -1299,6 +1615,10 @@ async function run() {
       AARAKSHAK_TIMEOUT_MS: '5000',
       AWS_ACCESS_KEY_ID: '',
       AWS_SECRET_ACCESS_KEY: '',
+      KHOZO_REKOGNITION_ENDPOINT: '',
+      // No one-to-many index (shared/face-index.js): the pairwise budget.
+      AARAKSHAK_GALLERY_URL: '',
+      AARAKSHAK_GALLERY_KEY: '',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -3329,6 +3649,7 @@ async function run() {
 
   await personCategoryChecks({ superAdmin, sjpu, cwc, parent });
   await twoWayMatchingChecks({ superAdmin, sjpu, cwc, dlsa, ngo: await login('ngo@khozo.org'), parent, fake: fakeAarakshak });
+  await candidateAndPhotoChecks({ superAdmin, admin, sjpu, cwc, parent, fake: fakeAarakshak });
   await strictInputChecks({ superAdmin, sjpu });
 
   console.log(`API smoke checks passed (${runtimeName} runtime).`);
