@@ -48,6 +48,19 @@
   // a cached result set that predated it. Caching is a reasonable trade for a
   // read-heavy site; it is not one for a queue where a delayed row is a child
   // nobody is looking for yet. Verify with `wrangler hyperdrive get <id>`.
+  // Scheduled checks (worker/src/ops.js): every 15 minutes the Worker checks the
+  // database, the face engine and the review backlog and alerts super admins;
+  // at 20:30 UTC (02:00 IST) it also writes the encrypted nightly backup.
+  "triggers": { "crons": ["*/15 * * * *", "30 20 * * *"] },
+  // To turn on e-mail alerts and backups (both need the account owner):
+  //   1. Email Sending: onboard khozo.org (Dashboard > Email Service), then add
+  //        "send_email": [{ "name": "EMAIL" }]
+  //      and set the secret KHOZO_ALERT_EMAIL (the recipient; kept out of this
+  //      public file).
+  //   2. R2: enable it, create the bucket "khozo-backups", then add
+  //        "r2_buckets": [{ "binding": "BACKUPS", "bucket_name": "khozo-backups" }]
+  //      and set KHOZO_BACKUP_KEY (32 random bytes, base64; keep a copy offline,
+  //      a backup cannot be restored without it).
   "hyperdrive": [
     {
       "binding": "HYPERDRIVE",

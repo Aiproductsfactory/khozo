@@ -22,6 +22,7 @@ import {
   fixedWindowRateLimit,
 } from './src/http/express-compat.js';
 import { createRequestStore } from './src/store-sync.js';
+import { checkDatabase, scheduled as runScheduledChecks } from './src/ops.js';
 import { detectPerson, matchEngineInfo, probeMatchProviders, rankMatches, rankSightingMatches } from './src/match.js';
 
 const CORS_HEADERS = {
@@ -171,6 +172,11 @@ async function childCaseDocument(request, env, url) {
 }
 
 export default {
+  // Health checks every 15 minutes and the nightly backup (worker/src/ops.js).
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runScheduledChecks(event, env, ctx));
+  },
+
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
@@ -181,7 +187,14 @@ export default {
 
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
 
-    if (url.pathname === '/api/health') return json({ ok: true, service: 'khozo-worker-api' });
+    // Health means the API can reach its data: an uptime monitor pointed here
+    // used to stay green through a database outage. Where no database is bound
+    // (the local test shim) it answers as before.
+    if (url.pathname === '/api/health') {
+      if (!env?.HYPERDRIVE) return json({ ok: true, service: 'khozo-worker-api' });
+      const database = await checkDatabase(env, ctx);
+      return json({ ok: database.ok, service: 'khozo-worker-api', database: database.ok ? 'ok' : 'unreachable' }, database.ok ? 200 : 503);
+    }
 
     const mount = MOUNTS.find(([base]) => url.pathname === base || url.pathname.startsWith(`${base}/`));
     if (!mount) return json({ error: `No route for ${request.method} ${url.pathname}` }, 404);
