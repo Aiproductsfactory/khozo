@@ -319,7 +319,16 @@ export default function Cases() {
   const [familyPhoneHint, setFamilyPhoneHint] = useState({ id: '', phone: '' });
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
-  const [status, setStatus] = useState('');
+  // A link can open the list filtered (/app/cases?status=intake_pending, from
+  // the Overview's "Intakes to verify").
+  const [status, setStatus] = useState(() => {
+    try {
+      const wanted = new URLSearchParams(window.location.search).get('status') || '';
+      return ['intake_pending', 'missing', 'under_review', 'found', 'closed'].includes(wanted) ? wanted : '';
+    } catch {
+      return '';
+    }
+  });
   const [selected, setSelected] = useState(null);
   // Phone only: the area and date filters are folded away until asked for.
   const [filtersOpen, setFiltersOpen] = useState(false);

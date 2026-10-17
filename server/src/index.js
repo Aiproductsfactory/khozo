@@ -8,6 +8,7 @@ import authRoutes from './routes/auth.js';
 import reportRoutes from './routes/reports.js';
 import dashboardRoutes from './routes/dashboard.js';
 import grievanceRoutes from './routes/grievances.js';
+import geoRoutes from './routes/geo.js';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -20,6 +21,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/grievances', grievanceRoutes);
+app.use('/api/geo', geoRoutes);
 
 app.use((req, res) => res.status(404).json({ error: `No route for ${req.method} ${req.path}` }));
 

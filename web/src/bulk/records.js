@@ -6,6 +6,7 @@
 import { runsToText } from './legacyGujarati.js';
 import { parseMissingDate, findDate, fromExcelSerial, isFutureDate } from './dates.js';
 import { transliterateGujarati } from './translit.js';
+import { resolveState } from '../../../shared/geo/states.js';
 import {
   addressFrom,
   cleanCell,
@@ -311,6 +312,28 @@ function categoriesFor(rec) {
 const FORMAL_ROLES = ['police', 'sjpu', 'admin', 'super_admin'];
 
 /**
+ * Where a row's case belongs. A State or District column wins for its row; the
+ * batch's choice (from the district picker, with LGD codes) fills the rest.
+ * The batch's district is only lent to a row in the batch's own state: a row
+ * from Maharashtra in a Gujarat register must not be filed in Ahmedabad. The
+ * server resolves whatever text a row carries ("ગુજરાત", "GUJARAT",
+ * "Ahmadabad") to canonical names and codes (shared/geo/index.js).
+ */
+function placeFor(rec, batch) {
+  const rowState = rec.rowState || '';
+  const rowStateCode = rowState ? resolveState(rowState)?.code || '' : '';
+  const inBatchState = !rowState || (rowStateCode && rowStateCode === batch.stateCode);
+  const place = {
+    state: rowState || batch.state || '',
+    district: rec.rowDistrict || (inBatchState ? batch.district || '' : ''),
+  };
+  // The batch's codes travel only with the batch's own names.
+  if (!rowState && batch.stateCode) place.stateCode = batch.stateCode;
+  if (!rec.rowDistrict && inBatchState && batch.districtCode) place.districtCode = batch.districtCode;
+  return place;
+}
+
+/**
  * The multipart fields POST /api/reports takes, the same ones the CLI sends.
  * `batch` = { state, district, restrictToPolice, sourceLabel, user }.
  */
@@ -327,8 +350,7 @@ export function payloadFor(rec, batch) {
     parentName: rec.complainantName || (st ? `${st.en || st.gu} Police Station` : ''),
     parentPhone: rec.phones[0] || '',
     address: rec.address || '',
-    state: rec.rowState || batch.state || '',
-    district: rec.rowDistrict || batch.district || '',
+    ...placeFor(rec, batch),
     circumstances: circumstancesFor(rec, batch),
     identificationMark: rec.identificationMark || '',
     clothing: rec.clothing || '',

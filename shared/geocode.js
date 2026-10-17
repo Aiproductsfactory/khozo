@@ -14,9 +14,14 @@
  * wrong-shaped, the sighting keeps whatever the reporter gave it, which for an
  * empty location means every review desk sees it. A geocoder outage must never
  * be the reason a report goes nowhere.
+ *
+ * Whatever comes back is put through the gazetteer (shared/geo/index.js), so
+ * the sighting stores LGD codes and canonical names: OpenStreetMap writes
+ * "Ahmadabad District" and "Mumbai Suburban District", and the jurisdiction
+ * rules compare codes.
  */
 
-import { INDIAN_STATES } from './india.js';
+import { canonicalPlace, resolveDistrict, resolveState } from './geo/index.js';
 
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/reverse';
 const TIMEOUT_MS = 4000;
@@ -24,35 +29,26 @@ const TIMEOUT_MS = 4000;
 /** Identifies the caller to Nominatim, as its usage policy requires. */
 const USER_AGENT = 'Khozo/1.0 (child-protection platform; https://github.com/swastikkumar-alt/khozo)';
 
-/** Matches a returned name to a state we recognise, so routing stays exact. */
-function canonicalState(name) {
-  const target = String(name || '').trim().toLowerCase();
-  if (!target) return null;
-  const exact = INDIAN_STATES.find((state) => state.toLowerCase() === target);
-  if (exact) return exact;
-  // OpenStreetMap uses some older or alternative spellings.
-  const aliases = {
-    orissa: 'Odisha',
-    pondicherry: 'Puducherry',
-    uttaranchal: 'Uttarakhand',
-    'nct of delhi': 'Delhi',
-    'national capital territory of delhi': 'Delhi',
-    'jammu and kashmir union territory': 'Jammu and Kashmir',
-    'andaman and nicobar': 'Andaman and Nicobar Islands',
-    'dadra and nagar haveli': 'Dadra and Nagar Haveli and Daman and Diu',
-    'daman and diu': 'Dadra and Nagar Haveli and Daman and Diu',
-  };
-  return aliases[target] || null;
-}
-
 function parseCoordinate(value, limit) {
   const number = Number(value);
   if (!Number.isFinite(number) || Math.abs(number) > limit) return null;
   return number;
 }
 
+/** The place fields a sighting stores, without canonicalPlace's bookkeeping. */
+function stored({ resolved, ...fields }) {
+  return fields;
+}
+
 /**
- * Resolves coordinates to `{ state, district, place, source }`, or null.
+ * Resolves coordinates to
+ * `{ state, stateCode, district, districtCode, districtText, place, source }`,
+ * or null.
+ *
+ * Nominatim names the district differently by region (state_district,
+ * district, county, or only a city), so each is tried against the state's
+ * districts and the first that is one wins; if none is, the most district-like
+ * is kept as `districtText` for an officer to place.
  *
  * `fetchImpl` is injectable so the tests do not reach the network.
  */
@@ -66,7 +62,9 @@ export async function reverseGeocode(lat, lng, { fetchImpl = fetch, signal } = {
   signal?.addEventListener?.('abort', () => controller.abort());
 
   try {
-    const url = `${NOMINATIM_URL}?format=jsonv2&zoom=10&addressdetails=1&lat=${latitude}&lon=${longitude}`;
+    // English names: they are what LGD and most of the gazetteer's spellings
+    // are written in (it resolves Gujarati and Devanagari too).
+    const url = `${NOMINATIM_URL}?format=jsonv2&zoom=10&addressdetails=1&accept-language=en&lat=${latitude}&lon=${longitude}`;
     const res = await fetchImpl(url, {
       headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
       signal: controller.signal,
@@ -77,24 +75,35 @@ export async function reverseGeocode(lat, lng, { fetchImpl = fetch, signal } = {
     const address = data?.address;
     if (!address) return null;
 
-    const state = canonicalState(address.state) || canonicalState(address['ISO3166-2-lvl4']?.split('-')[1]);
+    const state = resolveState(address.state) || resolveState(address['ISO3166-2-lvl4']);
+    const candidates = [
+      address.state_district,
+      address.district,
+      address.county,
+      address.city,
+      address.town,
+      address.municipality,
+    ]
+      .map((value) => String(value || '').trim())
+      .filter(Boolean);
 
-    // Nominatim names the district differently by region; take the first that
-    // reads like a district rather than a neighbourhood or a village.
-    const district =
-      address.state_district ||
-      address.district ||
-      address.county ||
-      address.city ||
-      address.town ||
-      address.municipality ||
-      null;
+    let district = null;
+    if (state) {
+      for (const candidate of candidates) {
+        district = resolveDistrict(state.code, candidate);
+        if (district) break;
+      }
+    }
+    if (!state && !candidates.length) return null;
 
-    if (!state && !district) return null;
-
+    const place = canonicalPlace({
+      state: state?.name || address.state || null,
+      stateCode: state?.code || null,
+      district: district?.name || candidates[0] || null,
+      districtCode: district?.code || null,
+    });
     return {
-      state: state || null,
-      district: district ? String(district).trim() : null,
+      ...stored(place),
       place: data.display_name || null,
       source: 'nominatim',
     };
@@ -110,24 +119,65 @@ export async function reverseGeocode(lat, lng, { fetchImpl = fetch, signal } = {
 /**
  * Fills in a sighting's jurisdiction from its coordinates.
  *
- * What the reporter typed always wins: they were standing there, and a phone
- * fix can be several kilometres out indoors.
+ * What the reporter chose always wins: they were standing there, and a phone
+ * fix can be several kilometres out indoors. The phone fills in only what the
+ * reporter left out or wrote in a form the gazetteer does not recognise, and
+ * its district is used only when it lies in the reporter's state. A reporter
+ * who picked "Not sure" sends no place at all, and the phone decides.
+ *
+ * Returns `{ state, stateCode, district, districtCode, districtText, source }`
+ * (plus `place` when the coordinates were looked up).
  */
 export async function resolveSightingLocation(body = {}, options = {}) {
-  const given = {
-    state: String(body.state || '').trim() || null,
-    district: String(body.district || '').trim() || null,
-  };
-  if (given.state && given.district) return { ...given, source: 'reporter' };
-  if (body.lat == null || body.lng == null) return { ...given, source: 'reporter' };
+  const given = canonicalPlace({
+    state: body.state,
+    district: body.district,
+    stateCode: body.stateCode,
+    districtCode: body.districtCode,
+  });
+  if (given.stateCode && given.districtCode) return { ...stored(given), source: 'reporter' };
+  if (body.lat == null || body.lng == null) return { ...stored(given), source: 'reporter' };
 
   const resolved = await reverseGeocode(body.lat, body.lng, options);
-  if (!resolved) return { ...given, source: 'reporter' };
+  if (!resolved) return { ...stored(given), source: 'reporter' };
+
+  const reporterGaveAny = Boolean(given.state || given.district || given.districtText);
+  // A state the reporter chose stands; one that is not a state does not.
+  const stateFromReporter = Boolean(given.stateCode);
+  const sameState = !stateFromReporter || given.stateCode === resolved.stateCode;
+
+  const out = stateFromReporter
+    ? { state: given.state, stateCode: given.stateCode }
+    : resolved.stateCode
+      ? { state: resolved.state, stateCode: resolved.stateCode }
+      : { state: given.state || resolved.state || null, stateCode: null };
+
+  if (given.districtCode && (!out.stateCode || out.stateCode === given.stateCode)) {
+    out.district = given.district;
+    out.districtCode = given.districtCode;
+    out.districtText = null;
+  } else if (given.districtText && out.stateCode && !stateFromReporter) {
+    // The reporter named a district but no state; try it in the phone's state.
+    const theirs = resolveDistrict(out.stateCode, given.districtText);
+    const pick = theirs || (resolved.districtCode ? { name: resolved.district, code: resolved.districtCode } : null);
+    out.district = pick?.name || null;
+    out.districtCode = pick?.code || null;
+    out.districtText = theirs ? null : given.districtText;
+  } else if (sameState && resolved.districtCode) {
+    out.district = resolved.district;
+    out.districtCode = resolved.districtCode;
+    // What the reporter typed, if it was not a district, may still be a
+    // locality an officer can use.
+    out.districtText = given.districtText || null;
+  } else {
+    out.district = out.stateCode ? null : given.district || (sameState ? resolved.district : null) || null;
+    out.districtCode = null;
+    out.districtText = given.districtText || (sameState ? resolved.districtText : null) || null;
+  }
 
   return {
-    state: given.state || resolved.state,
-    district: given.district || resolved.district,
+    ...out,
     place: resolved.place,
-    source: given.state || given.district ? 'reporter+coordinates' : 'coordinates',
+    source: reporterGaveAny ? 'reporter+coordinates' : 'coordinates',
   };
 }

@@ -1579,6 +1579,61 @@ async function candidateAndPhotoChecks({ superAdmin, admin, sjpu, cwc, parent, f
 
 let fakeAarakshak;
 
+/**
+ * The gazetteer through the running API, on both runtimes: the pickers' lists
+ * (served by the Worker without loading the case store), a place stored by
+ * its canonical name and LGD code, and a family's report alerting the desks
+ * that verify it. The resolvers themselves are checked in scripts/geo-smoke.mjs.
+ */
+async function jurisdictionApiChecks({ superAdmin, parent, police, cwc }) {
+  const states = await fetch(`${base}/geo/states`);
+  const stateBody = await states.json();
+  assert(states.ok && stateBody.states?.length === 36, `GET /geo/states should list 36 states and UTs, got ${stateBody.states?.length}`);
+  assert(/public/.test(states.headers.get('cache-control') || ''), 'GET /geo/states should be publicly cacheable');
+  const gujarat = await request('GET', '/geo/districts?state=24');
+  const ahmedabad = gujarat.districts?.find((d) => d.code === '438');
+  assert(ahmedabad?.names?.gu === 'અમદાવાદ' && ahmedabad.names.hi && ahmedabad.names.mr, 'GET /geo/districts?state=24 should list Ahmedabad in four languages');
+  await expectStatus(400, () => request('GET', '/geo/districts'), 'district list with no state');
+  await expectStatus(404, () => request('GET', '/geo/districts?state=Atlantis'), 'district list for an unknown state');
+
+  const caseIn = (fields) => {
+    const form = new FormData();
+    addDeclaration(form, 'Smoke Jurisdiction Declarant');
+    for (const [key, value] of Object.entries(fields)) form.set(key, value);
+    return form;
+  };
+  const official = await request('POST', '/reports', {
+    token: superAdmin.token,
+    form: caseIn({ childName: 'Smoke Gazetteer Officer Case', age: '11', gender: 'Female', state: 'GUJARAT', district: 'Ahmdabad', parentPhone: '9876500201' }),
+  });
+  assert(
+    official.report.state === 'Gujarat' && official.report.stateCode === '24' && official.report.district === 'Ahmedabad' && official.report.districtCode === '438',
+    `an officer's "GUJARAT" / "Ahmdabad" should be stored canonical with codes, got ${JSON.stringify([official.report.state, official.report.district, official.report.stateCode, official.report.districtCode])}`
+  );
+  const refused = await expectStatus(400, () => request('POST', '/reports', {
+    token: superAdmin.token,
+    form: caseIn({ childName: 'Smoke Gazetteer Nowhere', age: '11', gender: 'Female', state: 'Gujarat', district: 'Maninagar', parentPhone: '9876500202' }),
+  }), 'an officer case in an unknown district');
+  assert(refused.code === 'unknown_district' && refused.options === '/api/geo/districts?state=24', 'the refusal should point at the district list');
+
+  // A family's report in Mumbai, typed in Marathi: alerts the Mumbai police
+  // and CWC desks (shared/routes/reports.js alertIntake), without a name.
+  const family = await request('POST', '/reports', {
+    token: parent.token,
+    form: caseIn({ childName: 'Smoke Gazetteer Family Child', age: '7', state: 'महाराष्ट्र', district: 'मुंबई', parentPhone: '9876500203' }),
+  });
+  assert(family.report.status === 'intake_pending' && family.report.districtCode === '482', `a family's Marathi place should resolve to Mumbai, got ${family.report.district}`);
+  assert(family.report.gender === 'Unknown', `a family's report with no gender should record Unknown, got ${family.report.gender}`);
+  for (const [account, label] of [[police, 'police'], [cwc, 'CWC']]) {
+    const inbox = await request('GET', '/dashboard/notifications', { token: account.token });
+    const alert = inbox.notifications.find((n) => n.kind === 'intake_pending' && n.scope?.reportId === family.report.id);
+    assert(alert, `the ${label} desk of the district should be alerted to a family's report`);
+    assert(!JSON.stringify(alert).includes('Smoke Gazetteer Family Child'), `the ${label} alert must not name the person`);
+  }
+  const stats = await request('GET', '/dashboard/stats', { token: police.token });
+  assert(stats.intakes?.pending >= 1 && stats.intakes.oldest.some((row) => row.id === family.report.id), 'the station overview should list the intake waiting on it');
+}
+
 async function run() {
   // The public-disclosure rules that the API can no longer be driven into
   // breaking (a legacy published record, the /child/:id share preview), and
@@ -1638,6 +1693,8 @@ async function run() {
   const sara = await login('sara@khozo.org');
   const crimeBureau = await login('crimebureau@khozo.org');
   const parent = await login('parent@khozo.org');
+
+  await jurisdictionApiChecks({ superAdmin, parent, police: await login('police@khozo.org'), cwc });
 
   const parentReports = await request('GET', '/reports', { token: parent.token });
   assert(parentReports.reports.some((row) => row.childName === 'suresh'), 'demo parent should see owned seeded report');

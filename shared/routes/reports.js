@@ -13,9 +13,10 @@
 
 import { nanoid } from 'nanoid';
 
-import { POLICE_ROLES, canAccessReport, isPoliceOnly, sameDistrict, sameState, scopeFoundReports, scopeReports } from '../scope.js';
+import { POLICE_ROLES, canAccessReport, isPoliceOnly, sameDistrict, sameState, sameStatePlace, scopeFoundReports, scopeReports } from '../scope.js';
 import { resolveSightingLocation } from '../geocode.js';
-import { expectedAgeAt, isForwardPoolCase, isFoundChildIntake, isRematchEligible } from '../match-pool.js';
+import { canonicalPlace, placeFields } from '../geo/index.js';
+import { expectedAgeAt, isForwardPoolCase, isFoundChildIntake, isRematchEligible, isReverseMatchCandidate, wasLinkRejected } from '../match-pool.js';
 import { createSightingMatcher, engineRecordOf, engineSummary, evidenceOf, isReverseLinked } from '../sighting-matching.js';
 import { detectImageMime } from '../photo-format.js';
 import { sendSms, smsGatewayConfigured } from '../sms.js';
@@ -152,6 +153,8 @@ import {
   validateMissingReport,
   validateFoundReport,
   inferLocationScope,
+  jurisdictionError,
+  INTAKE_ALERT_ROLES,
 } from '../case-domain.js';
 
 export default function registerReportRoutes(router, deps) {
@@ -225,6 +228,9 @@ export default function registerReportRoutes(router, deps) {
     address: ['text', 300],
     state: ['text', 80],
     district: ['text', 80],
+    // The codes the district picker sends with the names (shared/geo).
+    stateCode: ['text', 8],
+    districtCode: ['text', 40],
     zip: ['text', 12],
     // Profile fields; buildChildProfile cuts each to its own length.
     complexion: ['text', 400],
@@ -263,6 +269,8 @@ export default function registerReportRoutes(router, deps) {
     gender: ['text', 10],
     state: ['text', 80],
     district: ['text', 80],
+    stateCode: ['text', 8],
+    districtCode: ['text', 40],
     lat: 'number',
     lng: 'number',
     idProofType: ['text', 40],
@@ -460,10 +468,11 @@ export default function registerReportRoutes(router, deps) {
         scope,
         // Lets an officer see at a glance whether this one is theirs to action,
         // without hiding the rest from them.
+        // States compare by LGD code ("GUJARAT" and "ગુજરાત" are one state).
         inJurisdiction:
-          !scope.state ||
-          !recipient.jurisdiction?.state ||
-          recipient.jurisdiction.state === scope.state,
+          !(scope.state || scope.stateCode) ||
+          !(recipient.jurisdiction?.state || recipient.jurisdiction?.stateCode) ||
+          sameStatePlace(recipient.jurisdiction, scope),
       });
     }
     return audience.length;
@@ -482,6 +491,52 @@ export default function registerReportRoutes(router, deps) {
   function caseOfficers(report) {
     if (!report) return [];
     return listUsers().filter((u) => POLICE_ROLES.includes(u.role) && canAccessReport(u, report));
+  }
+
+  /** "Ahmedabad, Gujarat": where a case was registered, for an alert. */
+  function caseWhere(report) {
+    return [report.district || report.districtText, report.state].filter(Boolean).join(', ') || 'an unrecorded place';
+  }
+
+  /**
+   * Tells the desks of a district that a family or an NGO has registered a
+   * case and is waiting for it to be verified.
+   *
+   * A citizen's registration used to alert nobody. It sat as intake_pending,
+   * appeared in no queue, and was never compared with a sighting, because the
+   * face search waits for an officer's verification (POST /:id/verify-intake).
+   * So the police and SJPU desks that verify it, and the CWC of the district,
+   * are told the moment it arrives: the district, the case id and what to do,
+   * never the person's name (an alert is read on a shared station phone).
+   *
+   * The audience is whoever may open the case (shared/scope.js), so a report
+   * placed in a state but no district reaches every district desk of that
+   * state. With no such desk on Khozo yet, the state and national desks are
+   * told instead, so the report is never nobody's.
+   */
+  function alertIntake(report) {
+    const users = listUsers();
+    let recipients = users.filter((u) => INTAKE_ALERT_ROLES.includes(u.role) && canAccessReport(u, report));
+    if (!recipients.length) {
+      recipients = users.filter((u) => ['admin', 'state_nodal', 'super_admin'].includes(u.role) && canAccessReport(u, report));
+    }
+    const category = personCategoryOf(report);
+    const who = category === 'woman' ? 'missing woman' : category === 'adult' ? 'missing person' : 'missing child';
+    return notifyAuthorities({
+      kind: 'intake_pending',
+      title: `New ${who} report to verify`,
+      body: `A family or NGO registered a ${who} report in ${caseWhere(report)} (case ${report.id}). Verify it with them: face matching starts only after an officer verifies the report.`,
+      priority: 'high',
+      recipients,
+      scope: {
+        state: report.state || null,
+        stateCode: report.stateCode || null,
+        district: report.district || null,
+        districtCode: report.districtCode || null,
+        reportId: report.id,
+        intake: true,
+      },
+    });
   }
 
   // ---- Linking a sighting to a case: shared by both directions ---------------
@@ -860,8 +915,33 @@ export default function registerReportRoutes(router, deps) {
     const adult = isAdultCategory(personCategory);
     const childProfile = buildChildProfile(b);
     const declaration = buildReportDeclaration(b, req.user);
-    // A missing woman defaults to Female rather than the form's historic Male.
-    const gender = b.gender || (personCategory === 'woman' ? 'Female' : 'Male');
+    // Nobody's gender is assumed. The form used to start on Male and a case
+    // sent without one was stored as a boy; now the form makes the reporter
+    // choose (Unknown is a choice), and a client that sends none records
+    // Unknown. A missing woman is Female.
+    const gender = b.gender || (personCategory === 'woman' ? 'Female' : 'Unknown');
+    // Where the case belongs, as canonical names and LGD codes (shared/geo):
+    // what the form sent, else the registering account's own jurisdiction. An
+    // account's district is only assumed for a case in the account's state.
+    // An officer must name a real district (jurisdictionError); a family's
+    // unrecognised text is kept as `districtText` and the case reaches every
+    // district desk of its state.
+    const own = req.user.jurisdiction || {};
+    const sentState = Boolean(b.state || b.stateCode);
+    const inOwnState = !sentState || sameStatePlace({ state: b.state, stateCode: b.stateCode }, own);
+    const sentDistrict = Boolean(b.district || b.districtCode);
+    const placeInput = {
+      state: sentState ? b.state || null : own.state || null,
+      stateCode: sentState ? b.stateCode || null : own.stateCode || null,
+      district: sentDistrict ? b.district || null : inOwnState ? own.district || null : null,
+      districtCode: sentDistrict ? b.districtCode || null : inOwnState ? own.districtCode || null : null,
+    };
+    const placeResult = canonicalPlace(placeInput);
+    if (isPolice) {
+      const refused = jurisdictionError(placeInput, placeResult);
+      if (refused) return res.status(400).json({ ...refused, errors: [refused.error] });
+    }
+    const { resolved: _placeResolved, ...place } = placeResult;
     // Where the contact number came from. A parent filing for their own child
     // gives their own number, which is a family phone; an officer or NGO who
     // leaves it blank gets their desk's number as the contact, which is not
@@ -889,8 +969,7 @@ export default function registerReportRoutes(router, deps) {
       age: validation.age,
       parentPhone,
       parentPhoneSource,
-      state: b.state || req.user.jurisdiction?.state || null,
-      district: b.district || req.user.jurisdiction?.district || null,
+      ...place,
       identificationProfile: childProfile.identificationProfile,
       vulnerabilityProfile: childProfile.vulnerabilityProfile,
     };
@@ -946,8 +1025,7 @@ export default function registerReportRoutes(router, deps) {
       parentPhoneSource,
       parentEmail: b.parentEmail || null,
       address: b.address || null,
-      state: b.state || req.user.jurisdiction?.state || null,
-      district: b.district || req.user.jurisdiction?.district || null,
+      ...place,
       zip: b.zip || null,
       foundLocation: null,
       matchScore: 0,
@@ -996,6 +1074,9 @@ export default function registerReportRoutes(router, deps) {
       metadata: { candidateIds: duplicateCandidates.map((c) => c.report.id), topScore: duplicateCandidates[0].score, retentionUntil: report.retentionUntil },
     });
     }
+    // A family's or an NGO's report waits for an officer, so the officers who
+    // verify it are told it is there (alertIntake).
+    if (isPendingCitizenIntake(report)) alertIntake(report);
     // Two-way matching: a case registered with a photo is compared with the
     // sightings already stored, inside this request (matchStoredSightings in
     // shared/sighting-matching.js). Bulk imports arrive here one row at a
@@ -1084,6 +1165,8 @@ export default function registerReportRoutes(router, deps) {
         ageApprox: validation.ageApprox,
         state: locationScope.state,
         district: locationScope.district,
+        stateCode: locationScope.stateCode || null,
+        districtCode: locationScope.districtCode || null,
       }),
     ]);
     const { candidates, engine: matchEngine } = search;
@@ -1093,7 +1176,20 @@ export default function registerReportRoutes(router, deps) {
     const link = canRunMatch ? matcher.newSightingFields(search, { trigger: 'submitted' }) : null;
     const matchedCase = link?.matchedReport || null;
     const hasStrongMatch = Boolean(matchedCase);
-    const matchedScope = hasStrongMatch ? { state: matchedCase.state || null, district: matchedCase.district || null } : {};
+    // Where the sighting is filed: the matched case's jurisdiction on a strong
+    // match, else where the reporter was. Either way canonical names with LGD
+    // codes, and an unrecognised district kept as text (shared/geo).
+    const reportedPlace = {
+      state: locationScope.state || null,
+      stateCode: locationScope.stateCode || null,
+      district: locationScope.district || null,
+      districtCode: locationScope.districtCode || null,
+      districtText: locationScope.districtText || null,
+    };
+    const matchedScope = hasStrongMatch && (matchedCase.state || matchedCase.district || matchedCase.stateCode)
+      ? placeFields({ ...matchedCase, district: matchedCase.district || matchedCase.districtText })
+      : null;
+    const filedPlace = matchedScope || reportedPlace;
     // The phone's coordinates fill in the jurisdiction the reporter did not
     // type. What they did type always wins; a failed lookup changes nothing.
     const confidentialReporter = isTruthy(b.confidentialReporter);
@@ -1122,13 +1218,12 @@ export default function registerReportRoutes(router, deps) {
       gender: ['Male', 'Female', 'Other'].includes(b.gender)
         ? b.gender
         : personCategory === 'woman' ? 'Female' : null,
-      state: matchedScope.state || locationScope.state,
-      district: matchedScope.district || locationScope.district,
+      ...filedPlace,
       // Where the reporter was. `state`/`district` above become the matched
       // case's on a strong match; this never does, so anything told to people
       // who may not know about the match (the alert every desk gets, the
       // reporter's receipt) is worded from it.
-      reportedLocation: { state: locationScope.state || null, district: locationScope.district || null },
+      reportedLocation: reportedPlace,
       matchedReportId: hasStrongMatch ? matchedCase.id : null,
       // Every candidate an officer may walk through, and the current one's
       // scores: both engines' numbers, whether the second engine answered.
@@ -3939,22 +4034,43 @@ export default function registerReportRoutes(router, deps) {
     if (isPendingCitizenIntake(r)) return res.status(409).json({ error: 'Citizen/NGO intake must be verified before jurisdiction transfer' });
     if (['found', 'closed'].includes(r.status)) return res.status(409).json({ error: 'Found or closed cases cannot be transferred' });
 
-    const target = {
+    const targetInput = {
       state: cleanText(req.body?.state, 80),
       district: cleanText(req.body?.district, 80),
+      stateCode: cleanText(req.body?.stateCode, 8),
+      districtCode: cleanText(req.body?.districtCode, 40),
+    };
+    // A case is moved to a real district, by its canonical name and code.
+    const targetPlace = canonicalPlace(targetInput);
+    const unknownPlace = (targetInput.state || targetInput.district) && jurisdictionError(targetInput, targetPlace);
+    if (unknownPlace) return res.status(400).json(unknownPlace);
+    const target = {
+      state: targetPlace.state || '',
+      stateCode: targetPlace.stateCode,
+      district: targetPlace.district || '',
+      districtCode: targetPlace.districtCode,
       station: cleanText(req.body?.station, 120) || null,
     };
     const reason = cleanText(req.body?.reason, 500);
     if (!canTransferToJurisdiction(req.user, target)) {
       return res.status(403).json({ error: 'Target jurisdiction is outside your transfer authority' });
     }
-    if (target.state === r.state && target.district === r.district && target.station === (r.station || null)) {
+    const sameCode = (a, b) => String(a || '') === String(b || '');
+    const current = canonicalPlace(r);
+    if (sameCode(target.stateCode, current.stateCode) && sameCode(target.districtCode, current.districtCode) && target.station === (r.station || null)) {
       return res.status(400).json({ error: 'Target jurisdiction is the same as current jurisdiction' });
     }
 
     const now = Date.now();
     const transfer = {
-      from: { state: r.state || null, district: r.district || null, station: r.station || null },
+      from: {
+        state: r.state || null,
+        stateCode: r.stateCode || null,
+        district: r.district || null,
+        districtCode: r.districtCode || null,
+        districtText: r.districtText || null,
+        station: r.station || null,
+      },
       to: target,
       reason: reason || null,
       actorId: req.user.id,
@@ -3976,7 +4092,10 @@ export default function registerReportRoutes(router, deps) {
     const transfers = [...(Array.isArray(r.transfers) ? r.transfers : []), transfer];
     updateReport(r.id, {
       state: target.state,
+      stateCode: target.stateCode,
       district: target.district,
+      districtCode: target.districtCode,
+      districtText: null,
       station: target.station,
       transfers,
       workflow,

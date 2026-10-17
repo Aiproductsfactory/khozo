@@ -24,6 +24,7 @@ import registerAuthRoutes from '../shared/routes/auth.js';
 import registerReportRoutes from '../shared/routes/reports.js';
 import registerDashboardRoutes from '../shared/routes/dashboard.js';
 import registerGrievanceRoutes from '../shared/routes/grievances.js';
+import registerGeoRoutes from '../shared/routes/geo.js';
 
 import { createRouter, handleRequest } from '../worker/src/http/router.js';
 import {
@@ -45,6 +46,8 @@ const MOUNTS = [
   ['/api/reports', registerReportRoutes],
   ['/api/dashboard', registerDashboardRoutes],
   ['/api/grievances', registerGrievanceRoutes],
+  // Reads no store; the Worker answers it before loading one (worker/index.js).
+  ['/api/geo', registerGeoRoutes],
 ];
 
 function buildDeps(env) {

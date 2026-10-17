@@ -10,11 +10,19 @@ import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { nanoid } from 'nanoid';
 
-import { sameDistrict, sameState, scopeActivity, scopeAudit, scopeFoundReports, scopeReports, scopeLabel } from '../scope.js';
+import {
+  sameDistrict, sameDistrictPlace, sameState, sameStatePlace,
+  scopeActivity, scopeAudit, scopeFoundReports, scopeReports, scopeLabel,
+} from '../scope.js';
+import { canonicalPlace } from '../geo/index.js';
 import { removeCaseFromIndex } from '../face-index.js';
 import registerMatchingAdminRoutes from './matching-admin.js';
 import {
   cleanText,
+  jurisdictionError,
+  isPendingCitizenIntake,
+  INTAKE_OVERDUE_MS,
+  INTAKE_VERIFY_ROLES,
   readFields,
   PERSON_CATEGORIES,
   personCategoryOf,
@@ -278,21 +286,48 @@ export default function registerDashboardRoutes(router, deps) {
     const outside = { status: 403, error: 'Requested jurisdiction is outside your provisioning scope' };
     const level = LEVEL_BY_ROLE[role];
     if (!level) return outside;
-    const actorState = actor.jurisdiction?.state || null;
+    const actorPlace = actor.jurisdiction || {};
+    const actorHasState = Boolean(actorPlace.state || actorPlace.stateCode);
+    const requestedState = { state: requested.state || null, stateCode: requested.stateCode || null };
     if (actor.role !== 'super_admin') {
-      if (!actorState) return outside;
-      if (requested.state && !sameState(requested.state, actorState)) return outside;
+      if (!actorHasState) return outside;
+      if ((requested.state || requested.stateCode) && !sameStatePlace(requestedState, actorPlace)) return outside;
     }
-    const state = actor.role === 'super_admin' ? requested.state || null : actorState;
-    const district = STATE_LEVEL_ROLES.includes(role) ? null : requested.district || null;
-    if (DISTRICT_LEVEL_ROLES.includes(role) && !district) {
+    // Stored as canonical names with LGD codes (shared/geo), and only a real
+    // state and district: a desk provisioned for "Ahmdabad" or "GUJARAT" was a
+    // desk that saw nothing, or saw what the next desk saw under another name.
+    const wantsDistrict = !STATE_LEVEL_ROLES.includes(role);
+    const input = actor.role === 'super_admin'
+      ? { ...requestedState }
+      : { state: actorPlace.state || null, stateCode: actorPlace.stateCode || null };
+    if (wantsDistrict) {
+      input.district = requested.district || null;
+      input.districtCode = requested.districtCode || null;
+    }
+    // Said in this order, and before any lookup: an account's state is never
+    // guessed from its district name.
+    if (DISTRICT_LEVEL_ROLES.includes(role) && !(input.district || input.districtCode)) {
       return { status: 400, error: 'A district is required for this role' };
     }
-    if ((DISTRICT_LEVEL_ROLES.includes(role) || STATE_LEVEL_ROLES.includes(role)) && !state) {
+    if ((DISTRICT_LEVEL_ROLES.includes(role) || STATE_LEVEL_ROLES.includes(role)) && !(input.state || input.stateCode)) {
       return { status: 400, error: 'A state is required for this role' };
     }
+    const place = canonicalPlace(input);
+    const refused = jurisdictionError(input, place);
+    if (refused) return { status: 400, ...refused };
+    const state = place.state;
+    const district = wantsDistrict ? place.district : null;
     const station = level === 'station' ? requested.station || null : null;
-    return { jurisdiction: { level, state, district, station } };
+    return {
+      jurisdiction: {
+        level,
+        state,
+        stateCode: place.stateCode,
+        district,
+        districtCode: district ? place.districtCode : null,
+        station,
+      },
+    };
   }
 
   function scopeNetworkUsers(actor, users) {
@@ -320,14 +355,20 @@ export default function registerDashboardRoutes(router, deps) {
     const stateNames = new Set();
     const districtMap = new Map();
   
+    // Areas by their canonical names (shared/geo), so "GUJARAT" and "Gujarat"
+    // are one row of the coverage table, not two.
     const addState = (state) => {
-      const value = String(state || actor.jurisdiction?.state || '').trim();
+      const raw = String(state || actor.jurisdiction?.state || '').trim();
+      const value = raw ? canonicalPlace({ state: raw }).state : '';
       if (value) stateNames.add(value);
     };
     const addDistrict = (state, district) => {
-      const cleanState = String(state || actor.jurisdiction?.state || '').trim();
-      const cleanDistrict = String(district || '').trim();
-      if (!cleanState || !cleanDistrict) return;
+      const rawState = String(state || actor.jurisdiction?.state || '').trim();
+      const rawDistrict = String(district || '').trim();
+      if (!rawState || !rawDistrict) return;
+      const place = canonicalPlace({ state: rawState, district: rawDistrict });
+      const cleanState = place.state;
+      const cleanDistrict = place.district || rawDistrict;
       districtMap.set(jurisdictionKey(cleanState, cleanDistrict), { state: cleanState, district: cleanDistrict });
     };
   
@@ -343,8 +384,8 @@ export default function registerDashboardRoutes(router, deps) {
   
     const countFor = (role, state, district = null) => users
       .filter((u) => u.role === role)
-      .filter((u) => !state || u.jurisdiction?.state === state)
-      .filter((u) => district == null || u.jurisdiction?.district === district)
+      .filter((u) => !state || sameState(u.jurisdiction?.state, state))
+      .filter((u) => district == null || sameDistrictPlace(u.jurisdiction || {}, { state, district }))
       .length;
   
     const stateRows = [...stateNames].sort().map((state) => {
@@ -425,6 +466,14 @@ export default function registerDashboardRoutes(router, deps) {
     return Math.max(0, Math.floor((Date.now() - Number(time || 0)) / 86400000));
   }
   
+  /** When a record was created, in ms; `fallback` when it does not say. */
+  function createdTime(record, fallback) {
+    const numeric = Number(record?.createdAt);
+    if (record?.createdAt != null && Number.isFinite(numeric)) return numeric;
+    const parsed = new Date(record?.createdAt || NaN).getTime();
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
   function latestCaseTouch(report) {
     const candidates = [
       report.createdAt,
@@ -944,13 +993,40 @@ export default function registerDashboardRoutes(router, deps) {
       if ((r.status === 'found' || r.status === 'closed') && k in idxByKey) months[idxByKey[k]].reunited++;
     }
   
+    // Reports from families and NGOs waiting for this desk to verify them,
+    // oldest first. They are matched against sightings only once verified, so
+    // they are the officer's queue, not the family's. Listed by case id, place
+    // and how long they have waited; the name is one tap away in Cases.
+    const now = Date.now();
+    const intakeQueue = INTAKE_VERIFY_ROLES.includes(req.user.role)
+      ? scoped.filter(isPendingCitizenIntake).sort((a, b) => createdTime(a, 0) - createdTime(b, 0))
+      : null;
+    const waitedHours = (r) => Math.max(0, Math.floor((now - createdTime(r, now)) / 3600000));
+    const intakes = intakeQueue && {
+      pending: intakeQueue.length,
+      overdue: intakeQueue.filter((r) => now - createdTime(r, now) > INTAKE_OVERDUE_MS).length,
+      overdueAfterHours: INTAKE_OVERDUE_MS / 3600000,
+      oldest: intakeQueue.slice(0, 5).map((r) => ({
+        id: r.id,
+        personCategory: personCategoryOf(r),
+        state: r.state || null,
+        district: r.district || null,
+        districtText: r.districtText || null,
+        createdAt: r.createdAt || null,
+        waitingHours: waitedHours(r),
+        overdue: now - createdTime(r, now) > INTAKE_OVERDUE_MS,
+      })),
+    };
+
     res.json({
       scope: scopeLabel(req.user),
       role: req.user.role,
+      intakes: intakes || null,
       cards: {
         totalMissing,
         totalFound,
         activeCases: missing.length + review.length,
+        intakesToVerify: intakeQueue ? intakeQueue.length : null,
         pendingMatches: scopedFound.filter((f) => f.status === 'pending_review').length,
         reunificationRate: totalMissing + totalFound ? Math.round((totalFound / (totalMissing + totalFound)) * 100) : 0,
       },
@@ -1264,6 +1340,30 @@ export default function registerDashboardRoutes(router, deps) {
       }
       return [...alerts, ...formalRecordAlerts(r)];
     });
+    // A family's report that no officer has verified within a day. It is not
+    // compared with any sighting until someone does (shared/routes/reports.js
+    // verify-intake), so the clock matters. No name: the case id and where.
+    const now = Date.now();
+    const intakeAlerts = INTAKE_VERIFY_ROLES.includes(req.user.role)
+      ? scopedReports
+        .filter((r) => isPendingCitizenIntake(r) && now - createdTime(r, now) > INTAKE_OVERDUE_MS)
+        .map((r) => {
+          const hours = Math.floor((now - createdTime(r, now)) / 3600000);
+          return {
+            id: `intake_${r.id}`,
+            type: 'intake_overdue',
+            priority: 'high',
+            title: `Report ${r.id} waiting ${hours} hours for verification`,
+            detail: [r.district || r.districtText, r.state].filter(Boolean).join(', ') || 'Location missing',
+            ageDays: Math.floor(hours / 24),
+            ageHours: hours,
+            reportId: r.id,
+            status: r.status,
+            district: r.district || null,
+            state: r.state || null,
+          };
+        })
+      : [];
     const sightingAlerts = scopedFound
       .filter((f) => f.status === 'pending_review' && ageDays(f.createdAt) >= 2)
       .map((f) => ({
@@ -1278,7 +1378,7 @@ export default function registerDashboardRoutes(router, deps) {
         district: f.district || null,
         state: f.state || null,
       }));
-    const alerts = [...reportAlerts, ...sightingAlerts]
+    const alerts = [...intakeAlerts, ...reportAlerts, ...sightingAlerts]
       .sort((a, b) => (a.priority === b.priority ? b.ageDays - a.ageDays : a.priority === 'high' ? -1 : 1))
       .slice(0, 25);
     res.json({
@@ -1289,7 +1389,9 @@ export default function registerDashboardRoutes(router, deps) {
         caseOverdue: alerts.filter((a) => a.type === 'case_overdue').length,
         staleUpdates: alerts.filter((a) => a.type === 'case_no_recent_update').length,
         pendingSightings: alerts.filter((a) => a.type === 'pending_sighting').length,
-        formalFollowups: alerts.filter((a) => !['case_overdue', 'case_no_recent_update', 'pending_sighting'].includes(a.type)).length,
+        // Counted before the list is cut to 25, so the figure is the queue.
+        intakeOverdue: intakeAlerts.length,
+        formalFollowups: alerts.filter((a) => !['case_overdue', 'case_no_recent_update', 'pending_sighting', 'intake_overdue'].includes(a.type)).length,
       },
       alerts,
     });
@@ -1312,6 +1414,8 @@ export default function registerDashboardRoutes(router, deps) {
     org: ['text', 120],
     state: ['text', 80],
     district: ['text', 80],
+    stateCode: ['text', 8],
+    districtCode: ['text', 40],
     station: ['text', 120],
   };
 
@@ -1323,8 +1427,12 @@ export default function registerDashboardRoutes(router, deps) {
     if (!canProvisionRole(req.user, role)) return res.status(403).json({ error: 'You cannot provision this role' });
     if (findUserByEmail(email)) return res.status(409).json({ error: 'An account with this email already exists' });
 
-    const placed = provisionJurisdiction(req.user, role, { state, district, station });
-    if (placed.error) return res.status(placed.status).json({ error: placed.error });
+    const { stateCode, districtCode } = read.body;
+    const placed = provisionJurisdiction(req.user, role, { state, district, stateCode, districtCode, station });
+    if (placed.error) {
+      const { status, ...refusal } = placed;
+      return res.status(status).json(refusal);
+    }
     const { jurisdiction } = placed;
 
     const initialPassword = temporaryPassword();
@@ -1376,10 +1484,16 @@ export default function registerDashboardRoutes(router, deps) {
     if (req.user.role !== 'super_admin') {
       // A state desk with no state of its own alerts nobody (shared/scope.js).
       const actorState = req.user.jurisdiction?.state || null;
-      if (!actorState || (cleanState && cleanState !== actorState)) {
+      if (!actorState || (cleanState && !sameState(cleanState, actorState))) {
         return res.status(403).json({ error: 'Network alert state is outside your scope' });
       }
     }
+    // Recipients are matched by LGD code, so "Ahmedabad" reaches the desks
+    // provisioned as "Ahmadabad" or "અમદાવાદ" too (shared/geo).
+    const alertPlace = canonicalPlace({ state: cleanState, district: cleanDistrict });
+    const inAlertDistrict = (u) => (alertPlace.stateCode
+      ? sameDistrictPlace(u.jurisdiction || {}, { ...alertPlace, district: alertPlace.district || cleanDistrict })
+      : sameDistrict(u.jurisdiction?.district, cleanDistrict));
   
     const allowedRolesByAudience = {
       all_operational: OPERATIONAL_ROLES.filter((role) => role !== 'super_admin'),
@@ -1392,8 +1506,8 @@ export default function registerDashboardRoutes(router, deps) {
     };
     const recipients = scopeNetworkUsers(req.user, listUsers())
       .filter((u) => allowedRolesByAudience[audience].includes(u.role))
-      .filter((u) => !cleanState || u.jurisdiction?.state === cleanState)
-      .filter((u) => !cleanDistrict || u.jurisdiction?.district === cleanDistrict)
+      .filter((u) => !cleanState || sameStatePlace(u.jurisdiction || {}, alertPlace))
+      .filter((u) => !cleanDistrict || inAlertDistrict(u))
       .map((u) => ({
         id: u.id,
         name: u.name,
@@ -1412,8 +1526,8 @@ export default function registerDashboardRoutes(router, deps) {
       subject: cleanSubject,
       message: cleanMessage,
       caseRef: cleanCaseRef,
-      state: cleanState || null,
-      district: cleanDistrict || null,
+      state: alertPlace.state || null,
+      district: alertPlace.district || cleanDistrict || null,
       recipientCount: recipients.length,
       createdAt: now,
     };

@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { Avatar, roleLabel } from '../lib.jsx';
 import { useAuth } from '../auth.jsx';
 import { msg, useT } from '../i18n.jsx';
+import DistrictPicker from '../DistrictPicker.jsx';
 
 const ORDER = ['super_admin', 'admin', 'state_nodal', 'sara', 'crime_bureau', 'dcrb', 'dlsa', 'police', 'sjpu', 'ahtu', 'cwc', 'dcpu', 'rpf', 'cci', 'saa', 'jjb', 'ngo', 'parent'];
 const ROLE_OPTIONS = [
@@ -36,6 +37,9 @@ const ALERT_AUDIENCES = [
 // The coverage report names desks by these same short labels; translate by role.
 const DESK_LABELS = Object.fromEntries(ROLE_OPTIONS.map((r) => [r.value, r.label]));
 const LEVELS = { state: msg('State'), district: msg('District') };
+// Desks that sit in a district and must be given one (shared/routes/dashboard.js).
+const DISTRICT_DESKS = ['police', 'sjpu', 'ahtu', 'dcrb', 'dlsa', 'cwc', 'dcpu', 'rpf', 'cci', 'saa', 'jjb'];
+const STATE_DESKS = ['admin', 'state_nodal', 'sara', 'crime_bureau'];
 
 function allowedRoles(role) {
   if (role === 'super_admin') return ROLE_OPTIONS;
@@ -56,7 +60,9 @@ export default function Network() {
     phone: '',
     org: '',
     state: user.jurisdiction?.state || '',
+    stateCode: user.jurisdiction?.stateCode || '',
     district: user.jurisdiction?.district || '',
+    districtCode: user.jurisdiction?.districtCode || '',
     station: '',
   });
   const [err, setErr] = useState('');
@@ -66,7 +72,9 @@ export default function Network() {
   const [networkAlert, setNetworkAlert] = useState({
     audience: 'all_operational',
     state: user.jurisdiction?.state || '',
+    stateCode: user.jurisdiction?.stateCode || '',
     district: user.jurisdiction?.district || '',
+    districtCode: user.jurisdiction?.districtCode || '',
     caseRef: '',
     subject: '',
     message: '',
@@ -95,13 +103,29 @@ export default function Network() {
     return /x/i.test(shown) || shown.replace(/\D/g, '').length < 3 ? '' : shown.replace(/[^\d+]/g, '');
   };
 
+  const districtDesk = DISTRICT_DESKS.includes(form.role);
+  const stateDesk = STATE_DESKS.includes(form.role);
+  // Only the super admin provisions outside its own state (the server checks).
+  const ownStateOnly = user.role !== 'super_admin';
+
   const provision = async (e) => {
     e.preventDefault();
-    setBusy(true);
     setErr('');
     setOk('');
+    // A desk is placed in a real district, chosen from the list: a desk
+    // provisioned for a misspelt district saw nothing.
+    if (districtDesk && !form.districtCode) {
+      setErr(t('Choose the district from the list.'));
+      return;
+    }
+    if ((districtDesk || stateDesk) && !form.stateCode) {
+      setErr(t('Choose the state and the district from the lists.'));
+      return;
+    }
+    setBusy(true);
     try {
-      const data = await api.post('/dashboard/network/users', form);
+      const body = stateDesk ? { ...form, district: '', districtCode: '' } : form;
+      const data = await api.post('/dashboard/network/users', body);
       setOk(t('{role} account created for {name}. Temporary password: {password}', {
         role: roleLabel(data.user.role),
         name: data.user.name,
@@ -169,13 +193,15 @@ export default function Network() {
                   {roles.map((role) => <option key={role.value} value={role.value}>{t(role.label)}</option>)}
                 </select>
               </div>
-              <div>
-                <label className="label">{t('State')}</label>
-                <input className="field" value={form.state} onChange={set('state')} autoComplete="off" />
-              </div>
-              <div>
-                <label className="label">{t('District')}</label>
-                <input className="field" value={form.district} onChange={set('district')} autoComplete="off" />
+              <div className="md:col-span-2">
+                <DistrictPicker
+                  value={form}
+                  onChange={(place) => setForm((f) => ({ ...f, ...place }))}
+                  required={districtDesk || stateDesk}
+                  lockState={ownStateOnly}
+                  showDistrict={!stateDesk}
+                  allowUnsure={!districtDesk && !stateDesk}
+                />
               </div>
               <div>
                 <label className="label">{t('Station / post')}</label>
@@ -213,13 +239,15 @@ export default function Network() {
                 <label className="label">{t('Case reference')}</label>
                 <input className="field" value={networkAlert.caseRef} onChange={setAlert('caseRef')} placeholder={t('Khozo / FIR / external ID')} autoComplete="off" autoCapitalize="characters" spellCheck={false} />
               </div>
-              <div>
-                <label className="label">{t('State')}</label>
-                <input className="field" value={networkAlert.state} onChange={setAlert('state')} autoComplete="off" />
-              </div>
-              <div>
-                <label className="label">{t('District')}</label>
-                <input className="field" value={networkAlert.district} onChange={setAlert('district')} autoComplete="off" />
+              {/* Who the alert reaches: one state, and one district or all of them. */}
+              <div className="md:col-span-2">
+                <DistrictPicker
+                  value={networkAlert}
+                  onChange={(place) => setNetworkAlert((f) => ({ ...f, ...place }))}
+                  lockState={ownStateOnly}
+                  allowUnsure
+                  unsureLabel={t('All')}
+                />
               </div>
               <div className="md:col-span-2">
                 <label className="label">{t('Subject')}</label>

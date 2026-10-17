@@ -13,6 +13,7 @@ import registerAuthRoutes from '../shared/routes/auth.js';
 import registerReportRoutes from '../shared/routes/reports.js';
 import registerDashboardRoutes from '../shared/routes/dashboard.js';
 import registerGrievanceRoutes from '../shared/routes/grievances.js';
+import registerGeoRoutes from '../shared/routes/geo.js';
 
 import { createRouter, handleRequest } from './src/http/router.js';
 import {
@@ -200,6 +201,14 @@ export default {
       if (!env?.HYPERDRIVE) return json({ ok: true, service: 'khozo-worker-api' });
       const database = await checkDatabase(env, ctx);
       return json({ ok: database.ok, service: 'khozo-worker-api', database: database.ok ? 'ok' : 'unreachable' }, database.ok ? 200 : 503);
+    }
+
+    // The gazetteer's state and district lists read no store, so they are
+    // answered without loading one: every other mount hydrates the whole case
+    // store per request, which is the Worker's main CPU cost.
+    if (url.pathname === '/api/geo' || url.pathname.startsWith('/api/geo/')) {
+      const response = await handleRequest(registerGeoRoutes(createRouter()), request, { basePath: '/api/geo' });
+      return response ? withCors(response) : json({ error: `No route for ${request.method} ${url.pathname}` }, 404);
     }
 
     const mount = MOUNTS.find(([base]) => url.pathname === base || url.pathname.startsWith(`${base}/`));
