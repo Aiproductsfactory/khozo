@@ -14,8 +14,9 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { useAuth } from '../auth.jsx';
-import { asList, isAdultCase, personCategoryOf, ProtectedImage, txt, genderLabel } from '../lib.jsx';
+import { asList, fmtDate, isAdultCase, personCategoryOf, ProtectedImage, txt, genderLabel } from '../lib.jsx';
 import { currentLocale, msg, useT } from '../i18n.jsx';
+import { expectedAgeAt } from '../../../shared/match-pool.js';
 import { useDisplay } from '../useDisplay.js';
 import { useBackClose } from '../useBackClose.js';
 import { ActionMessage } from './useAction.jsx';
@@ -58,6 +59,194 @@ export function verificationValid(v) {
 export function telHref(phone) {
   const digits = txt(phone).replace(/[^\d+]/g, '');
   return digits ? `tel:${digits}` : '';
+}
+
+// ---- The evidence behind a match ------------------------------------------------
+//
+// What an officer weighs before confirming: both engines' numbers and whether
+// they agree, whether the second engine looked at all, how good the photos
+// are, and whether the person in the sighting could be the person in the case
+// - the age they would be now, sex, when they went missing, the marks to look
+// for. Officers only; the public is shown none of this.
+
+const pct = (value) => `${Math.round((Number(value) || 0) * 100)}%`;
+
+/** Human words for the quality codes an engine attaches to a photo. */
+const QUALITY_WARNINGS = {
+  no_face_detected: msg('No face was found in one of the photos'),
+  low_detector_confidence: msg('The face was hard to make out'),
+  blurry: msg('The photo is blurred'),
+  blur: msg('The photo is blurred'),
+  low_resolution: msg('The photo is small or low-resolution'),
+  small_face: msg('The face is small in the photo'),
+  occluded: msg('The face is partly covered'),
+  extreme_pose: msg('The face is turned away'),
+  poor_lighting: msg('The lighting is poor'),
+};
+
+/** Why the second engine did not check a candidate. */
+const NOT_CHECKED_REASONS = {
+  no_answer: msg('Not checked by AWS Rekognition: it did not answer.'),
+  unsupported_format: msg('Not checked by AWS Rekognition: it cannot read this photo format (WebP).'),
+  too_large: msg('Not checked by AWS Rekognition: the photo is larger than it accepts.'),
+  no_face: msg('Not checked by AWS Rekognition: it found no face in one of the photos.'),
+};
+
+/**
+ * Whether a case photo can be matched (`photoCheck` from the server), as a
+ * flag for the case, or null when it is usable or was never checked.
+ */
+export function photoCheckFlag(photoCheck) {
+  if (!photoCheck || typeof photoCheck !== 'object') return null;
+  if (photoCheck.verdict === 'no_face') {
+    return { label: msg('Photo not usable for matching: no face was found in it'), className: 'bg-red-50 text-red-700 ring-red-200' };
+  }
+  if (photoCheck.verdict === 'multiple_faces') {
+    return { label: msg('Group photo — use a photo of the person alone'), className: 'bg-amber-50 text-amber-800 ring-amber-200' };
+  }
+  if (photoCheck.verdict === 'unchecked') {
+    return { label: msg('Photo not yet checked for a face'), className: 'bg-slate-100 text-slate-600 ring-slate-200' };
+  }
+  return null;
+}
+
+/**
+ * The candidate a sighting currently points at: its entry in the candidate
+ * list, or, for a record from before candidates were kept, one rebuilt from
+ * the sighting's own score fields.
+ */
+export function currentCandidate(sighting) {
+  if (!sighting || typeof sighting !== 'object') return null;
+  const list = asList(sighting.matchCandidates).filter((c) => c && typeof c === 'object');
+  const found = list.find((c) => c.reportId === sighting.matchedReportId);
+  if (found) return found;
+  if (!sighting.matchedReportId && sighting.matchScore == null) return null;
+  return {
+    reportId: sighting.matchedReportId || null,
+    score: Number(sighting.matchScore) || 0,
+    aarakshakScore: sighting.primaryScore ?? null,
+    rekognitionScore: sighting.secondOpinionScore ?? null,
+    corroborated: sighting.matchCorroborated ?? sighting.secondOpinion === 'agrees',
+    notChecked: Boolean(sighting.matchNotChecked),
+    secondOpinion: sighting.secondOpinion || null,
+    enginesDisagree: sighting.enginesDisagree ?? null,
+    warnings: sighting.photoQualityWarnings || null,
+  };
+}
+
+/** Each engine's number and what it means, as chips. */
+export function EngineScores({ candidate, provider = '' }) {
+  const t = useT();
+  if (!candidate) return null;
+  const chips = [];
+  if (candidate.aarakshakScore != null) {
+    chips.push({ key: 'a', text: t('Aarakshak {pct}', { pct: pct(candidate.aarakshakScore) }), className: 'bg-white text-slate-700 ring-slate-200' });
+  } else if (candidate.secondOpinion === 'sole_engine') {
+    chips.push({ key: 'a', text: t('Aarakshak: no face found'), className: 'bg-white text-slate-500 ring-slate-200' });
+  }
+  if (candidate.rekognitionScore != null) {
+    chips.push({ key: 'r', text: t('AWS Rekognition {pct}', { pct: pct(candidate.rekognitionScore) }), className: 'bg-white text-slate-700 ring-slate-200' });
+  }
+  if (candidate.corroborated) {
+    chips.push({ key: 'c', text: t('Both engines agree'), className: 'bg-emerald-50 text-emerald-700 ring-emerald-200' });
+  } else if (candidate.notChecked) {
+    chips.push({ key: 'n', text: t('Not checked by a second engine'), className: 'bg-amber-50 text-amber-800 ring-amber-200' });
+  } else if (candidate.secondOpinion === 'sole_engine') {
+    chips.push({ key: 's', text: t('One engine only'), className: 'bg-amber-50 text-amber-800 ring-amber-200' });
+  } else if (['unavailable', 'not_asked', 'no_answer'].includes(candidate.secondOpinion)) {
+    chips.push({ key: 'u', text: t('Not corroborated by a second engine'), className: 'bg-amber-50 text-amber-800 ring-amber-200' });
+  }
+  if (candidate.enginesDisagree) {
+    chips.push({ key: 'd', text: t('The engines disagree — look closely'), className: 'bg-red-50 text-red-700 ring-red-200' });
+  }
+  if (!chips.length && provider) chips.push({ key: 'p', text: provider, className: 'bg-white text-slate-600 ring-slate-200' });
+  return (
+    <span className="flex flex-wrap gap-1.5">
+      {chips.map((chip) => (
+        <span key={chip.key} className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ${chip.className}`}>{chip.text}</span>
+      ))}
+    </span>
+  );
+}
+
+/**
+ * The evidence panel: engines, flags, photo quality, and the sighting set
+ * beside the case. `report` is the case as the review queue describes it
+ * (expectedAge, gender, dateOfMissing, identificationMark, birthMark,
+ * photoCheck); any field may be missing.
+ */
+export function MatchEvidence({ sighting, candidate = null, report = null }) {
+  const t = useT();
+  const d = useDisplay();
+  const c = candidate || currentCandidate(sighting);
+  const warnings = [...new Set([...asList(c?.warnings), ...asList(sighting?.photoQualityWarnings)].map(txt).filter(Boolean))];
+  const flag = photoCheckFlag(report?.photoCheck);
+  const reason = c?.notChecked ? NOT_CHECKED_REASONS[txt(c.notCheckedReason)] || NOT_CHECKED_REASONS.no_answer : null;
+  const category = personCategoryOf(report || sighting);
+  const age = (n) => (n != null && txt(n) !== '' ? t('about {n}', { n: txt(n) }) : t('not given'));
+  // The age the person would be when the sighting was taken: their age when
+  // they went missing plus the years since (the review queue sends it; a full
+  // case record is worked out here the same way, shared/match-pool.js).
+  const expected = report ? report.expectedAge ?? expectedAgeAt(report, sighting?.createdAt || Date.now()) : null;
+  let caseAge = '';
+  if (report) {
+    if (expected == null) caseAge = age(report.age);
+    else if (report.age != null && Number(expected) !== Number(report.age)) {
+      caseAge = t('about {n} now (was {age} when missing)', { n: txt(expected), age: txt(report.age) });
+    } else caseAge = age(expected);
+  }
+  const marks = report
+    ? [
+        d(report.identificationMark ?? report.identificationProfile?.identificationMark),
+        d(report.birthMark ?? report.identificationProfile?.birthMark),
+      ].filter(Boolean).join(' · ')
+    : '';
+  const rows = report
+    ? [
+        [t('Age'), age(sighting?.ageApprox), caseAge],
+        [t('Sex'), genderLabel(txt(sighting?.gender), category) || t('not given'), genderLabel(txt(report.gender), category) || t('not given')],
+        [t('Missing since'), '', report.dateOfMissing ? fmtDate(report.dateOfMissing) : t('not given')],
+        [t('Identification marks'), '', marks || t('none recorded')],
+      ]
+    : [];
+  return (
+    <div className="space-y-2 text-left">
+      {c && <EngineScores candidate={c} />}
+      {reason && <p className="text-xs text-amber-800">{t(reason)} {t('Treat it as a lead from one engine; it has not been confirmed.')}</p>}
+      {c?.secondOpinion === 'sole_engine' && (
+        <p className="text-xs text-amber-800">{t('Aarakshak could not find a face in this pair, so AWS Rekognition compared it on its own.')}</p>
+      )}
+      {warnings.length > 0 && (
+        <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900 ring-1 ring-amber-100">
+          <p className="font-semibold">{t('Photo quality')}</p>
+          <ul className="mt-0.5 list-disc pl-4">
+            {warnings.map((w) => <li key={w}>{QUALITY_WARNINGS[w] ? t(QUALITY_WARNINGS[w]) : w}</li>)}
+          </ul>
+        </div>
+      )}
+      {flag && <p className={`rounded-lg px-3 py-2 text-xs font-semibold ring-1 ${flag.className}`}>{t(flag.label)}</p>}
+      {rows.length > 0 && (
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
+              <th className="py-1 pr-2 font-semibold" />
+              <th className="py-1 pr-2 font-semibold">{t('Sighting')}</th>
+              <th className="py-1 font-semibold">{t('Case')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(([label, seen, missing]) => (
+              <tr key={label} className="border-t border-slate-100 align-top">
+                <td className="py-1 pr-2 font-semibold text-slate-500">{label}</td>
+                <td className="py-1 pr-2 text-slate-700">{seen || '—'}</td>
+                <td className="py-1 text-slate-900">{missing || '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
 }
 
 function PhotoPane({ label, src, empty, caption, tone = 'slate' }) {
@@ -191,6 +380,10 @@ export function ConfirmMatchDialog({ report, sighting, action, onSubmit, onCance
                 ? t('A score is a prompt to look. You are confirming this is the same person. Verify with them before anyone else is told.')
                 : t('A score is a prompt to look. You are confirming this is the same child.')}
             </span>
+            {/* Both engines, the flags, and the two descriptions side by side. */}
+            <div className="mt-3 border-t border-slate-200 pt-3">
+              <MatchEvidence sighting={sighting} report={report} />
+            </div>
           </div>
         )}
 

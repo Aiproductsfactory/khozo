@@ -190,10 +190,12 @@ NODE_ENV=production
 DATABASE_URL=postgresql://...           # unset locally to use the JSON file store
 KHOZO_JWT_SECRET=<64+ random chars>     # server refuses to boot without it
 KHOZO_EXPORT_SIGNING_KEY=<random>       # signs case handoff exports
-AARAKSHAK_API_KEY=<key>                 # optional: tier 1 face matching
-AWS_ACCESS_KEY_ID=...                   # optional: tier 2 fallback (Node build only)
+AARAKSHAK_API_KEY=<key>                 # optional: face matching (proposes)
+AWS_ACCESS_KEY_ID=...                   # optional: Rekognition confirms, both builds
 AWS_SECRET_ACCESS_KEY=...
 AWS_REGION=ap-south-1
+AARAKSHAK_GALLERY_URL=...               # optional: one-to-many index (off unless
+AARAKSHAK_GALLERY_KEY=...               #   both are set; see 3. Face matching)
 KHOZO_SMS_GATEWAY_URL=...               # required for public registration OTPs
 KHOZO_SMS_API_KEY=...
 ```
@@ -228,7 +230,7 @@ password. `scripts/reset-passwords.mjs` now refuses any non-local database.
 
 ## 3. Face matching
 
-Tiering: **Aarakshak → AWS Rekognition → non-biometric fallback.**
+Tiering: **Aarakshak proposes → AWS Rekognition confirms (and compares alone where Aarakshak cannot) → no candidate.** Nothing non-biometric ever produces a score.
 
 ### Threshold calibration (measured, not assumed)
 
@@ -255,38 +257,111 @@ noise. Tune with `AARAKSHAK_THRESHOLD` and `KHOZO_MATCH_REVIEW_THRESHOLD`.
 
 ### Rekognition: second opinion, not just a fallback
 
-Rekognition does two jobs:
+Aarakshak proposes; Rekognition confirms. The rules are in
+`shared/match-pipeline.js`, which both builds run (the Worker reaches
+Rekognition with a signed fetch, `worker/src/rekognition.js`; the Node build
+with the AWS SDK), so the two cannot drift. `npm run smoke:match-engines`
+runs both against the same stand-in providers and fails on any difference.
 
-1. **Failure fallback** — if Aarakshak is unreachable or rejects the key, it takes
-   over the whole ranking.
-2. **Second opinion** — on a healthy run it re-scores Aarakshak's top
-   `KHOZO_SECOND_OPINION_TOP_N` (default 5) candidates.
-
-The second job is the one that earns its cost. Two face models fail on different
-inputs — pose, lighting, and above all the **age gap** between a registration
-photo and a sighting a year later, which is the normal case for a missing child.
-Ranking takes `max(aarakshak, rekognition)`: if either model recognises the
-child, an officer sees the case. Where the two disagree by more than 0.25 the
-candidate is flagged (`enginesDisagree`) rather than averaged, because "one
-engine is confident and the other is not" is exactly what a human should look at.
+1. **Second opinion.** Aarakshak's top `KHOZO_SECOND_OPINION_TOP_N` (default 5)
+   candidates are re-scored by Rekognition. A candidate Rekognition scores at or
+   above `KHOZO_REKOGNITION_CONFIRM` (0.80) is *corroborated* and keeps the
+   **lower** of the two scores: a second opinion confirms, it never inflates.
+   Taking the higher let one engine overrule the other, so two engines that
+   disagreed produced a more confident number than either alone. A candidate
+   Rekognition scores below the bar is withheld: two engines looked and did not
+   agree. Where both answered and differ by 0.25 or more the candidate is
+   flagged `enginesDisagree` for the reviewer.
+2. **No single-engine veto.** A pair Aarakshak could not answer for - no face
+   found, an error, a timeout - is *unknown*, not a score of 0, and Rekognition
+   compares it on its own, held to the same 0.80 bar (`secondOpinion:
+   'sole_engine'`). The face screen works the same way: Aarakshak finding no
+   face sends the photo to Rekognition before it is called "no person".
+3. **The "not checked" lane.** A candidate Rekognition is configured for but
+   did not answer for - an error, a photo over its 5 MB limit, a WebP it cannot
+   read, no face found by it - is kept as an uncorroborated lead, flagged
+   `notChecked` with the reason, never confirmed and never silently dropped.
+4. Every candidate records which engines answered for it (`enginesAnswered`,
+   `engines`), and every result is stored with the thresholds it was judged
+   against and a `configHash` of the engine settings
+   (`shared/match-config.js`).
 
 Re-scoring only the shortlist costs `N + 5` calls instead of `2N`. Set
-`KHOZO_SECOND_OPINION_TOP_N=0` to make Rekognition a pure failure fallback.
+`KHOZO_SECOND_OPINION_TOP_N=0` to make Rekognition a pure fallback (candidates
+are then uncorroborated leads). Faces are never stored in Rekognition: it is
+only asked to compare two photos it is shown.
 
-### Scaling limit to fix before real volume
+### Candidates, and walking them
 
-A sighting is currently compared pairwise against `KHOZO_MATCH_CANDIDATES` (25)
-open cases, chosen in arbitrary order. At a few hundred open cases that silently
-misses most matches — a far bigger recall problem than which engine is used.
+A sighting keeps up to five strong candidates (`matchCandidates`), best first:
+corroborated ones before single-engine ones, then by score. `matchedReportId` is
+the best one still proposed. An officer who rejects it ("Not this person - show
+next") or refers the sighting on marks it rejected (`rejectedLinks`), and the
+sighting moves to the next candidate - that case's police officers are alerted
+- or, with none left, back to the reporter's own district and the no-match (or
+CWC) queue. A link the reverse search made goes back to exactly where it was. A
+rejected pair is never proposed again, in either direction.
 
-The fix is an indexed search rather than pairwise comparison. **Rekognition
-Collections** (`IndexFaces` / `SearchFacesByImage`) searches millions of faces in
-one call, which inverts the tiers usefully:
+The forward pool leaves out found and closed cases, unverified citizen intakes
+and found-child intake records. Within each nearest-first tier, a case whose
+sex and plausible current age (age at missing plus the years since) fit the
+sighting comes first - a tie-break, never a filter. A formal found-child intake
+keeps its own copy of the sighting photo for the case retention period, and the
+reverse search (a new case against the stored sightings) also covers open
+intakes whose sighting can no longer be compared.
 
-- Rekognition Collection → recall over *every* open case, returns a shortlist
-- Aarakshak → precise verification of that shortlist
+Case photos are screened when registered (`photoCheck`: `usable`, `no_face`,
+`multiple_faces` or `unchecked`). Registration is never refused; the case is
+flagged in the console and police can replace the photo
+(`POST /api/reports/:id/photo`), which checks it again and re-runs the reverse
+search.
 
-Do this before the case count outgrows the 25-candidate cap.
+### Searching again
+
+- `POST /api/reports/found/:id/rematch` (police roles, in scope) re-runs the
+  forward search for one sighting ("Search again" in the console).
+- `POST /api/dashboard/rematch-sightings` (super admin) does it in batches of at
+  most 20 (`{ limit, since }` in, `{ processed, remaining, linked, failed,
+  since }` out) for every unlinked sighting whose last search had no biometric
+  answer, had failed comparisons, left cases out under a smaller budget, or ran
+  under another `configHash`. Repeat with the returned `since` until
+  `remaining` is 0. Run it after an outage, after configuring Rekognition or an
+  index, or after changing a threshold.
+- `POST /api/reports/found/:id/place` sets the district of a sighting the
+  reporter gave none for, routes it to that district's desks and searches from
+  there.
+
+The Worker retries one Aarakshak call once on a network fault or a 5xx, as the
+Node build does.
+
+### Uploads
+
+Both builds refuse a photo over 8 MB with 413 (multer on Express, the router on
+the Worker) and anything that is not a JPEG, PNG or WebP - by declared type and
+by its first bytes. WebP is accepted, but Rekognition cannot read it, so its
+candidates land in the "not checked" lane.
+
+### One-to-many index
+
+A sighting is compared pairwise against `KHOZO_MATCH_CANDIDATES` (25) open
+cases, nearest first. That stays the active path until an index provider is
+configured. The owners' decision is that the one-to-many index will be
+**Aarakshak's own gallery**, not Rekognition collections; its enrol/search API
+is not published yet. `shared/face-index.js` is the engine-agnostic layer:
+
+- provider `none` (the default): disabled, every call a no-op;
+- provider `aarakshak-gallery`: enabled only when both `AARAKSHAK_GALLERY_URL`
+  and `AARAKSHAK_GALLERY_KEY` are set. A skeleton until the API is published -
+  the request shapes are marked `TODO(aarakshak-gallery)`.
+
+With a provider enabled, registering (or verifying, or reopening) a case
+enrols its photo; closing, confirming found and anonymising remove it; and the
+forward search asks the index for its 50 closest faces, then spends the pairwise
+comparison and the Rekognition confirmation on that shortlist (plus any open
+case the index does not hold yet). A provider that does not answer falls back
+to the nearest-first budget. Cases registered before the provider was enabled
+are not enrolled until they are next registered, verified, reopened or given a
+new photo: backfill them before relying on the index alone.
 
 ### Latency
 

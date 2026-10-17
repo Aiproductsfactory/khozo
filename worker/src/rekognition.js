@@ -14,6 +14,8 @@
 
 import crypto from 'node:crypto';
 
+import { rekognitionReadable } from '../../shared/photo-format.js';
+
 const SERVICE = 'rekognition';
 const ALGORITHM = 'AWS4-HMAC-SHA256';
 const TIMEOUT_MS = 8000;
@@ -47,16 +49,35 @@ export function rekognitionConfigured(env) {
  * Returns `{ score, sourceFaces, targetFaces, warnings }` with a 0..1 score, or
  * `null` when Rekognition could not answer. Null means "unknown", which the
  * caller must not read as "no match" — the difference decides whether a
- * candidate is withheld for a good reason or for a network fault.
+ * candidate is withheld for a good reason or for a network fault. Why it could
+ * not answer goes in `diagnostics.reason`: `not_configured`, `unsupported_format`
+ * (WebP, or bytes that are no image: CompareFaces reads JPEG and PNG only),
+ * `too_large` (over the 5 MB it accepts as raw bytes) or `error`.
+ *
+ * "No face in one of the images" is an answer (`noFace: true`), not a fault.
  */
 export async function compareFacesRekognition(env, sourceBuf, targetBuf, diagnostics = null) {
-  const note = (detail) => {
-    if (diagnostics) diagnostics.detail = detail;
+  const note = (detail, reason = 'error') => {
+    if (diagnostics) {
+      diagnostics.detail = detail;
+      diagnostics.reason = reason;
+    }
     return null;
   };
 
-  if (!rekognitionConfigured(env)) return note('AWS credentials are not set for this deployment.');
+  if (!rekognitionConfigured(env)) return note('AWS credentials are not set for this deployment.', 'not_configured');
   if (!sourceBuf?.length || !targetBuf?.length) return note('One of the images was empty.');
+  // Asked only about images it can read. A WebP sent anyway comes back as an
+  // InvalidParameterException, which reads exactly like "no face in it".
+  for (const buf of [sourceBuf, targetBuf]) {
+    const readable = rekognitionReadable(buf);
+    if (!readable.ok) {
+      return note(
+        readable.reason === 'too_large' ? 'An image is larger than the 5 MB Rekognition accepts.' : 'An image is not a JPEG or PNG, which is all Rekognition reads.',
+        readable.reason
+      );
+    }
+  }
 
   // Trimmed: a secret pasted into `wrangler secret put` picks up a trailing
   // newline more often than not, and SigV4 signs the value byte for byte, so
@@ -68,7 +89,11 @@ export async function compareFacesRekognition(env, sourceBuf, targetBuf, diagnos
   const sessionToken = clean(env?.AWS_SESSION_TOKEN || process.env.AWS_SESSION_TOKEN) || null;
   const region = clean(env?.AWS_REGION || process.env.AWS_REGION) || 'ap-south-1';
 
-  const host = `${SERVICE}.${region}.amazonaws.com`;
+  // KHOZO_REKOGNITION_ENDPOINT points the client at a stand-in for tests
+  // (scripts/match-engine-parity-smoke.mjs); production leaves it unset.
+  const endpoint = clean(env?.KHOZO_REKOGNITION_ENDPOINT || process.env.KHOZO_REKOGNITION_ENDPOINT);
+  const endpointUrl = endpoint ? new URL(endpoint) : null;
+  const host = endpointUrl ? endpointUrl.host : `${SERVICE}.${region}.amazonaws.com`;
   const target = 'RekognitionService.CompareFaces';
   const body = JSON.stringify({
     SourceImage: { Bytes: Buffer.from(sourceBuf).toString('base64') },
@@ -112,7 +137,7 @@ export async function compareFacesRekognition(env, sourceBuf, targetBuf, diagnos
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   try {
-    const res = await fetch(`https://${host}/`, {
+    const res = await fetch(endpointUrl ? `${endpointUrl.origin}/` : `https://${host}/`, {
       method: 'POST',
       headers: { ...headers, authorization },
       body,
@@ -124,7 +149,7 @@ export async function compareFacesRekognition(env, sourceBuf, targetBuf, diagnos
       // Rekognition reports "no face in the image" as a client error. That is a
       // real answer — this pair does not match — not a provider failure.
       if (/InvalidParameterException/.test(text)) {
-        return { score: 0, sourceFaces: 0, targetFaces: 0, warnings: ['no_face_detected'] };
+        return { score: 0, sourceFaces: 0, targetFaces: 0, warnings: ['no_face_detected'], noFace: true };
       }
       // Logged and reported, never swallowed: a signing or permission fault
       // looks exactly like "no match" to every caller otherwise.
@@ -137,6 +162,8 @@ export async function compareFacesRekognition(env, sourceBuf, targetBuf, diagnos
     return {
       score: best ? Number((best.Similarity / 100).toFixed(3)) : 0,
       sourceFaces: data.SourceImageFace ? 1 : 0,
+      // Every face found in the target. Probing a photo against itself
+      // (detectPerson), this is how many people are in it.
       targetFaces: (data.FaceMatches?.length || 0) + (data.UnmatchedFaces?.length || 0),
       warnings: [],
     };

@@ -11,6 +11,8 @@ import bcrypt from 'bcryptjs';
 import { nanoid } from 'nanoid';
 
 import { sameDistrict, sameState, scopeActivity, scopeAudit, scopeFoundReports, scopeReports, scopeLabel } from '../scope.js';
+import { removeCaseFromIndex } from '../face-index.js';
+import registerMatchingAdminRoutes from './matching-admin.js';
 import {
   cleanText,
   readFields,
@@ -1725,7 +1727,7 @@ export default function registerDashboardRoutes(router, deps) {
     res.json({ retention: rows, capabilities: privacyCapabilities(req.user) });
   });
   
-  router.post('/privacy/retention/:type/:id', requireRole(...PRIVACY_REVIEW_ROLES), (req, res) => {
+  router.post('/privacy/retention/:type/:id', requireRole(...PRIVACY_REVIEW_ROLES), async (req, res) => {
     const { type, id } = req.params;
     const { decision, extendDays = 180 } = req.body || {};
     if (!['extend', 'close', 'anonymize'].includes(decision)) return res.status(400).json({ error: 'Decision must be extend, close or anonymize' });
@@ -1770,6 +1772,9 @@ export default function registerDashboardRoutes(router, deps) {
             }
           : { privacyReviewStatus: 'case_retention_reviewed' };
       updateReport(id, patch);
+      // An anonymised case is no longer a face anyone may search for: out of
+      // the one-to-many index, when one is configured (shared/face-index.js).
+      if (decision === 'anonymize') await removeCaseFromIndex(deps.faceIndex, report, updateReport);
       const auditAction = decision === 'extend'
         ? 'privacy.retention_extended'
         : decision === 'anonymize'
@@ -1929,6 +1934,10 @@ export default function registerDashboardRoutes(router, deps) {
     res.json(signedExport(payload, 'privacy_export'));
   });
   
+
+  // The re-match batch (POST /rematch-sightings), behind the authentication
+  // above (shared/routes/matching-admin.js).
+  registerMatchingAdminRoutes(router, deps);
 
   return router;
 }

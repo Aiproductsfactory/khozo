@@ -18,6 +18,7 @@
 import crypto from 'node:crypto';
 
 import { canAccessReport } from './scope.js';
+import { PHOTO_MAX_BYTES, detectImageMime } from './photo-format.js';
 
 const DAY = 86400000;
 const REPORT_PHOTO_RETENTION_DAYS = 3650;
@@ -1340,12 +1341,36 @@ function optionalNumber(value, label, { min, max, integer = false } = {}) {
   return { value: n };
 }
 
+/** The refusal for an upload over the size limit, as both runtimes send it (413). */
+const PHOTO_TOO_LARGE = 'Photo is larger than 8 MB. Choose a smaller photo or retake it.';
+
+/**
+ * Refuses a photo that is not a JPEG, PNG or WebP: first by its declared type,
+ * then by its bytes. A HEIC or a PDF renamed .jpg passes the first check and
+ * neither face engine can read it; the comparison would then fail as "no
+ * answer" with nothing on the record to say why. The size limit is enforced by
+ * the upload layer before this runs (multer on Express, the router on the
+ * Worker), and checked again here for a body that reached a route another way.
+ */
 function validateImageFile(file, label = 'Photo') {
   if (!file) return null;
   if (!ALLOWED_IMAGE_TYPES.has(file.mimetype)) {
     return `${label} must be a JPG, PNG, or WebP image`;
   }
+  const size = Number(file.size ?? file.buffer?.length ?? 0);
+  if (size > PHOTO_MAX_BYTES || (file.buffer?.length || 0) > PHOTO_MAX_BYTES) return PHOTO_TOO_LARGE;
+  if (file.buffer && !detectImageMime(file.buffer)) {
+    return `${label} does not look like a JPG, PNG or WebP image`;
+  }
   return null;
+}
+
+/**
+ * The MIME type a photo is stored as: what its bytes are, whatever the phone
+ * declared (a PNG sent as image/jpeg is stored and served as a PNG).
+ */
+function storedImageMime(file) {
+  return (file?.buffer && detectImageMime(file.buffer)) || file?.mimetype || 'image/jpeg';
 }
 
 function validateMissingReport(body, file) {
@@ -1571,7 +1596,9 @@ export {
   maskProofNumber,
   publicReporterName,
   optionalNumber,
+  PHOTO_TOO_LARGE,
   validateImageFile,
+  storedImageMime,
   validateMissingReport,
   validateFoundReport,
   inferLocationScope,

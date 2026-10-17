@@ -119,7 +119,10 @@ async function submit(handler, { body, file }) {
   return { status, payload };
 }
 
-const photo = { buffer: Buffer.from('not-really-a-jpeg-but-a-buffer'), mimetype: 'image/jpeg', size: 30 };
+// A JPEG's first bytes, so the upload passes the format check; the stubbed
+// engines never decode it.
+const photoBytes = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]), Buffer.from('not-really-a-jpeg')]);
+const photo = { buffer: photoBytes, mimetype: 'image/jpeg', size: photoBytes.length };
 const baseBody = { foundLocation: 'Near the ferry ghat', photoConsent: 'true', reporterName: 'Passer-by' };
 const rolesOf = (notifications) =>
   [...new Set(notifications.map((n) => AUTHORITIES.find((u) => u.id === n.userId)?.role))].sort();

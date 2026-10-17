@@ -2,8 +2,18 @@ import crypto from 'node:crypto';
 
 import { compareFacesRekognition, rekognitionConfigured } from './rekognition.js';
 import { selectMatchCandidates, selectSightingCandidates } from '../../shared/match-pool.js';
+import { engineSettings } from '../../shared/match-config.js';
+import { ENGINES, comparePhotos, mapLimit, rankResult, screenPhoto } from '../../shared/match-pipeline.js';
+import { detectImageMime, imageExtension } from '../../shared/photo-format.js';
 
-const AARAKSHAK_API_URL = 'https://aarakshak.com/api/v1/compare';
+// The rules - who proposes, who confirms, what happens when an engine does not
+// answer - live in shared/match-pipeline.js, which the Node build
+// (server/src/match.js) runs too. This file supplies only the Worker's way of
+// reaching the two providers.
+
+export { ENGINES };
+
+const DEFAULT_AARAKSHAK_API_URL = 'https://aarakshak.com/api/v1/compare';
 
 /**
  * Per-comparison ceiling on the provider call.
@@ -14,6 +24,19 @@ const AARAKSHAK_API_URL = 'https://aarakshak.com/api/v1/compare';
  * citizen staring at a spinner until their client gives up.
  */
 const AARAKSHAK_TIMEOUT_MS = 12000;
+
+/**
+ * Secrets arrive exactly as they were typed. On 3 September the Aarakshak key
+ * was pasted from a file saved with a UTF-8 byte-order mark, so every request
+ * carried "X-API-Key: ﻿fr_live_..." and the provider answered HTTP 500 to
+ * all of them -- for hours, silently, while the dashboard read "no match".
+ * trim() strips U+FEFF along with ordinary whitespace, which covers the two
+ * ways a copied credential goes wrong. The AWS reads in rekognition.js
+ * already do this.
+ */
+const cleanSecret = (value) => String(value || '').trim();
+
+const read = (env, name) => env?.[name] || process.env[name];
 
 /**
  * How many photo reads or provider calls run at once: at most 5.
@@ -27,93 +50,55 @@ const AARAKSHAK_TIMEOUT_MS = 12000;
  * (server/src/match.js), so both runtimes compare every candidate.
  */
 function matchConcurrency(env) {
-  const n = Number(env?.KHOZO_MATCH_CONCURRENCY || process.env.KHOZO_MATCH_CONCURRENCY || 5);
+  const n = Number(read(env, 'KHOZO_MATCH_CONCURRENCY') || 5);
   return Math.max(1, Math.min(5, Number.isFinite(n) ? Math.floor(n) : 5));
 }
 
-/** Runs `worker` over `items` with at most `limit` in flight, preserving order. */
-async function mapLimit(items, limit, worker) {
-  const results = new Array(items.length);
-  let cursor = 0;
-  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (cursor < items.length) {
-      const index = cursor++;
-      // eslint-disable-next-line no-await-in-loop
-      results[index] = await worker(items[index], index);
-    }
-  });
-  await Promise.all(runners);
-  return results;
+/** Everything the engine is configured with, read per call from the Worker's env. */
+function config(env) {
+  const secondOpinion = read(env, 'KHOZO_SECOND_OPINION_TOP_N');
+  return {
+    aarakshakUrl: cleanSecret(read(env, 'AARAKSHAK_API_URL')) || DEFAULT_AARAKSHAK_API_URL,
+    aarakshakKey: cleanSecret(read(env, 'AARAKSHAK_API_KEY')),
+    aarakshakThreshold: String(read(env, 'AARAKSHAK_THRESHOLD') || '0.35'),
+    aarakshakTimeoutMs: Number(read(env, 'AARAKSHAK_TIMEOUT_MS')) || AARAKSHAK_TIMEOUT_MS,
+    rekognitionReady: rekognitionConfigured(env),
+    confirmThreshold: confirmThreshold(env),
+    secondOpinionTopN: secondOpinion === undefined || secondOpinion === '' ? 5 : Math.max(0, Number(secondOpinion) || 0),
+    concurrency: matchConcurrency(env),
+  };
 }
 
-/**
- * Secrets arrive exactly as they were typed. On 3 September the Aarakshak key
- * was pasted from a file saved with a UTF-8 byte-order mark, so every request
- * carried "X-API-Key: ﻿fr_live_..." and the provider answered HTTP 500 to
- * all of them -- for hours, silently, while the dashboard read "no match".
- * trim() strips U+FEFF along with ordinary whitespace, which covers the two
- * ways a copied credential goes wrong. The AWS reads in rekognition.js
- * already do this; the Aarakshak reads did not.
- */
-const cleanSecret = (value) => String(value || '').trim();
-
-export const ENGINES = {
-  aarakshak: {
-    provider: 'aarakshak-live-v1',
-    modelVersion: 'aarakshak-fr-v1.82',
-    biometric: true,
-    note: 'Face comparison performed by the Aarakshak recognition API.',
-  },
-  rekognition: {
-    provider: 'aws-rekognition',
-    modelVersion: 'rekognition-compare-faces',
-    biometric: true,
-    note: 'Face comparison performed by AWS Rekognition CompareFaces (fallback tier).',
-  },
-  heuristic: {
-    provider: 'local-heuristic',
-    modelVersion: 'heuristic-2026-07',
-    biometric: false,
-    note: 'Non-biometric workflow scorer. No face comparison was performed.',
-  },
-  none: {
-    provider: 'none',
-    modelVersion: null,
-    biometric: false,
-    note: 'No photo supplied, so no comparison was attempted.',
-  },
-};
+/** The settings a result is stored with (shared/match-config.js). */
+function settingsOf(cfg) {
+  return engineSettings({
+    aarakshakConfigured: Boolean(cfg.aarakshakKey),
+    aarakshakModel: ENGINES.aarakshak.modelVersion,
+    aarakshakThreshold: cfg.aarakshakThreshold,
+    rekognitionConfigured: cfg.rekognitionReady,
+    rekognitionModel: ENGINES.rekognition.modelVersion,
+    rekognitionConfirm: cfg.confirmThreshold,
+    secondOpinionTopN: cfg.secondOpinionTopN,
+  });
+}
 
 export function matchEngineInfo(env) {
-  const aarakshakReady = Boolean(cleanSecret(env?.AARAKSHAK_API_KEY || process.env.AARAKSHAK_API_KEY));
-  const rekognitionReady = Boolean((env?.AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID) && (env?.AWS_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY));
+  const cfg = config(env);
+  const aarakshakReady = Boolean(cfg.aarakshakKey);
+  const rekognitionReady = cfg.rekognitionReady;
   const active = aarakshakReady ? ENGINES.aarakshak : rekognitionReady ? ENGINES.rekognition : ENGINES.heuristic;
   return {
     ...active,
     aarakshakConfigured: aarakshakReady,
     rekognitionConfigured: rekognitionReady,
     fallbackProvider: aarakshakReady && rekognitionReady ? ENGINES.rekognition.provider : ENGINES.heuristic.provider,
+    forwardBudget: Number(read(env, 'KHOZO_MATCH_CANDIDATES') || 25),
+    reverseBudget: Number(read(env, 'KHOZO_REVERSE_MATCH_CANDIDATES') || 50),
+    settings: settingsOf(cfg),
     note: aarakshakReady || rekognitionReady
       ? active.note
       : 'No biometric provider is configured. Set AARAKSHAK_API_KEY or AWS credentials to enable face comparison.',
   };
-}
-
-/**
- * Ranks candidates without comparing faces. Returns nothing, deliberately.
- *
- * This used to score every open case at `0.45 + hash(photo bytes) * 0.5` — a
- * number between 45% and 95% derived from the image's bytes, not from anyone's
- * face. Those scores cleared the review threshold, were stored as `matchScore`,
- * and were shown to officers as "AI Match Similarity Confidence" under a
- * biometric provider's name. A photograph of an adult man was presented as an
- * 83% match to a missing girl, above a button reading "Confirm Match & Reunite".
- *
- * There is no honest way to rank faces without comparing faces. With no
- * biometric answer the right output is no candidate and a stated reason.
- */
-function rankWithHeuristic() {
-  return [];
 }
 
 /**
@@ -144,61 +129,78 @@ function multipartBody(parts) {
   return { body: Buffer.concat(chunks), contentType: `multipart/form-data; boundary=${boundary}` };
 }
 
-async function compareFacesAarakshak(env, sourceBuf, targetBuf) {
-  const apiKey = cleanSecret(env?.AARAKSHAK_API_KEY || process.env.AARAKSHAK_API_KEY);
-  if (!apiKey || !sourceBuf || !targetBuf) return null;
-  const threshold = env?.AARAKSHAK_THRESHOLD || process.env.AARAKSHAK_THRESHOLD || '0.35';
+function imagePart(name, buf) {
+  const bytes = Buffer.from(buf);
+  return { name, filename: `${name.replace('_image', '')}.${imageExtension(bytes)}`, contentType: detectImageMime(bytes) || 'image/jpeg', value: bytes };
+}
+
+/** Whether an error is our own timeout, which a retry would only repeat. */
+const isTimeout = (err) => err?.name === 'TimeoutError' || err?.name === 'AbortError';
+
+/**
+ * Compares two images with the Aarakshak API, as a normalised answer
+ * (shared/match-pipeline.js). One retry on a network fault or a 5xx, as the
+ * Node build does: a provider that drops one connection in fifty should not
+ * silently lose a candidate.
+ */
+async function compareFacesAarakshak(cfg, sourceBuf, targetBuf, attempt = 0) {
+  if (!cfg.aarakshakKey) return { status: 'not_configured' };
+  if (!sourceBuf?.length || !targetBuf?.length) return { status: 'no_answer', detail: 'empty image' };
 
   try {
     const { body, contentType } = multipartBody([
-      { name: 'source_image', filename: 'source.jpg', contentType: 'image/jpeg', value: Buffer.from(sourceBuf) },
-      { name: 'target_image', filename: 'target.jpg', contentType: 'image/jpeg', value: Buffer.from(targetBuf) },
-      { name: 'threshold', value: String(threshold) },
+      imagePart('source_image', sourceBuf),
+      imagePart('target_image', targetBuf),
+      { name: 'threshold', value: String(cfg.aarakshakThreshold) },
     ]);
 
-    const res = await fetch(AARAKSHAK_API_URL, {
+    const res = await fetch(cfg.aarakshakUrl, {
       method: 'POST',
       headers: {
-        'X-API-Key': apiKey,
+        'X-API-Key': cfg.aarakshakKey,
         'Content-Type': contentType,
       },
       // A typed array is a fixed-length body, so the runtime sets Content-Length
       // itself. Setting it by hand alongside a Node Buffer is the combination
       // that produced a body the provider answered with HTTP 500.
       body: new Uint8Array(body),
-      // Bounds one call. Without it a single hung upstream holds the request
-      // open past the 45 seconds at which the phone gives up — and the citizen
-      // is then shown a queued-for-later receipt for a sighting the server was
-      // in the middle of matching. Calls are issued at most five at a time
-      // (mapLimit), so the clock starts when this call actually goes out, not
-      // while it waits behind others for a connection.
-      signal: AbortSignal.timeout(AARAKSHAK_TIMEOUT_MS),
+      // Bounds one call. Calls are issued at most five at a time (mapLimit),
+      // so the clock starts when this call actually goes out, not while it
+      // waits behind others for a connection.
+      signal: AbortSignal.timeout(cfg.aarakshakTimeoutMs),
     });
 
     if (!res.ok) {
       const detail = await res.text().catch(() => '');
-      // "No detectable face" is an answer, not a failure: this pair cannot
-      // match. Returning null here sent the caller to the next tier as though
-      // nothing had been checked — and, before the fallback was fixed, on to a
-      // scorer that invented a number.
+      if (res.status >= 500 && attempt === 0) return compareFacesAarakshak(cfg, sourceBuf, targetBuf, attempt + 1);
+      // "No detectable face" is an answer about this pair - the engine could
+      // not find a face to compare - and the pipeline treats it as unknown,
+      // not as a score of 0 (no single-engine veto).
       if (/no detectable face|no_face|comparison_failed/i.test(detail)) {
-        return { score: 0, sourceFaces: 0, targetFaces: 0, warnings: ['no_face_detected'] };
+        return { status: 'no_face', sourceFaces: 0, targetFaces: 0, warnings: ['no_face_detected'] };
       }
       // Logged, always. A provider that fails silently is indistinguishable
       // from one that is working and finding nothing.
       console.warn(`[WorkerMatchEngine] Aarakshak HTTP ${res.status}: ${detail.slice(0, 200)}`);
-      return null;
+      return { status: 'no_answer', detail: `HTTP ${res.status}` };
     }
     const data = await res.json();
     const raw = data.score ?? data.similarity ?? data.match_confidence;
-    if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
+    if (typeof raw !== 'number' || !Number.isFinite(raw)) return { status: 'no_answer', detail: 'no usable score' };
+    // An explicit empty face list is the provider saying it found no face,
+    // whatever number it put beside that.
+    if ((Array.isArray(data.source_faces) && !data.source_faces.length) || (Array.isArray(data.target_faces) && !data.target_faces.length)) {
+      return { status: 'no_face', sourceFaces: data.source_faces?.length ?? 0, targetFaces: data.target_faces?.length ?? 0, warnings: ['no_face_detected'] };
+    }
 
+    // Scores for clearly different faces come back slightly negative, so clamp.
     const score = Number(Math.max(0, Math.min(1, raw)).toFixed(3));
     const warnings = [
       ...(data.source_quality?.warnings || []),
       ...(data.target_quality?.warnings || []),
     ];
     return {
+      status: 'answered',
       score,
       band: data.decision_band || null,
       sourceFaces: data.source_faces?.length ?? 0,
@@ -209,9 +211,29 @@ async function compareFacesAarakshak(env, sourceBuf, targetBuf) {
       lowQuality: data.target_quality?.recommendation === 'retake_or_manual_review',
     };
   } catch (err) {
-    console.warn('[WorkerMatchEngine] Aarakshak comparison failed:', err.message);
-    return null;
+    if (!isTimeout(err) && attempt === 0) return compareFacesAarakshak(cfg, sourceBuf, targetBuf, attempt + 1);
+    console.warn(`[WorkerMatchEngine] Aarakshak comparison failed${isTimeout(err) ? ' (timeout)' : ''}:`, err.message);
+    return { status: 'no_answer', detail: err.message };
   }
+}
+
+/** Rekognition, as a normalised answer. */
+async function compareFacesRekognitionAnswer(env, sourceBuf, targetBuf) {
+  const diagnostics = {};
+  const res = await compareFacesRekognition(env, sourceBuf, targetBuf, diagnostics);
+  if (!res) {
+    const reason = diagnostics.reason;
+    return { status: ['not_configured', 'unsupported_format', 'too_large'].includes(reason) ? reason : 'no_answer', detail: diagnostics.detail || null };
+  }
+  if (res.noFace) return { status: 'no_face', warnings: res.warnings || ['no_face_detected'] };
+  return { status: 'answered', ...res };
+}
+
+function providersFor(env, cfg = config(env)) {
+  return {
+    aarakshak: { ready: Boolean(cfg.aarakshakKey), compare: (s, t) => compareFacesAarakshak(cfg, s, t) },
+    rekognition: { ready: cfg.rekognitionReady, compare: (s, t) => compareFacesRekognitionAnswer(env, s, t) },
+  };
 }
 
 /**
@@ -223,56 +245,13 @@ async function compareFacesAarakshak(env, sourceBuf, targetBuf) {
  * alert that matters, so only a photo with a face in it raises the general
  * alarm. Everything else still reaches a human — the super admin — rather than
  * being discarded, because the cost of wrongly dropping a real sighting is a
- * child nobody looks for.
+ * child nobody looks for. The same screen checks a case photo when it is
+ * registered (`photoCheck`), where it also counts the faces.
  *
- * Detection reuses the comparison endpoint by probing the image against itself:
- * the provider reports the faces it found in the source image, which is the
- * signal needed, without depending on a second service.
- *
- * Three verdicts, and the caller must treat the last two the same way:
- *   person      — a face was found; raise the alert
- *   no_person   — the provider looked and found none
- *   unverified  — no provider answered, so nothing is known
+ * See screenPhoto in shared/match-pipeline.js for the verdicts.
  */
 export async function detectPerson(env, photoBuf) {
-  if (!photoBuf?.length) {
-    return { verdict: 'no_photo', faces: 0, provider: null, checkedAt: Date.now() };
-  }
-
-  const probe = await compareFacesAarakshak(env, photoBuf, photoBuf);
-  if (probe) {
-    return {
-      verdict: probe.sourceFaces > 0 ? 'person' : 'no_person',
-      faces: probe.sourceFaces,
-      quality: probe.sourceQuality ?? null,
-      warnings: probe.warnings || [],
-      provider: ENGINES.aarakshak.provider,
-      checkedAt: Date.now(),
-    };
-  }
-
-  // Rekognition second. Screening must not depend on one provider being up:
-  // when the primary was failing, every upload came back "unverified" and went
-  // to the super admin alone, which quietly turns the general alert off.
-  const viaRekognition = await compareFacesRekognition(env, photoBuf, photoBuf);
-  if (viaRekognition) {
-    const found = viaRekognition.warnings?.includes('no_face_detected') ? 0 : viaRekognition.sourceFaces;
-    return {
-      verdict: found > 0 ? 'person' : 'no_person',
-      faces: found,
-      warnings: viaRekognition.warnings || [],
-      provider: ENGINES.rekognition.provider,
-      checkedAt: Date.now(),
-    };
-  }
-
-  return {
-    verdict: 'unverified',
-    faces: null,
-    provider: null,
-    reason: 'No face-detection provider answered; the photo has not been screened.',
-    checkedAt: Date.now(),
-  };
+  return screenPhoto(photoBuf, providersFor(env));
 }
 
 /**
@@ -285,22 +264,22 @@ export async function detectPerson(env, photoBuf) {
  */
 export async function probeMatchProviders(env, photoBuf) {
   const results = [];
+  const cfg = config(env);
 
-  const aarakshakKey = cleanSecret(env?.AARAKSHAK_API_KEY || process.env.AARAKSHAK_API_KEY);
-  if (!aarakshakKey) {
+  if (!cfg.aarakshakKey) {
     results.push({ provider: ENGINES.aarakshak.provider, ok: false, detail: 'AARAKSHAK_API_KEY is not set for this deployment.' });
   } else {
     const started = Date.now();
     try {
       const { body, contentType } = multipartBody([
-        { name: 'source_image', filename: 'a.jpg', contentType: 'image/jpeg', value: Buffer.from(photoBuf) },
-        { name: 'target_image', filename: 'b.jpg', contentType: 'image/jpeg', value: Buffer.from(photoBuf) },
-        { name: 'threshold', value: String(env?.AARAKSHAK_THRESHOLD || '0.35') },
+        imagePart('source_image', photoBuf),
+        imagePart('target_image', photoBuf),
+        { name: 'threshold', value: String(cfg.aarakshakThreshold) },
       ]);
-      const res = await fetch(AARAKSHAK_API_URL, {
+      const res = await fetch(cfg.aarakshakUrl, {
         method: 'POST',
         headers: {
-          'X-API-Key': aarakshakKey,
+          'X-API-Key': cfg.aarakshakKey,
           'Content-Type': contentType,
         },
         body: new Uint8Array(body),
@@ -358,174 +337,48 @@ export async function probeMatchProviders(env, photoBuf) {
  * the two engines have to actually agree about a face.
  */
 function confirmThreshold(env) {
-  return Number(env?.KHOZO_REKOGNITION_CONFIRM || process.env.KHOZO_REKOGNITION_CONFIRM || 0.8);
+  return Number(read(env, 'KHOZO_REKOGNITION_CONFIRM') || 0.8);
 }
 
 /**
- * Which photo is the source and which the target of a comparison.
- *
- * The sighting photo is always the source and the case photo the target,
- * whichever of the two records arrived first. A pair therefore scores the same
- * whether a sighting found the case or a newly registered case found the
- * sighting, and the forward and reverse searches share one set of thresholds.
- */
-function orient(direction, probeBuf, storedBuf) {
-  return direction === 'reverse' ? [storedBuf, probeBuf] : [probeBuf, storedBuf];
-}
-
-/**
- * Asks Rekognition about the top candidates Aarakshak proposed.
- *
- * Confirmation, not inflation: the surviving score is the *lower* of the two.
- * Taking the higher let one engine overrule the other, so two engines
- * disagreeing produced a more confident number than either alone.
- */
-async function addSecondOpinion(env, photoBuf, ranked, readPhoto, direction = 'forward') {
-  if (!rekognitionConfigured(env) || !ranked.length) {
-    return { candidates: ranked.map((c) => ({ ...c, confirmed: false, secondOpinion: 'unavailable' })), applied: false, checked: 0 };
-  }
-
-  let checked = 0;
-  const threshold = confirmThreshold(env);
-
-  const reviewed = await mapLimit(ranked, matchConcurrency(env), async (candidate) => {
-    const targetBuf = await readPhoto(candidate.report.photoFile);
-    if (!targetBuf) return { ...candidate, confirmed: false, secondOpinion: 'photo_unavailable' };
-    const second = await compareFacesRekognition(env, ...orient(direction, photoBuf, targetBuf));
-    if (!second) return { ...candidate, confirmed: false, secondOpinion: 'no_answer' };
-    checked += 1;
-    return {
-      ...candidate,
-      primaryScore: candidate.score,
-      secondOpinionScore: second.score,
-      secondOpinionProvider: ENGINES.rekognition.provider,
-      score: Math.min(candidate.score, second.score),
-      confirmed: second.score >= threshold,
-      secondOpinion: second.score >= threshold ? 'agrees' : 'disagrees',
-      enginesDisagree: Math.abs(candidate.score - second.score) >= 0.25,
-    };
-  });
-
-  return { candidates: reviewed.sort((a, b) => b.score - a.score), applied: checked > 0, checked };
-}
-
-/**
- * Compares one photo with a set of stored records, through the provider tiers.
- *
- * The one comparison pipeline both searches run: Aarakshak proposes, and when
- * Rekognition is configured it must confirm; with Aarakshak silent, Rekognition
- * alone is held to its confirmation bar; with neither, nothing is offered.
- * `direction` only decides which photo is the source (see `orient`), and
- * `noun` only words the engine's notes. Each candidate carries the stored
- * record under `report`, whichever kind of record it is.
+ * Compares one photo with a set of stored records (shared/match-pipeline.js).
+ * `direction` only decides which photo is the source, and `noun` only words
+ * the engine's notes. Each candidate carries the stored record under `report`,
+ * whichever kind of record it is.
  */
 async function rankStored(env, photoBuf, stored, readPhoto, { direction = 'forward', pool, noun = 'open case' } = {}) {
+  const cfg = config(env);
+  const started = Date.now();
+  let outcome = null;
   if (stored.length) {
-    const started = Date.now();
-    const limit = matchConcurrency(env);
-    const loaded = await mapLimit(stored, limit, async (report) => ({
+    const loaded = await mapLimit(stored, cfg.concurrency, async (report) => ({
       report,
       targetBuf: await readPhoto(report.photoFile),
     }));
-
     const comparable = loaded.filter((row) => row.targetBuf);
     if (comparable.length) {
-      const compared = await mapLimit(comparable, limit, async ({ report, targetBuf }) => {
-        const res = await compareFacesAarakshak(env, ...orient(direction, photoBuf, targetBuf));
-        return res === null ? null : { report, ...res };
+      outcome = await comparePhotos({
+        photoBuf,
+        comparable,
+        direction,
+        providers: providersFor(env, cfg),
+        confirmThreshold: cfg.confirmThreshold,
+        secondOpinionTopN: cfg.secondOpinionTopN,
+        concurrency: cfg.concurrency,
       });
-
-      const answered = compared.filter(Boolean);
-      if (answered.length) {
-        const ranked = answered.sort((a, b) => b.score - a.score).slice(0, 5);
-
-        // Second opinion. One engine proposing a face is a lead; two engines
-        // agreeing is a candidate. Anything Rekognition does not confirm is
-        // withheld rather than shown with a slightly lower number, because the
-        // number is what an officer acts on.
-        const second = await addSecondOpinion(env, photoBuf, ranked, readPhoto, direction);
-        const candidates = second.applied ? second.candidates.filter((c) => c.confirmed) : second.candidates;
-
-        return {
-          candidates,
-          engine: {
-            ...ENGINES.aarakshak,
-            // The comparisons that actually answered, not the ones attempted:
-            // a call that timed out compared nothing, and an officer reading
-            // "compared against 50" must be able to trust it.
-            comparedAgainst: answered.length,
-            pool,
-            threshold: Number(env?.AARAKSHAK_THRESHOLD || 0.35),
-            elapsedMs: Date.now() - started,
-            corroborated: second.applied,
-            secondOpinion: second.applied
-              ? {
-                  provider: ENGINES.rekognition.provider,
-                  checked: second.checked,
-                  confirmed: second.candidates.filter((c) => c.confirmed).length,
-                  withheld: second.candidates.filter((c) => !c.confirmed).length,
-                  threshold: confirmThreshold(env),
-                }
-              : null,
-            sightingQuality: ranked[0]?.sourceQuality ?? null,
-            qualityWarnings: [...new Set(ranked.flatMap((c) => c.warnings || []))],
-          },
-        };
-      }
-
-      // Aarakshak did not answer. Rekognition alone, held to the same bar it is
-      // used to apply as the confirming engine.
-      if (rekognitionConfigured(env)) {
-        const answers = (
-          await mapLimit(comparable, limit, async ({ report, targetBuf }) => {
-            const res = await compareFacesRekognition(env, ...orient(direction, photoBuf, targetBuf));
-            return res === null ? null : { report, ...res };
-          })
-        ).filter(Boolean);
-
-        // Rekognition having looked and found nothing is a different answer
-        // from nothing having looked, and the reviewer needs to be told which.
-        // Returning the heuristic's "no biometric provider answered" here would
-        // report a completed comparison as an absent one.
-        if (answers.length) {
-          const confirmed = answers
-            .filter((c) => c.score >= confirmThreshold(env))
-            .sort((a, b) => b.score - a.score)
-            .slice(0, 5)
-            .map((c) => ({ ...c, confirmed: true, secondOpinion: 'sole_engine' }));
-
-          return {
-            candidates: confirmed,
-            engine: {
-              ...ENGINES.rekognition,
-              comparedAgainst: answers.length,
-              pool,
-              elapsedMs: Date.now() - started,
-              threshold: confirmThreshold(env),
-              corroborated: false,
-              note: confirmed.length
-                ? ENGINES.rekognition.note
-                : `Compared against ${answers.length} ${noun}${answers.length === 1 ? '' : 's'}; none reached the confirmation threshold.`,
-            },
-          };
-        }
-      }
     }
   }
-
-  // Nothing biometric answered. No candidate is returned: there is no honest
-  // way to rank faces without comparing faces, and a number invented here is
-  // one an officer would act on.
-  return {
-    candidates: rankWithHeuristic(),
-    engine: {
-      ...ENGINES.heuristic,
-      comparedAgainst: 0,
-      reason: stored.length
-        ? 'No biometric provider answered, so no face comparison was made and no candidate is offered.'
-        : `No stored ${noun === 'open case' ? 'case' : 'sighting'} photos to compare against, so no face comparison was possible.`,
-    },
-  };
+  return rankResult({
+    outcome,
+    pool,
+    settings: settingsOf(cfg),
+    started,
+    rekognitionReady: cfg.rekognitionReady,
+    confirmThreshold: cfg.confirmThreshold,
+    aarakshakThreshold: cfg.aarakshakThreshold,
+    noun,
+    storedCount: stored.length,
+  });
 }
 
 /**
@@ -533,41 +386,45 @@ async function rankStored(env, photoBuf, stored, readPhoto, { direction = 'forwa
  *
  * `source` supplies the candidate cases and a photo reader. Both come from the
  * request's store replica, which has already read the case rows, so ranking
- * costs no additional query for them.
+ * costs no additional query for them. `hints` may carry a one-to-many index
+ * shortlist (shared/match-pool.js selectMatchCandidates).
  */
 export async function rankMatches(env, photoBuf, hints = {}, source = {}) {
+  const cfg = config(env);
   if (!photoBuf?.length) {
-    return { candidates: [], engine: { ...ENGINES.none } };
+    return { candidates: [], engine: { ...ENGINES.none, settings: settingsOf(cfg) } };
   }
 
   const reports = source.reports || [];
   const readPhoto = source.readPhoto || (async () => null);
-  const maxCandidates = Number(env?.KHOZO_MATCH_CANDIDATES || 25);
+  const maxCandidates = Number(read(env, 'KHOZO_MATCH_CANDIDATES') || 25);
   const { reports: withPhotos, pool } = selectMatchCandidates(reports, hints, maxCandidates);
   return rankStored(env, photoBuf, withPhotos, readPhoto, { direction: 'forward', pool, noun: 'open case' });
 }
 
 /**
- * Ranks stored sightings against a newly registered case's photo: the reverse
- * of rankMatches, for the person photographed before anyone reported them
+ * Ranks stored sightings (and open found-child intakes, standing in for their
+ * sightings) against a newly registered case's photo: the reverse of
+ * rankMatches, for the person photographed before anyone reported them
  * missing.
  *
  * Same engines, same order of the two photos in each comparison, same
  * confirmation rule and thresholds as the forward search; only the pool
  * differs (shared/match-pool.js selectSightingCandidates, budget
- * KHOZO_REVERSE_MATCH_CANDIDATES). Each candidate carries the sighting under
- * `sighting`. `source` supplies the sightings and a photo reader from the
- * request's store replica.
+ * KHOZO_REVERSE_MATCH_CANDIDATES). Each candidate carries the compared record
+ * under `sighting`.
  */
 export async function rankSightingMatches(env, casePhotoBuf, hints = {}, source = {}) {
+  const cfg = config(env);
   if (!casePhotoBuf?.length) {
-    return { candidates: [], engine: { ...ENGINES.none } };
+    return { candidates: [], engine: { ...ENGINES.none, settings: settingsOf(cfg) } };
   }
 
   const foundReports = source.foundReports || [];
+  const intakeReports = source.reports || [];
   const readPhoto = source.readPhoto || (async () => null);
-  const maxCandidates = Number(env?.KHOZO_REVERSE_MATCH_CANDIDATES || process.env.KHOZO_REVERSE_MATCH_CANDIDATES || 50);
-  const { sightings, pool } = selectSightingCandidates(foundReports, hints, maxCandidates);
+  const maxCandidates = Number(read(env, 'KHOZO_REVERSE_MATCH_CANDIDATES') || 50);
+  const { sightings, pool } = selectSightingCandidates(foundReports, hints, maxCandidates, Date.now(), { intakeReports });
   const ranked = await rankStored(env, casePhotoBuf, sightings, readPhoto, {
     direction: 'reverse',
     pool,

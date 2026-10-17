@@ -23,6 +23,7 @@ import {
 } from './src/http/express-compat.js';
 import { createRequestStore } from './src/store-sync.js';
 import { detectPerson, matchEngineInfo, probeMatchProviders, rankMatches, rankSightingMatches } from './src/match.js';
+import { createFaceIndex } from '../shared/face-index.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -106,11 +107,16 @@ function buildDeps(env, store, ctx) {
     // Node build uses does not run here), so only the call shape is adapted.
     rankMatches: (photoBuf, hints) =>
       rankMatches(env, photoBuf, hints, { reports: store.listReports(), readPhoto: store.readPhoto }),
+    // The reverse search also compares open found-child intakes, so it is
+    // given the cases too.
     rankSightingMatches: (photoBuf, hints) =>
-      rankSightingMatches(env, photoBuf, hints, { foundReports: store.listFoundReports(), readPhoto: store.readPhoto }),
+      rankSightingMatches(env, photoBuf, hints, { foundReports: store.listFoundReports(), reports: store.listReports(), readPhoto: store.readPhoto }),
     matchEngineInfo: () => matchEngineInfo(env),
     probeMatchProviders: (photoBuf) => probeMatchProviders(env, photoBuf),
     detectPerson: (photoBuf) => detectPerson(env, photoBuf),
+    // The one-to-many index: none unless AARAKSHAK_GALLERY_URL and
+    // AARAKSHAK_GALLERY_KEY are set (shared/face-index.js).
+    faceIndex: createFaceIndex(env),
 
     // Multipart is parsed by the router shim, so `upload.single` is a no-op that
     // keeps the shared route signatures unchanged.
