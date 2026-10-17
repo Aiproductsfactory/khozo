@@ -2,19 +2,30 @@
 // Super Admin sees everything; Admin/state nodal/crime bureau see their state; district
 // stakeholders see their district; Parents/NGOs see only what they reported.
 
+import { districtCodeFor, stateCodeFor } from './geo/index.js';
+
 const STATE_ROLES = ['admin', 'state_nodal', 'sara', 'crime_bureau'];
 const DISTRICT_ROLES = ['police', 'sjpu', 'ahtu', 'dcrb', 'dlsa', 'cwc', 'dcpu', 'rpf', 'cci', 'saa', 'jjb'];
 
-// Jurisdiction names arrive from three places that never agree: the seeded
-// accounts ("Mumbai"), the registration form (whatever the officer typed), and
-// the phone's reverse geocoder ("Navi mumbai", "Navi Mumbai", "Mumbai Suburban
-// District" -- three spellings in one evening). An exact string compare turned
-// each of those into a row the district officer could not see while
-// super_admin could, which is the one officer the row exists for. Compare on a
-// normalised name, and fold the two revenue districts of Brihanmumbai into the
-// single jurisdiction their one police commissionerate already treats them as.
-// Navi Mumbai is deliberately NOT folded in: it has its own commissionerate,
-// CWC and DCPU, and sameDistrict() can only ever widen access, never narrow it.
+// Jurisdiction names arrive from places that never agree: the seeded accounts
+// ("Mumbai"), the registration form, a spreadsheet ("GUJARAT", "ગુજરાત"), and
+// the phone's reverse geocoder ("Navi mumbai", "Mumbai Suburban District",
+// "Ahmadabad"). An exact string compare turned each of those into a row the
+// district officer could not see while super_admin could, which is the one
+// officer the row exists for.
+//
+// So places are compared by code. Every write now stores LGD state and
+// district codes (canonicalPlace in shared/geo/index.js); a record or account
+// written before that has its codes worked out from its names by the same
+// gazetteer, so "ગુજરાત" and "GUJARAT" are both state 24. Only when one side's
+// name means nothing to the gazetteer are normalised names compared, as before.
+//
+// The two revenue districts of Brihanmumbai (Mumbai City, LGD 482, and Mumbai
+// Suburban, 483) are folded into the single jurisdiction their one police
+// commissionerate already treats them as. Navi Mumbai is deliberately NOT
+// folded in: it has its own commissionerate, CWC and DCPU, and its own code in
+// the gazetteer. The folds can only ever widen access, never narrow it.
+const DISTRICT_CODE_FOLDS = { 483: '482' };
 const DISTRICT_ALIASES = {
   'mumbai suburban': 'mumbai',
   'mumbai city': 'mumbai',
@@ -37,20 +48,87 @@ function normaliseDistrict(value) {
   return DISTRICT_ALIASES[base] || base;
 }
 
-export function sameDistrict(a, b) {
-  const x = normaliseDistrict(a);
-  const y = normaliseDistrict(b);
-  return Boolean(x) && x === y;
-}
-
 function normaliseState(value) {
   return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
+function foldDistrictCode(code) {
+  return code ? DISTRICT_CODE_FOLDS[code] || String(code) : null;
+}
+
+/**
+ * A place as the rules compare it: codes where known, normalised names
+ * otherwise. Takes a case, a sighting, an audit or activity scope, or an
+ * account's jurisdiction.
+ *
+ * The code is worked out from the stored name first and the stored code is
+ * the fallback. A canonical name always resolves to its own code, so for
+ * anything written through canonicalPlace the two agree; but a path that
+ * moves a record (a transfer, a sighting linked to a case and unlinked again)
+ * may rewrite the names and not the codes, and the name is what an officer
+ * saw and chose.
+ */
+function placeOf(row) {
+  const stateText = row?.state;
+  const districtText = row?.district;
+  const stateCode = stateCodeFor(stateText) || (row?.stateCode ? String(row.stateCode) : null);
+  const districtCode = (districtText ? districtCodeFor(stateCode, districtText) : null)
+    || (row?.districtCode ? String(row.districtCode) : null);
+  return {
+    stateCode,
+    districtCode: foldDistrictCode(districtCode),
+    state: normaliseState(stateText),
+    district: normaliseDistrict(districtText),
+  };
+}
+
+const hasState = (place) => Boolean(place.stateCode || place.state);
+const hasDistrict = (place) => Boolean(place.districtCode || place.district);
+
+function samePlaceState(a, b) {
+  if (a.stateCode && b.stateCode) return a.stateCode === b.stateCode;
+  return Boolean(a.state) && a.state === b.state;
+}
+
+function samePlaceDistrict(a, b) {
+  if (a.districtCode && b.districtCode) return a.districtCode === b.districtCode;
+  return Boolean(a.district) && a.district === b.district;
+}
+
+/** Whether two places ({ state, stateCode, ... }) are in the same state. */
+export function sameStatePlace(a, b) {
+  return samePlaceState(placeOf(a), placeOf(b));
+}
+
+/** Whether two places are the same state and the same district. */
+export function sameDistrictPlace(a, b) {
+  const x = placeOf(a);
+  const y = placeOf(b);
+  return samePlaceState(x, y) && samePlaceDistrict(x, y);
+}
+
+/**
+ * Two district names, compared without their states: by code when each names
+ * one district in all of India ("અમદાવાદ" and "Ahmedabad"), otherwise by
+ * normalised name and the aliases above.
+ */
+export function sameDistrict(a, b) {
+  const x = foldDistrictCode(districtCodeFor(null, a));
+  const y = foldDistrictCode(districtCodeFor(null, b));
+  if (x && y) return x === y;
+  const p = normaliseDistrict(a);
+  const q = normaliseDistrict(b);
+  return Boolean(p) && p === q;
+}
+
+/** Two state names: by LGD code when both resolve, otherwise by name. */
 export function sameState(a, b) {
-  const x = normaliseState(a);
-  const y = normaliseState(b);
-  return Boolean(x) && x === y;
+  const x = stateCodeFor(a);
+  const y = stateCodeFor(b);
+  if (x && y) return x === y;
+  const p = normaliseState(a);
+  const q = normaliseState(b);
+  return Boolean(p) && p === q;
 }
 
 // Jurisdiction fails closed. Super admin is the only national role: a state
@@ -66,27 +144,44 @@ export function sameState(a, b) {
 export function hasJurisdiction(user) {
   if (!user) return false;
   if (user.role === 'super_admin') return true;
-  const state = normaliseState(user.jurisdiction?.state);
-  if (STATE_ROLES.includes(user.role)) return Boolean(state);
-  if (DISTRICT_ROLES.includes(user.role)) return Boolean(state) && Boolean(normaliseDistrict(user.jurisdiction?.district));
+  const place = placeOf(user.jurisdiction);
+  if (STATE_ROLES.includes(user.role)) return hasState(place);
+  if (DISTRICT_ROLES.includes(user.role)) return hasState(place) && hasDistrict(place);
   // Parents and NGOs are scoped by what they registered, not by place.
   return true;
 }
 
-function inUserState(user, row) {
-  return sameState(row?.state, user?.jurisdiction?.state);
+function inUserState(user, row, mine = placeOf(user?.jurisdiction)) {
+  return samePlaceState(placeOf(row), mine);
 }
 
-function inUserDistrict(user, row) {
-  return inUserState(user, row) && sameDistrict(row?.district, user?.jurisdiction?.district);
+/**
+ * Whether a row falls in a district desk's district.
+ *
+ * `unplaced` is for records (cases and sightings) and adds one rule: a record
+ * whose state is known but whose district is not - "unplaced in my state" -
+ * reaches every district desk of that state. A sighting that named Gujarat
+ * and no district used to reach only the state desks, never the stations,
+ * which are the ones that can walk to it. Audit and activity rows are not
+ * records and keep to their district.
+ */
+function inUserDistrict(user, row, { unplaced = false, mine = placeOf(user?.jurisdiction) } = {}) {
+  const theirs = placeOf(row);
+  if (!samePlaceState(theirs, mine)) return false;
+  if (unplaced && !hasDistrict(theirs)) return true;
+  return samePlaceDistrict(theirs, mine);
 }
 
-function canAccessScopedLocation(user, row) {
-  if (!row?.state && !row?.district) return user?.role === 'super_admin';
+function hasLocation(row) {
+  return Boolean(row?.state || row?.district || row?.stateCode || row?.districtCode);
+}
+
+function canAccessScopedLocation(user, row, { unplaced = false } = {}) {
+  if (!hasLocation(row)) return user?.role === 'super_admin';
   if (!hasJurisdiction(user)) return false;
   if (user.role === 'super_admin') return true;
   if (STATE_ROLES.includes(user.role)) return inUserState(user, row);
-  if (DISTRICT_ROLES.includes(user.role)) return inUserDistrict(user, row);
+  if (DISTRICT_ROLES.includes(user.role)) return inUserDistrict(user, row, { unplaced });
   return false;
 }
 
@@ -96,10 +191,13 @@ function canAccessScopedLocation(user, row) {
 // review desk (scopeFoundReports), so a partly placed one must not reach fewer
 // people than that - it would otherwise reach only the super admin.
 function canAccessSightingLocation(user, row) {
-  if (!row?.state && row?.district && DISTRICT_ROLES.includes(user?.role) && hasJurisdiction(user)) {
+  const place = placeOf(row);
+  if (!hasState(place) && hasDistrict(place) && DISTRICT_ROLES.includes(user?.role) && hasJurisdiction(user)) {
+    const mine = placeOf(user.jurisdiction);
+    if (place.districtCode && mine.districtCode && place.districtCode === mine.districtCode) return true;
     return sameDistrict(row.district, user.jurisdiction?.district);
   }
-  return canAccessScopedLocation(user, row);
+  return canAccessScopedLocation(user, row, { unplaced: true });
 }
 
 // A department can hand over records on the condition that only police see
@@ -129,8 +227,10 @@ function scopeByJurisdiction(user, reports) {
     case 'admin':
     case 'state_nodal':
     case 'sara':
-    case 'crime_bureau':
-      return reports.filter((r) => inUserState(user, r));
+    case 'crime_bureau': {
+      const mine = placeOf(user.jurisdiction);
+      return reports.filter((r) => inUserState(user, r, mine));
+    }
     case 'police':
     case 'sjpu':
     case 'ahtu':
@@ -141,8 +241,10 @@ function scopeByJurisdiction(user, reports) {
     case 'rpf':
     case 'cci':
     case 'saa':
-    case 'jjb':
-      return reports.filter((r) => inUserDistrict(user, r));
+    case 'jjb': {
+      const mine = placeOf(user.jurisdiction);
+      return reports.filter((r) => inUserDistrict(user, r, { unplaced: true, mine }));
+    }
     case 'parent':
     case 'ngo':
     default:
@@ -185,7 +287,7 @@ export function scopeFoundReports(user, foundReports = [], reports = []) {
         // admin and nobody else — a child reported by a citizen who skipped the
         // location fields simply never reached a review queue. Unplaced
         // sightings go to every review role until an officer assigns one.
-        if (!f.state && !f.district) return true;
+        if (!hasLocation(f)) return true;
         return canAccessSightingLocation(user, f);
       });
     default:

@@ -5,6 +5,7 @@ import { useAuth } from '../auth.jsx';
 import { useT, msg } from '../i18n.jsx';
 import { genderLabel, isAdultCategory, PERSON_CATEGORY_OPTIONS, PhoneLink } from '../lib.jsx';
 import { preparePhoto } from '../photoPrep.js';
+import DistrictPicker from '../DistrictPicker.jsx';
 import { DASHBOARD_ROUTE_ROLES } from './routes.js';
 
 // What each "Who is missing?" choice is called in the page title.
@@ -76,6 +77,14 @@ function Field({ label, k, type = 'text', req, form, set, ...rest }) {
     </div>
   );
 }
+// The genders offered for each "Who is missing?" choice. Unknown is always an
+// answer the form accepts; Male is never the default.
+const GENDER_CHOICES = {
+  child: ['Male', 'Female', 'Unknown'],
+  woman: ['Female', 'Other'],
+  adult: ['Male', 'Female', 'Other', 'Unknown'],
+};
+
 const DECLARATION_METHODS = [
   { id: 'digital', label: msg('Digital self-declaration') },
   { id: 'verbal_recorded', label: msg('Verbal declaration recorded by officer') },
@@ -83,11 +92,20 @@ const DECLARATION_METHODS = [
 ];
 
 function initialForm(user, isPolice) {
+  // The registering account's own area is offered first: an officer mostly
+  // registers for their own district, a family for where they live. Either
+  // can change it.
+  const own = user.jurisdiction || {};
   return {
     personCategory: 'child',
     childName: '', parentName: '', parentPhone: '', parentEmail: '',
-    childAadhar: '', gender: 'Male', age: '', height: '', weight: '',
-    dateOfMissing: '', address: '', state: '', district: '', zip: '', firNo: '',
+    // No gender is assumed: the form used to start on Male, so a child whose
+    // gender nobody entered was registered as a boy. It must be chosen
+    // (Unknown is a choice).
+    childAadhar: '', gender: '', age: '', height: '', weight: '',
+    dateOfMissing: '', address: '', zip: '', firNo: '',
+    state: own.state || '', stateCode: own.stateCode || '',
+    district: own.district || '', districtCode: own.districtCode || '',
     complexion: '', build: '', hair: '', clothing: '', languages: '',
     birthMark: '', identificationMark: '', producedByType: '', educationLevel: 'unknown',
     disabilityStatus: 'unknown', mentalHealthConcern: 'unknown', circumstances: '',
@@ -133,8 +151,9 @@ export default function RegisterChild() {
 
   /**
    * Switching who is missing clears what no longer applies, so a value the
-   * officer can no longer see is never submitted: the child-only fields, and
-   * an age outside the new range. A woman defaults to Female.
+   * officer can no longer see is never submitted: the child-only fields, an
+   * age outside the new range, and a gender the new choice does not offer. A
+   * woman is Female; nobody else's gender is filled in.
    */
   const chooseCategory = (next) => {
     setForm((f) => {
@@ -145,7 +164,9 @@ export default function RegisterChild() {
         ...f,
         personCategory: next,
         age,
-        gender: next === 'woman' && f.gender === 'Male' ? 'Female' : next === 'child' && f.gender === 'Other' ? 'Male' : f.gender,
+        gender: next === 'woman'
+          ? (['Female', 'Other'].includes(f.gender) ? f.gender : 'Female')
+          : (GENDER_CHOICES[next] || GENDER_CHOICES.child).includes(f.gender) ? f.gender : '',
         ...(nextAdult
           ? {
               producedByType: '',
@@ -180,6 +201,12 @@ export default function RegisterChild() {
   const submit = async (e) => {
     e.preventDefault();
     setErr('');
+    // An officer files a case in a real district, chosen from the list: a
+    // case under a district that does not exist is one no desk sees.
+    if (isPolice && (!form.stateCode || !form.districtCode)) {
+      setErr(t('Choose the state and the district from the lists.'));
+      return;
+    }
     setBusy(true);
     try {
       const fd = new FormData();
@@ -193,14 +220,23 @@ export default function RegisterChild() {
       // not linked to any case, inside this request, and says how many it sent
       // for review.
       const data = await api.postForm('/reports', fd);
-      setCreated({ id: data.report?.id || null, sightingMatches: Number(data.sightingMatches) || 0 });
+      setCreated({
+        id: data.report?.id || null,
+        sightingMatches: Number(data.sightingMatches) || 0,
+        pendingVerification: data.report?.status === 'intake_pending',
+        place: [data.report?.district || data.report?.districtText, data.report?.state].filter(Boolean).join(', '),
+      });
       try { window.scrollTo({ top: 0 }); } catch {}
     } catch (e) {
       if (e.data?.duplicateCandidates?.length) {
         setDuplicates(e.data.duplicateCandidates);
         setAllowDuplicate(false);
       }
-      setErr(e.message);
+      // A place the gazetteer does not know (shared/case-domain.js
+      // jurisdictionError): said in the reader's language.
+      if (e.data?.code === 'unknown_district') setErr(t('That district is not in the list for this state. Choose the district from the list.'));
+      else if (e.data?.code === 'unknown_state') setErr(t('Choose the state and the district from the lists.'));
+      else setErr(e.message);
     } finally {
       setBusy(false);
     }
@@ -228,6 +264,25 @@ export default function RegisterChild() {
                 {t('Keep this Case ID safe: it is the only reference the family can use on the public Track my case page.')}
               </p>
             </>
+          )}
+          {/*
+            A family's or an NGO's report waits for an officer, and nothing is
+            compared with it until one verifies it. The family is told so, in
+            plain words, with the one thing they can do to speed it up.
+          */}
+          {created.pendingVerification && (
+            <div className="mt-5 rounded-xl bg-sky-50 px-4 py-4 text-sm text-sky-900">
+              <p className="font-semibold">{t('What happens next')}</p>
+              <ol className="mt-2 list-decimal space-y-2 pl-5">
+                <li>
+                  {created.place
+                    ? t('Take this Case ID and an ID proof (Aadhaar, voter ID or any photo ID) to the nearest police station in {place}.', { place: created.place })
+                    : t('Take this Case ID and an ID proof (Aadhaar, voter ID or any photo ID) to the nearest police station.')}
+                </li>
+                <li>{t('Matching with sightings starts once an officer verifies your report. The police and child-welfare desks of the district have been told it is waiting.')}</li>
+                <li className="font-semibold">{t('In an emergency, call 112.')}</li>
+              </ol>
+            </div>
           )}
           {canReviewMatches && created.sightingMatches > 0 && (
             <p className="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
@@ -356,25 +411,12 @@ export default function RegisterChild() {
           <Field form={form} set={set} label={adult ? t('Full name') : t('Child name')} k="childName" req autoComplete="off" />
           <Field form={form} set={set} label={adult ? t('Aadhaar no.') : t('Child Aadhar no.')} k="childAadhar" inputMode="numeric" autoComplete="off" />
           <div>
-            <label className="label">{t('Gender')}</label>
-            <select className="field" value={form.gender} onChange={set('gender')}>
-              {category === 'child' && (
-                <>
-                  <option value="Male">{t('Male')}</option><option value="Female">{t('Female')}</option>
-                </>
-              )}
-              {category === 'woman' && (
-                <>
-                  <option value="Female">{genderLabel('Female', category)}</option><option value="Other">{t('Other')}</option>
-                </>
-              )}
-              {category === 'adult' && (
-                <>
-                  <option value="Male">{genderLabel('Male', category)}</option>
-                  <option value="Female">{genderLabel('Female', category)}</option>
-                  <option value="Other">{t('Other')}</option>
-                </>
-              )}
+            <label className="label" htmlFor="register-gender">{t('Gender')} *</label>
+            <select id="register-gender" className="field" value={form.gender} onChange={set('gender')} required>
+              <option value="" disabled>{t('Choose…')}</option>
+              {(GENDER_CHOICES[category] || GENDER_CHOICES.child).map((g) => (
+                <option key={g} value={g}>{g === 'Unknown' ? t('Not known') : genderLabel(g, category)}</option>
+              ))}
             </select>
           </div>
           <Field form={form} set={set} label={t('Date of missing')} k="dateOfMissing" type="date" />
@@ -391,8 +433,21 @@ export default function RegisterChild() {
             <Field form={form} set={set} label={t('Mobile no.')} k="parentPhone" type="tel" inputMode="tel" autoComplete={own('tel')} />
             <Field form={form} set={set} label={t('Email')} k="parentEmail" type="email" inputMode="email" autoComplete={own('email')} autoCapitalize="off" />
             <Field form={form} set={set} label={t('Address')} k="address" autoComplete={own('street-address')} />
-            <Field form={form} set={set} label={t('State')} k="state" autoComplete={own('address-level1')} />
-            <Field form={form} set={set} label={t('District')} k="district" autoComplete={own('address-level2')} />
+            {/*
+              Where the case belongs decides which desks see it and are told
+              about it, so it is chosen from the lists. An officer must name
+              the district; a family may say "Not sure".
+            */}
+            <div className="sm:col-span-2">
+              <DistrictPicker
+                value={form}
+                onChange={(place) => setForm((f) => ({ ...f, ...place }))}
+                required={isPolice}
+                allowUnsure={!isPolice}
+                stateLabel={adult ? t('State where the person went missing') : t('State where the child went missing')}
+                districtLabel={adult ? t('District where the person went missing') : t('District where the child went missing')}
+              />
+            </div>
             <Field form={form} set={set} label={t('Zip code')} k="zip" inputMode="numeric" autoComplete={own('postal-code')} />
           </div>
         </div>

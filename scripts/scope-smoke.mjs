@@ -147,6 +147,83 @@ check('district aliases still apply', canAccessReport(user('police', { state: 'M
 check('but not across states', !canAccessReport(user('police', { state: 'Gujarat', district: 'Mumbai' }), mumbaiSuburban));
 check('a parent still sees what they registered', scopeReports(user('parent', {}, 'u_x'), placedCases).length === 2);
 
+// --- Places compare by LGD code (shared/geo) ---------------------------------
+// The same place reached Khozo spelt a dozen ways and every spelling but one
+// was a record its own desk could not see.
+const ids = (rows) => rows.map((r) => r.id).join();
+const gujaratCases = [
+  { id: 'g_gu', state: 'ગુજરાત', district: 'અમદાવાદ', status: 'missing' },
+  { id: 'g_caps', state: 'GUJARAT', district: 'Ahmadabad District', status: 'missing' },
+  { id: 'g_typo', state: 'Gujarat', district: 'Ahmdabad', status: 'missing' },
+  { id: 'g_coded', state: 'Gujarat', stateCode: '24', district: 'Ahmedabad', districtCode: '438', status: 'missing' },
+  { id: 'g_dev', state: 'गुजरात', district: 'अहमदाबाद', status: 'missing' },
+  { id: 'g_surat', state: 'Gujarat', stateCode: '24', district: 'Surat', districtCode: '459', status: 'missing' },
+];
+const ahmedabadPolice = user('police', { state: 'Gujarat', district: 'Ahmedabad' });
+check('a district desk sees its district in Gujarati, capitals, OpenStreetMap form, a typo and Devanagari',
+  ids(scopeReports(ahmedabadPolice, gujaratCases)) === 'g_gu,g_caps,g_typo,g_coded,g_dev', ids(scopeReports(ahmedabadPolice, gujaratCases)));
+check('and not the next district', !canAccessReport(ahmedabadPolice, gujaratCases[5]));
+check('a state desk sees rows whose state reads "ગુજરાત" or "GUJARAT"',
+  scopeReports(user('admin', { state: 'Gujarat' }), gujaratCases).length === 6);
+check('a desk whose account holds only codes compares them',
+  scopeReports(user('police', { stateCode: '24', districtCode: '438' }), gujaratCases).length === 5);
+check('a desk whose account reads "ગુજરાત" / "અમદાવાદ" sees the same',
+  scopeReports(user('cwc', { state: 'ગુજરાત', district: 'અમદાવાદ' }), gujaratCases).length === 5);
+check('a Maharashtra desk sees none of them', scopeReports(user('admin', { state: 'Maharashtra' }), gujaratCases).length === 0);
+// A name written later wins over a stale code (a transfer or a link that
+// rewrote the names only).
+const staleCodes = { id: 'r_stale', state: 'Maharashtra', stateCode: '24', district: 'Pune', districtCode: '438', status: 'missing' };
+check('a stored name wins over a stale code', canAccessReport(user('police', { state: 'Maharashtra', district: 'Pune' }), staleCodes)
+  && !canAccessReport(ahmedabadPolice, staleCodes));
+check('same-name districts in two states stay apart by code',
+  !canAccessReport(user('police', { stateCode: '10', districtCode: '189' }), aurangabadMh)
+  && canAccessReport(user('police', { state: 'Maharashtra', district: 'Chhatrapati Sambhajinagar' }), aurangabadMh));
+
+// The two revenue districts of Brihanmumbai are one jurisdiction; Navi Mumbai
+// and Ahmedabad Rural are their own.
+const mumbaiCodes = { id: 'r_m483', state: 'Maharashtra', stateCode: '27', district: 'Mumbai Suburban', districtCode: '483', status: 'missing' };
+const naviMumbai = { id: 'r_navi', state: 'Maharashtra', stateCode: '27', district: 'Navi Mumbai', districtCode: '27-navi-mumbai', status: 'missing' };
+const thane = { id: 'r_thane', state: 'Maharashtra', stateCode: '27', district: 'Thane', districtCode: '497', status: 'missing' };
+check('the Mumbai desk sees Mumbai Suburban by code', canAccessReport(user('police', { state: 'Maharashtra', district: 'Mumbai' }), mumbaiCodes));
+check('Navi Mumbai is not Mumbai', !canAccessReport(user('police', { state: 'Maharashtra', district: 'Mumbai' }), naviMumbai));
+check('nor Thane', !canAccessReport(user('police', { state: 'Maharashtra', district: 'Thane' }), naviMumbai)
+  && !canAccessReport(user('police', { state: 'Maharashtra', district: 'Navi Mumbai' }), thane));
+check('the Navi Mumbai desk sees Navi Mumbai', canAccessReport(user('police', { state: 'Maharashtra', district: 'Navi Mumbai' }), naviMumbai));
+check('Ahmedabad Rural is not Ahmedabad', !canAccessReport(user('police', { state: 'Gujarat', district: 'Ahmedabad Rural' }), gujaratCases[3])
+  && !canAccessReport(ahmedabadPolice, { id: 'r_rural', state: 'Gujarat', district: 'Ahmedabad Rural', status: 'missing' }));
+
+// --- State known, district unknown: every district desk of the state ---------
+// A sighting or a case that named Gujarat and no district (or a district the
+// gazetteer could not place, kept as districtText) used to reach only the state
+// desks, never the stations.
+const unplacedCase = { id: 'r_unplaced', state: 'Gujarat', stateCode: '24', district: null, districtText: 'Maninagar', status: 'intake_pending', registeredById: 'u_fam' };
+const unplacedPoliceOnly = { id: 'r_unplaced_police', state: 'Gujarat', stateCode: '24', status: 'missing', visibility: 'police' };
+for (const district of ['Ahmedabad', 'Surat', 'Kachchh']) {
+  check(`a case placed in Gujarat but no district reaches the ${district} police`, canAccessReport(user('police', { state: 'Gujarat', district }), unplacedCase));
+}
+check('and the district CWC', canAccessReport(user('cwc', { state: 'Gujarat', district: 'Rajkot' }), unplacedCase));
+check('but not a district desk in another state', !canAccessReport(user('police', { state: 'Maharashtra', district: 'Mumbai' }), unplacedCase));
+check('a police-only record stays police-only when unplaced', !canAccessReport(user('cwc', { state: 'Gujarat', district: 'Surat' }), unplacedPoliceOnly)
+  && canAccessReport(user('police', { state: 'Gujarat', district: 'Surat' }), unplacedPoliceOnly));
+const stateOnlySighting = { id: 'f_state_only', state: 'Gujarat' };
+const stateOnlySightingCoded = { id: 'f_state_coded', state: 'Gujarat', stateCode: '24', districtText: 'near the bus stand' };
+const otherStateSighting = { id: 'f_other', state: 'Maharashtra' };
+const stationView = scopeFoundReports(user('police', { state: 'Gujarat', district: 'Surat' }), [stateOnlySighting, stateOnlySightingCoded, otherStateSighting], []).map((f) => f.id).join();
+check('a sighting with a state but no district reaches the stations of that state', stationView === 'f_state_only,f_state_coded', stationView);
+check('and the CWC desks', scopeFoundReports(user('cwc', { state: 'Gujarat', district: 'Ahmedabad' }), [stateOnlySighting], []).length === 1);
+check('a district desk with no district still sees nothing',
+  scopeFoundReports(user('police', { state: 'Gujarat' }), [stateOnlySighting], []).length === 0
+  && scopeReports(user('police', { stateCode: '24' }), [unplacedCase]).length === 0);
+// Audit and activity are not records: a state-level row stays with the state.
+const stateAudit = [{ id: 'au_state', scope: { state: 'Gujarat' } }];
+check('a state-level audit row does not reach a district desk', scopeAudit(ahmedabadPolice, stateAudit, []).length === 0
+  && scopeAudit(user('admin', { state: 'Gujarat' }), stateAudit, []).length === 1);
+check('nor a state-level activity row', scopeActivity(ahmedabadPolice, [{ id: 'ac_state', scope: { state: 'Gujarat' } }], []).length === 0);
+// A district named with no state still reaches that district's desks, and by
+// code when the name is one place in India.
+check('a sighting naming only "અમદાવાદ" reaches the Ahmedabad desk',
+  scopeFoundReports(ahmedabadPolice, [{ id: 'f_gu_only', district: 'અમદાવાદ' }], []).length === 1);
+
 const failed = checks.filter((c) => !c.ok);
 console.log(`\n--- ${checks.length - failed.length}/${checks.length} checks passed ---`);
 if (failed.length) {

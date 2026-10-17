@@ -68,13 +68,19 @@ const OP_ROLES = ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'dcrb', 'dls
  * holds — all of it scoped to the signed-in officer by the API — so a queue
  * showing zero means zero, not "not implemented".
  */
+// Reports from families and NGOs that wait for this desk to verify them: none
+// of them is compared with a sighting until an officer does.
+const INTAKE_WORK = { label: msg('Intakes to verify'), from: (s) => s.intakes?.pending, to: '/app/cases?status=intake_pending' };
+
 const ROLE_WORK = {
   police: [
+    INTAKE_WORK,
     { label: msg('Sightings to review'), from: (s) => s.cards.pendingMatches, to: '/app/matches' },
     { label: msg('Cases open past 30 days'), from: (s, f) => f?.totals.caseOverdue, to: '/app/cases' },
     { label: msg('Cases with no recent note'), from: (s, f) => f?.totals.staleUpdates, to: '/app/cases' },
   ],
   sjpu: [
+    INTAKE_WORK,
     { label: msg('Sightings to review'), from: (s) => s.cards.pendingMatches, to: '/app/matches' },
     { label: msg('Cases needing a follow-up note'), from: (s, f) => f?.totals.staleUpdates, to: '/app/cases' },
   ],
@@ -87,11 +93,13 @@ const ROLE_WORK = {
     { label: msg('Active cases in your district'), from: (s) => s.cards.activeCases, to: '/app/cases' },
   ],
   cwc: [
+    INTAKE_WORK,
     { label: msg('Sightings awaiting a decision'), from: (s) => s.cards.pendingMatches, to: '/app/matches' },
     { label: msg('Statutory records due'), from: (s, f) => f?.totals.formalFollowups, to: '/app/cases' },
     { label: msg('Children in the CCI register'), from: (s, f, c) => c?.totals.activeChildren, to: '/app/cci-register' },
   ],
   dcpu: [
+    INTAKE_WORK,
     { label: msg('Sightings awaiting a decision'), from: (s) => s.cards.pendingMatches, to: '/app/matches' },
     { label: msg('Statutory records due'), from: (s, f) => f?.totals.formalFollowups, to: '/app/cases' },
     { label: msg('Children in the CCI register'), from: (s, f, c) => c?.totals.activeChildren, to: '/app/cci-register' },
@@ -128,16 +136,19 @@ const ROLE_WORK = {
     { label: msg('Abuse signals to review'), from: (s, f) => f?.totals.high, to: '/app/fraud' },
   ],
   state_nodal: [
+    INTAKE_WORK,
     { label: msg('Statewide active cases'), from: (s) => s.cards.activeCases, to: '/app/cases' },
     { label: msg('Sightings awaiting review'), from: (s) => s.cards.pendingMatches, to: '/app/matches' },
     { label: msg('High-priority follow-ups'), from: (s, f) => f?.totals.high, to: '/app/cases' },
   ],
   admin: [
+    INTAKE_WORK,
     { label: msg('Sightings awaiting review'), from: (s) => s.cards.pendingMatches, to: '/app/matches' },
     { label: msg('High-priority follow-ups'), from: (s, f) => f?.totals.high, to: '/app/cases' },
     { label: msg('Stakeholders on the network'), from: (s, f, c, n) => n?.users.length, to: '/app/network' },
   ],
   super_admin: [
+    INTAKE_WORK,
     { label: msg('Sightings awaiting review'), from: (s) => s.cards.pendingMatches, to: '/app/matches' },
     { label: msg('High-priority follow-ups'), from: (s, f) => f?.totals.high, to: '/app/cases' },
     { label: msg('Stakeholders on the network'), from: (s, f, c, n) => n?.users.length, to: '/app/network' },
@@ -209,6 +220,7 @@ export default function Overview() {
     })
     .filter((item) => item.value != null && Number.isFinite(Number(item.value)));
   const cards = stats.cards || {};
+  const intakes = stats.intakes && typeof stats.intakes === 'object' ? stats.intakes : null;
   const scope = txt(stats.scope);
   // Names translated for the chart legend; the raw English names stay on stats.
   const statusSplit = asList(stats.statusSplit).map((s) => ({
@@ -315,6 +327,55 @@ export default function Overview() {
         </div>
       )}
 
+      {/*
+        Reports from families and NGOs, oldest first. Nothing is compared with
+        them until an officer verifies them, so one that has waited a day is
+        said out loud. Listed by case id, place and wait: the name is in Cases.
+      */}
+      {intakes && intakes.pending > 0 && (
+        <div className={`card p-4 sm:p-5 ${intakes.overdue ? 'ring-1 ring-red-200' : ''}`}>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h3 className="font-semibold">{t('Intakes to verify')}</h3>
+              <p className="text-xs text-gray-500">
+                {t('Reports from families and NGOs. Matching with sightings starts only after an officer verifies one.')}
+              </p>
+            </div>
+            <Link to="/app/cases?status=intake_pending" className="btn-ghost w-full py-1.5 text-center text-xs sm:w-auto">
+              {t('Open all {n}', { n: count(intakes.pending) })}
+            </Link>
+          </div>
+          {intakes.overdue > 0 && (
+            <p role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-800">
+              {intakes.overdue === 1
+                ? t('1 report has waited more than {h} hours for verification.', { h: Number(intakes.overdueAfterHours) || 24 })
+                : t('{n} reports have waited more than {h} hours for verification.', { n: count(intakes.overdue), h: Number(intakes.overdueAfterHours) || 24 })}
+            </p>
+          )}
+          <ul className="mt-3 divide-y divide-black/5">
+            {asList(intakes.oldest).filter((row) => row && row.id).map((row) => (
+              <li key={row.id}>
+                <Link
+                  to={`/app/cases?status=intake_pending&id=${encodeURIComponent(row.id)}`}
+                  className="flex min-h-11 flex-wrap items-center justify-between gap-x-3 gap-y-1 py-2 text-sm hover:text-khozo"
+                >
+                  <span className="min-w-0">
+                    <span className="font-semibold text-ink">{txt(row.id)}</span>
+                    <span className="text-gray-500"> · {categoryLabel(row.personCategory)}</span>
+                    <span className="block truncate text-xs text-gray-500">
+                      {[txt(row.district) || txt(row.districtText), txt(row.state)].filter(Boolean).join(', ') || t('Place not given')}
+                    </span>
+                  </span>
+                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${row.overdue ? 'bg-red-100 text-red-700' : 'bg-amber-50 text-amber-700'}`}>
+                    {t('waiting {h} h', { h: Number(row.waitingHours) || 0 })}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Pilot readiness: the platform operator's panel, and only theirs. */}
       {user.role === 'super_admin' && readiness?.summary && (
         <div className="card p-5">
@@ -369,7 +430,11 @@ export default function Overview() {
             {asList(followups.alerts).filter((alert) => alert && typeof alert === 'object').slice(0, 6).map((alert, i) => (
               <div key={txt(alert.id) || i} className="rounded-xl border border-black/5 bg-gray-50 p-3 text-sm">
                 <div className="flex items-start justify-between gap-2">
-                  <p className="font-semibold text-ink">{txt(alert.title)}</p>
+                  <p className="font-semibold text-ink">
+                    {alert.type === 'intake_overdue'
+                      ? t('Report {id} waiting {h} hours for verification', { id: txt(alert.reportId), h: Number(alert.ageHours) || 0 })
+                      : txt(alert.title)}
+                  </p>
                   <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase ${alert.priority === 'high' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
                     {PRIORITY[alert.priority] ? t(PRIORITY[alert.priority]) : txt(alert.priority)}
                   </span>

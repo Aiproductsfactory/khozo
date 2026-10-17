@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
-import { INDIAN_STATES } from '../../../shared/india.js';
+import DistrictPicker from '../DistrictPicker.jsx';
 import { Logo } from '../components.jsx';
 import { genderLabel, isAdultCategory, PERSON_CATEGORY_OPTIONS } from '../lib.jsx';
 import {
@@ -133,7 +133,9 @@ export default function Capture() {
     personCategory: 'child',
     foundLocation: '',
     state: '',
+    stateCode: '',
     district: '',
+    districtCode: '',
     reporterName: '',
     reporterPhone: '',
     confidentialReporter: false,
@@ -511,26 +513,23 @@ export default function Capture() {
                 </div>
                 <LocationStatus located={located} hasPhoto={!!file} onClear={clearLocation} />
               </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                {/*
-                  The state decides which officers this report reaches, so it is
-                  a list rather than free text — a typo used to leave a sighting
-                  outside every jurisdiction. Still optional: a report with no
-                  location goes to every review desk rather than being refused.
-                */}
-                <div>
-                  <label className="label">{t('State')}</label>
-                  <select className="field" value={form.state} onChange={set('state')}>
-                    <option value="">{t('Select state (helps us route it faster)')}</option>
-                    {INDIAN_STATES.map((state) => (
-                      <option key={state} value={state}>{state}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="label">{t('District')}</label>
-                  <input className="field" value={form.district} onChange={set('district')} placeholder={t('e.g. Mumbai')} autoComplete="off" />
-                </div>
+              {/*
+                The state and district decide which officers this report
+                reaches, so both are chosen from the gazetteer's lists rather
+                than typed: "Ahmdabad" used to reach no Ahmedabad desk. Both
+                stay optional. "Not sure" sends no place and the phone's
+                location decides (shared/geocode.js); a report with no place at
+                all still goes to every review desk rather than being refused.
+              */}
+              <div>
+                <DistrictPicker
+                  allowUnsure
+                  value={form}
+                  onChange={(place) => setForm((f) => ({ ...f, ...place }))}
+                />
+                <p className="mt-1.5 text-xs text-gray-500">
+                  {t('Not sure where you are? Choose “Not sure” and your phone’s location decides which desk is told.')}
+                </p>
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>

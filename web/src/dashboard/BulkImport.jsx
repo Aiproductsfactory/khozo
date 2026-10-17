@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../api.js';
 import { useAuth } from '../auth.jsx';
 import { currentLocale, msg, useT } from '../i18n.jsx';
-import { INDIAN_STATES } from '../../../shared/india.js';
+import DistrictPicker from '../DistrictPicker.jsx';
 import { colLetters, loadMedia, openWorkbook, readSheet } from '../bulk/xlsx.js';
 import { csvToSheet, parseCsv, toCsv } from '../bulk/csv.js';
 import { detectLayout, rowTexts, usesLegacyFont } from '../bulk/prepare.js';
@@ -348,8 +348,15 @@ export default function BulkImport() {
   const [thumbs, setThumbs] = useState({});
   const [overrides, setOverrides] = useState({});
   const [existing, setExisting] = useState(null);
-  const [state, setState] = useState(jurisdiction.state || '');
-  const [district, setDistrict] = useState(jurisdiction.district || '');
+  // The batch's place, as the district picker gives it: canonical names and
+  // LGD codes (shared/geo). Starts on the importing account's own area.
+  const [place, setPlace] = useState(() => ({
+    state: jurisdiction.state || '',
+    stateCode: jurisdiction.stateCode || '',
+    district: jurisdiction.district || '',
+    districtCode: jurisdiction.districtCode || '',
+  }));
+  const { state, district } = place;
   const [restrict, setRestrict] = useState(true);
   const [filter, setFilter] = useState('all');
   const [page, setPage] = useState(0);
@@ -489,10 +496,11 @@ export default function BulkImport() {
 
   useEffect(() => {
     if (!records.length || !gujaratPreset) return;
-    if (!state) setState('Gujarat');
+    if (!state) setPlace((p) => ({ ...p, state: 'Gujarat', stateCode: '24', district: '', districtCode: '' }));
     if (!district && !jurisdiction.district) {
       const keyed = records.filter((r) => r.station?.key && GUJARAT_STATIONS[r.station.key.toLowerCase()]).length;
-      if (keyed >= records.length / 2) setDistrict('Ahmedabad');
+      // Ahmedabad City's stations: LGD state 24, district 438.
+      if (keyed >= records.length / 2) setPlace((p) => ({ ...p, state: 'Gujarat', stateCode: '24', district: 'Ahmedabad', districtCode: '438' }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [records, gujaratPreset]);
@@ -503,7 +511,10 @@ export default function BulkImport() {
     return `Bulk import (${kind}) "${fileName}"${sheetName ? `, sheet ${sheetName}` : ''}`;
   }, [sheets, sheetIndex, gujaratPreset, preset, fileName]);
 
-  const batch = useMemo(() => ({ state, district, restrictToPolice, sourceLabel, user }), [state, district, restrictToPolice, sourceLabel, user]);
+  const batch = useMemo(
+    () => ({ ...place, restrictToPolice, sourceLabel, user }),
+    [place, restrictToPolice, sourceLabel, user]
+  );
 
   const rows = useMemo(() => records.map((rec) => {
     const o = overrides[rec.key] || {};
@@ -801,18 +812,14 @@ export default function BulkImport() {
 
           <div className="border-t border-black/5 pt-4">
             <h4 className="text-sm font-semibold">{t('For every row in this file')}</h4>
-            <div className="mt-3 grid gap-4 sm:grid-cols-2">
-              <div>
-                <label className="label">{t('State')} *</label>
-                <select className="field" value={state} onChange={(e) => setState(e.target.value)} disabled={running}>
-                  <option value="">{t('Choose a state')}</option>
-                  {INDIAN_STATES.map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="label">{t('District')}</label>
-                <input className="field" value={district} onChange={(e) => setDistrict(e.target.value)} disabled={running} />
-              </div>
+            <div className="mt-3">
+              <DistrictPicker
+                value={place}
+                onChange={(next) => setPlace((p) => ({ ...p, ...next }))}
+                allowUnsureDistrict
+                unsureLabel={t('Not set')}
+                disabled={running}
+              />
             </div>
             <p className="mt-2 text-xs text-gray-500">{t('Defaults to your own jurisdiction. A State or District column in the file overrides this for its row.')}</p>
             {scopeWarning && (

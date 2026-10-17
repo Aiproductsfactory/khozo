@@ -22,6 +22,7 @@ import registerAuthRoutes from '../shared/routes/auth.js';
 import registerReportRoutes from '../shared/routes/reports.js';
 import registerDashboardRoutes from '../shared/routes/dashboard.js';
 import registerGrievanceRoutes from '../shared/routes/grievances.js';
+import registerGeoRoutes from '../shared/routes/geo.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -64,6 +65,7 @@ function collectRoutes() {
   registerReportRoutes(recorder('/reports'), deps);
   registerDashboardRoutes(recorder('/dashboard'), deps);
   registerGrievanceRoutes(recorder('/grievances'), deps);
+  registerGeoRoutes(recorder('/geo'), deps);
   found.push({ method: 'GET', path: '/health' });
 
   return found;

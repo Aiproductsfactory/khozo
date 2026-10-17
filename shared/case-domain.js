@@ -17,13 +17,23 @@
 
 import crypto from 'node:crypto';
 
-import { canAccessReport } from './scope.js';
+import { canAccessReport, sameDistrictPlace, sameStatePlace } from './scope.js';
+import { canonicalPlace } from './geo/index.js';
 
 const DAY = 86400000;
 const REPORT_PHOTO_RETENTION_DAYS = 3650;
 const SIGHTING_PHOTO_RETENTION_DAYS = 180;
 const FORMAL_CASE_ROLES = ['police', 'sjpu', 'admin', 'super_admin'];
 const REPORT_CREATE_ROLES = ['police', 'sjpu', 'admin', 'super_admin', 'parent', 'ngo'];
+/** A missing person's gender, as a case records it. */
+const REPORT_GENDERS = ['Male', 'Female', 'Other', 'Unknown'];
+/**
+ * Who is told that a family or an NGO has registered a case: the desks that
+ * verify it (police and SJPU) and the child welfare committee of the district.
+ */
+const INTAKE_ALERT_ROLES = ['police', 'sjpu', 'cwc'];
+/** How long a family's report may wait for an officer before it is overdue. */
+const INTAKE_OVERDUE_MS = 24 * 3600000;
 const REVIEW_ROLES = ['police', 'sjpu', 'ahtu', 'dcrb', 'dlsa', 'admin', 'super_admin', 'cwc', 'dcpu', 'rpf', 'cci', 'saa', 'jjb', 'state_nodal', 'sara', 'crime_bureau'];
 const CWC_FOLLOWUP_ROLES = ['cwc', 'dcpu', 'admin', 'super_admin', 'state_nodal', 'sara'];
 const FOUND_INTAKE_ROLES = ['cwc', 'dcpu', 'cci', 'saa', 'police', 'sjpu', 'admin', 'super_admin', 'state_nodal', 'sara'];
@@ -446,24 +456,72 @@ function generatedFirNo() {
   return `FIR/${new Date().getFullYear()}/${Math.floor(1000 + Math.random() * 9000)}`;
 }
 
+/**
+ * Why a place an officer entered cannot be stored, or null.
+ *
+ * An officer registering a case, transferring one, or provisioning a desk
+ * picks a state and a district from the gazetteer's lists (GET /api/geo/states,
+ * GET /api/geo/districts?state=CODE); text that names neither is refused with
+ * the list to choose from, because a case filed under a district that does
+ * not exist is a case no district desk will ever see. A citizen's sighting or
+ * a family's report is never refused for this: its unrecognised text is kept
+ * (canonicalPlace, `districtText`) and the record reaches every district desk
+ * of the state instead.
+ *
+ * `input` is what was sent ({ state, district }); `place` is canonicalPlace's
+ * answer for it.
+ */
+function jurisdictionError(input = {}, place = canonicalPlace(input)) {
+  const state = String(input.state || '').trim();
+  const district = String(input.district || '').trim();
+  if ((state || input.stateCode) && !place.stateCode) {
+    return {
+      error: `"${state || input.stateCode}" is not a state or union territory of India. Choose one from the list.`,
+      code: 'unknown_state',
+      field: 'state',
+      options: '/api/geo/states',
+    };
+  }
+  if ((district || input.districtCode) && !place.districtCode) {
+    if (!place.stateCode) {
+      return {
+        error: 'Choose the state before the district.',
+        code: 'unknown_state',
+        field: 'state',
+        options: '/api/geo/states',
+      };
+    }
+    return {
+      error: `"${district || input.districtCode}" is not a district of ${place.state}. Choose one from the list.`,
+      code: 'unknown_district',
+      field: 'district',
+      options: `/api/geo/districts?state=${encodeURIComponent(place.stateCode)}`,
+    };
+  }
+  return null;
+}
+
 function canTransferToJurisdiction(user, target) {
-  if (!target.state || !target.district) return false;
+  if (!(target.state || target.stateCode) || !(target.district || target.districtCode)) return false;
   if (user.role === 'super_admin') return true;
-  return target.state === user.jurisdiction?.state;
+  return sameStatePlace(target, user.jurisdiction || {});
 }
 
 function canAssignUserToReport(actor, assignee, report) {
   if (!assignee || !CASE_ASSIGNABLE_ROLES.includes(assignee.role)) return false;
   if (!canAccessReport(actor, report)) return false;
 
-  const reportState = report.state || null;
-  const reportDistrict = report.district || null;
-  const userState = assignee.jurisdiction?.state || null;
-  const userDistrict = assignee.jurisdiction?.district || null;
+  const mine = assignee.jurisdiction || {};
+  const hasUserState = Boolean(mine.state || mine.stateCode);
+  const hasUserDistrict = Boolean(mine.district || mine.districtCode);
+  const reportHasDistrict = Boolean(report.district || report.districtCode);
+  const stateOk = !hasUserState || sameStatePlace(mine, report);
 
-  if (assignee.role === 'admin') return !userState || userState === reportState;
-  if (['state_nodal', 'sara', 'crime_bureau'].includes(assignee.role)) return !userState || userState === reportState;
-  return (!userState || userState === reportState) && (!userDistrict || userDistrict === reportDistrict);
+  if (assignee.role === 'admin') return stateOk;
+  if (['state_nodal', 'sara', 'crime_bureau'].includes(assignee.role)) return stateOk;
+  // A case placed in the state but in no district yet is every district
+  // desk's to pick up (shared/scope.js), so any of them may be assigned it.
+  return stateOk && (!hasUserDistrict || !reportHasDistrict || sameDistrictPlace(mine, report));
 }
 
 function assignableUsersForReport(actor, report, allUsers = []) {
@@ -740,6 +798,10 @@ function citizenCaseView(report) {
   const registered = Array.isArray(report.transfers) && report.transfers[0]?.from ? report.transfers[0].from : report;
   view.state = registered.state || null;
   view.district = registered.district || null;
+  view.stateCode = registered.stateCode || null;
+  view.districtCode = registered.districtCode || null;
+  // What the family wrote for a district the gazetteer did not recognise.
+  view.districtText = registered.districtText || null;
   view.personCategory = personCategoryOf(report);
   return view;
 }
@@ -972,13 +1034,21 @@ function duplicateScore(candidate, incoming, { nonFamilyPhones = null } = {}) {
   const incomingPhone = familyPhone(incoming, nonFamilyPhones);
   if (candidatePhone && incomingPhone && candidatePhone === incomingPhone) score += 0.28;
   if (candidate.childAadhar && incoming.childAadhar && candidate.childAadhar === incoming.childAadhar) score += 0.45;
-  if (candidate.gender && incoming.gender && candidate.gender === incoming.gender) score += 0.08;
+  // "Unknown" twice is two people nobody recorded, not a shared fact.
+  if (candidate.gender && incoming.gender && candidate.gender !== 'Unknown' && candidate.gender === incoming.gender) score += 0.08;
   if (candidate.age != null && incoming.age != null) {
     const diff = Math.abs(Number(candidate.age) - Number(incoming.age));
     score += Math.max(0, 0.12 - diff * 0.04);
   }
-  if (norm(candidate.state) && norm(candidate.state) === norm(incoming.state)) score += 0.08;
-  if (norm(candidate.district) && norm(candidate.district) === norm(incoming.district)) score += 0.1;
+  // Places by LGD code where both carry one (shared/geo), else by name.
+  const sameStateHere = candidate.stateCode && incoming.stateCode
+    ? candidate.stateCode === incoming.stateCode
+    : Boolean(norm(candidate.state)) && norm(candidate.state) === norm(incoming.state);
+  const sameDistrictHere = candidate.districtCode && incoming.districtCode
+    ? candidate.districtCode === incoming.districtCode
+    : Boolean(norm(candidate.district)) && norm(candidate.district) === norm(incoming.district);
+  if (sameStateHere) score += 0.08;
+  if (sameDistrictHere) score += 0.1;
   return Math.min(0.99, Number(score.toFixed(2)));
 }
 
@@ -1364,7 +1434,9 @@ function validateMissingReport(body, file) {
   if (personCategory === 'woman' && body.gender === 'Male') errors.push('Gender for a missing woman must be Female or Other');
   if (body.childAadhar && !/^\d{12}$/.test(digits(body.childAadhar))) errors.push('Child Aadhar must be 12 digits');
   if (body.parentPhone && !/^\d{7,15}$/.test(digits(body.parentPhone))) errors.push('Guardian mobile number must be 7 to 15 digits');
-  if (body.gender && !['Male', 'Female', 'Other'].includes(body.gender)) errors.push('Gender must be Male, Female, or Other');
+  // "Unknown" is an answer: a register row, or a family that will not say,
+  // is better recorded as not known than defaulted to a boy.
+  if (body.gender && !REPORT_GENDERS.includes(body.gender)) errors.push('Gender must be Male, Female, Other, or Unknown');
   if (body.producedByType && !PRODUCED_BY_TYPES[body.producedByType]) errors.push(`Produced-by type must be one of ${Object.keys(PRODUCED_BY_TYPES).join(', ')}`);
   if (body.educationLevel && !EDUCATION_LEVELS[body.educationLevel]) errors.push(`Education level must be one of ${Object.keys(EDUCATION_LEVELS).join(', ')}`);
   if (body.disabilityStatus && !YES_NO_UNKNOWN[body.disabilityStatus]) errors.push('Disability status must be yes, no, or unknown');
@@ -1428,9 +1500,13 @@ function validateFoundReport(body, file) {
  * never in nobody's.
  */
 function inferLocationScope(body = {}) {
-  const state = cleanText(body.state, 80) || null;
-  const district = cleanText(body.district, 80) || null;
-  return { state, district, unassigned: !state && !district };
+  const { resolved, ...place } = canonicalPlace({
+    state: cleanText(body.state, 80),
+    district: cleanText(body.district, 80),
+    stateCode: cleanText(body.stateCode, 8),
+    districtCode: cleanText(body.districtCode, 40),
+  });
+  return { ...place, unassigned: !place.state && !place.district && !place.districtText };
 }
 
 
@@ -1520,6 +1596,10 @@ export {
   isPendingCitizenIntake,
   generatedFirNo,
   canTransferToJurisdiction,
+  jurisdictionError,
+  REPORT_GENDERS,
+  INTAKE_ALERT_ROLES,
+  INTAKE_OVERDUE_MS,
   canAssignUserToReport,
   assignableUsersForReport,
   isPublicAppeal,
