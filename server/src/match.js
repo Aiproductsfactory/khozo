@@ -151,8 +151,13 @@ async function compareFacesAarakshak(cfg, sourceBuf, targetBuf, attempt = 0) {
     });
 
     if (!res.ok) {
+      // Aarakshak tags every response with X-Request-ID; their support needs it
+      // to trace a failure, so it goes into every log line and result.
+      const requestId = res.headers.get('x-request-id') || null;
+      const ref = requestId ? ` (X-Request-ID ${requestId})` : '';
       if (res.status >= 500 && attempt === 0) {
         clearTimeout(timer);
+        console.warn(`[MatchEngine] Aarakshak HTTP ${res.status}${ref}, retrying once`);
         return compareFacesAarakshak(cfg, sourceBuf, targetBuf, attempt + 1);
       }
       const detail = await res.text().catch(() => '');
@@ -163,11 +168,11 @@ async function compareFacesAarakshak(cfg, sourceBuf, targetBuf, attempt = 0) {
         return { status: 'no_face', sourceFaces: 0, targetFaces: 0, warnings: ['no_face_detected'] };
       }
       if (res.status === 401 || res.status === 403) {
-        console.warn('[MatchEngine] Aarakshak rejected the API key — check AARAKSHAK_API_KEY.');
+        console.warn(`[MatchEngine] Aarakshak rejected the API key${ref} — check AARAKSHAK_API_KEY.`);
       } else {
-        console.warn(`[MatchEngine] Aarakshak HTTP ${res.status}: ${detail.slice(0, 200)}`);
+        console.warn(`[MatchEngine] Aarakshak HTTP ${res.status}${ref}: ${detail.slice(0, 200)}`);
       }
-      return { status: 'no_answer', detail: `HTTP ${res.status}` };
+      return { status: 'no_answer', detail: `HTTP ${res.status}${ref}`, requestId };
     }
 
     const data = await res.json();

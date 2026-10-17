@@ -12,7 +12,7 @@
 |---|---|---|---|---|
 | 1 | Cloudflare, Inc. | Yes: all traffic | Global edge network; [regional processing not configured] | [Cloudflare terms / DPA — confirm] |
 | 2 | Supabase Inc. (database host) | Yes: every record and photo | [Project region — confirm] | [Supabase DPA — confirm] |
-| 3 | Aarakshak ([legal entity — confirm]) | Yes: face images | [Location — confirm; stated as India] | [confirm] |
+| 3 | Aarakshak ([legal entity — confirm]) | Yes: face images | Microsoft Azure, Central India (Aarakshak, 17 Oct 2026) | [DPA to sign; templates only, deletion certificate offered] |
 | 4 | Amazon Web Services (Rekognition) | Yes: face images | `ap-south-1` Mumbai by default | [AWS customer agreement and DPA; AI opt-out — confirm] |
 | 5 | OpenStreetMap Foundation (Nominatim) | Yes: sighting coordinates | [Outside India — confirm] | None: public service under its usage policy |
 | 6 | Google LLC (Google Fonts) | Yes: visitors' IP addresses | Global | None: public service |
@@ -50,8 +50,9 @@ No analytics, advertising or crash-reporting service was found in `web/` or `mob
 |---|---|
 | What it does | The primary face engine. Compares two face images and returns a similarity score (`worker/src/match.js:6`, `POST https://aarakshak.com/api/v1/compare`). |
 | What it receives | **Pairs of face images**: a sighting photo with each of up to 25 open-case photos (`worker/src/match.js:545`); a new case photo with each of up to 50 stored sightings (`worker/src/match.js:569`); and each sighting photo against itself, to check that it shows a person (`worker/src/match.js:237-255`). Police-only case photos are among them. No names or other fields are sent. |
-| Where | [Confirm. Khozo's landing page says "on Indian infrastructure".] |
-| Retention and training | [Confirm in writing that no image, template or result is kept after the answer, and nothing is used for training: agreement clause 10.2.] |
+| Where | Microsoft Azure, Central India region; nothing stored outside India (Aarakshak's written reply of 17 Oct 2026). [Confirm in the DPA.] |
+| Retention and training | Aarakshak states it never stores photos, only face templates with their box and quality score (gallery API), that deleting a person removes their templates at once, and that deleting a gallery returns a signed deletion certificate (17 Oct 2026). [Still to confirm in writing: no use for training, clause 10.2.] |
+| Accuracy limits | Aarakshak's model is validated on adults only. It is not yet measured on children, on photos taken years apart, or on post-mortem photographs; every result is a candidate for an officer, never an identification (17 Oct 2026). |
 | Why | Matching sightings with missing persons. |
 
 ## 4. Amazon Web Services — Rekognition
@@ -61,8 +62,8 @@ No analytics, advertising or crash-reporting service was found in `web/` or `mob
 | What it does | The confirming engine: re-scores Aarakshak's top 5 candidates and withholds any it scores below 0.80; takes over if Aarakshak does not answer; and screens a photo for a face when Aarakshak cannot (`worker/src/match.js:360-410,476-510`; `worker/src/rekognition.js`). |
 | What it receives | Pairs of face images through `CompareFaces`. No names. |
 | Where | `ap-south-1` (Mumbai) unless `AWS_REGION` is set otherwise (`worker/src/rekognition.js:69`). The agreement fixes the region (clause 7.3). |
-| Retention and training | AWS may use content processed by some AI services to improve them unless an AI-services opt-out policy is applied. [Confirm the opt-out is applied: agreement clause 10.2.] |
-| Status | Khozo's landing page calls Rekognition "demo only" and says production will run on Aarakshak alone. [Confirm whether it is configured on the live service.] Removing it changes how matches are filtered (DPIA R1). |
+| Retention and training | AWS may use content processed by some AI services to improve them unless an AI-services opt-out policy is applied. **Action:** the AWS account owner applies an AI-services opt-out policy covering Rekognition (AWS Organizations → Policies → AI services opt-out policies, attached to the account), as Aarakshak also asked on 17 Oct 2026. [Record the date applied.] |
+| Status | Configured and answering on the live service (provider probe, 17 Oct 2026). Name it as a sub-processor in every department's data-sharing agreement. Removing it changes how matches are filtered (DPIA R1). |
 
 ## 5. OpenStreetMap Foundation — Nominatim
 

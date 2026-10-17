@@ -172,7 +172,14 @@ async function compareFacesAarakshak(cfg, sourceBuf, targetBuf, attempt = 0) {
 
     if (!res.ok) {
       const detail = await res.text().catch(() => '');
-      if (res.status >= 500 && attempt === 0) return compareFacesAarakshak(cfg, sourceBuf, targetBuf, attempt + 1);
+      // Aarakshak tags every response with X-Request-ID; their support needs it
+      // to trace a failure, so it goes into every log line and result.
+      const requestId = res.headers.get('x-request-id') || null;
+      const ref = requestId ? ` (X-Request-ID ${requestId})` : '';
+      if (res.status >= 500 && attempt === 0) {
+        console.warn(`[WorkerMatchEngine] Aarakshak HTTP ${res.status}${ref}, retrying once: ${detail.slice(0, 200)}`);
+        return compareFacesAarakshak(cfg, sourceBuf, targetBuf, attempt + 1);
+      }
       // "No detectable face" is an answer about this pair - the engine could
       // not find a face to compare - and the pipeline treats it as unknown,
       // not as a score of 0 (no single-engine veto).
@@ -181,8 +188,8 @@ async function compareFacesAarakshak(cfg, sourceBuf, targetBuf, attempt = 0) {
       }
       // Logged, always. A provider that fails silently is indistinguishable
       // from one that is working and finding nothing.
-      console.warn(`[WorkerMatchEngine] Aarakshak HTTP ${res.status}: ${detail.slice(0, 200)}`);
-      return { status: 'no_answer', detail: `HTTP ${res.status}` };
+      console.warn(`[WorkerMatchEngine] Aarakshak HTTP ${res.status}${ref}: ${detail.slice(0, 200)}`);
+      return { status: 'no_answer', detail: `HTTP ${res.status}${ref}`, requestId };
     }
     const data = await res.json();
     const raw = data.score ?? data.similarity ?? data.match_confidence;
@@ -287,7 +294,7 @@ export async function probeMatchProviders(env, photoBuf) {
       const text = await res.text().catch(() => '');
       const elapsedMs = Date.now() - started;
       if (!res.ok) {
-        results.push({ provider: ENGINES.aarakshak.provider, ok: false, status: res.status, elapsedMs, detail: text.slice(0, 300) });
+        results.push({ provider: ENGINES.aarakshak.provider, ok: false, status: res.status, elapsedMs, requestId: res.headers.get('x-request-id') || null, detail: text.slice(0, 300) });
       } else {
         let score = null;
         try {
