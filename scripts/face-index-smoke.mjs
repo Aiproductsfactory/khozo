@@ -31,7 +31,7 @@ import process from 'node:process';
 import registerReportRoutes from '../shared/routes/reports.js';
 import registerDashboardRoutes from '../shared/routes/dashboard.js';
 import registerFaceIndexAdminRoutes from '../shared/routes/face-index-admin.js';
-import { aarakshakGalleryIndex, createFaceIndex, safeFaceIndex } from '../shared/face-index.js';
+import { aarakshakGalleryIndex, createFaceIndex, isRetryableIndexFailure, safeFaceIndex } from '../shared/face-index.js';
 import { detectPerson, rankMatches, rankSightingMatches } from '../worker/src/match.js';
 
 const checks = [];
@@ -150,6 +150,19 @@ function fakeGallery() {
     check('a refused photo comes back with Aarakshak\'s reason',
       several.ok === false && several.reason === 'multiple_faces' && small.ok === false && small.reason === 'face_too_small' && small.warnings[0] === 'small',
       JSON.stringify({ several, small }));
+
+    // Aarakshak's own error body, { detail: { code, message } }.
+    fake.queue.push({ status: 422, body: { detail: { code: 'no_face_detected', message: 'No face was detected in the image.' } } });
+    const noFaceCode = await g.enroll('r_aaaa1111', photo('A', 'case'));
+    fake.queue.push({ status: 422, body: { detail: { code: 'image_decode_failed', message: 'The image could not be decoded.' } } });
+    const otherCode = await g.enroll('r_aaaa1111', photo('A', 'case'));
+    fake.queue.push({ status: 401, body: { detail: { code: 'unauthorized', message: 'A valid X-API-Key header is required.' } } });
+    const badKey = await g.enroll('r_aaaa1111', photo('A', 'case'));
+    check('a 422 refusal is read for its reason and message; a refused key is retryable, not the photo\'s fault',
+      noFaceCode.reason === 'no_face' && noFaceCode.detail === 'No face was detected in the image.' &&
+        otherCode.reason === 'refused_image_decode_failed' && otherCode.detail === 'The image could not be decoded.' &&
+        badKey.reason === 'unauthorized' && isRetryableIndexFailure('unauthorized') && !isRetryableIndexFailure('refused_image_decode_failed'),
+      JSON.stringify({ noFaceCode, otherCode, badKey }));
 
     const hits = await g.search(photo('A', 'sighting'), 50);
     const searchReq = fake.requests.at(-1);
@@ -463,6 +476,8 @@ try {
   open('r_bad00001', 'M', { faceIndex: { provider: 'gallery-test', status: 'failed', reason: 'multiple_faces', at: old } });
   open('r_marked01', 'P3', { faceIndex: { provider: 'gallery-test', status: 'enrolled', reason: null, at: old } });
   store.reports.push({ id: 'r_nophoto1', childName: 'Child Q', status: 'missing', intakeStatus: 'verified', photoFile: 'r_nophoto1.jpg', createdAt: Date.now() });
+  open('r_refuse01', 'P4', { faceIndex: { provider: 'gallery-test', status: 'failed', reason: 'http_422', at: old } });
+  open('r_weak0001', 'P5', { faceIndex: { provider: 'gallery-test', status: 'enrolled', reason: null, warnings: ['face_too_small'], at: old } });
   open('r_found001', 'F', { status: 'found', faceIndex: { provider: 'gallery-test', status: 'enrolled', reason: null, at: old } });
   open('r_closed01', 'C', { status: 'closed', faceIndex: { provider: 'gallery-test', status: 'enrolled', reason: null, at: old } });
 
@@ -507,7 +522,7 @@ try {
     readPhoto: async (key) => s.photos.get(key) || null,
     addAudit: (row) => s.audit.push(row),
   });
-  const g = galleryIndex(['r_found001', 'r_stray001', 'aarakshak-demo-7']);
+  const g = galleryIndex(['r_found001', 'r_stray001', 'aarakshak-demo-7', 'r_weak0001']);
   const admin = harness(registerFaceIndexAdminRoutes, adminDeps(g, store));
 
   const status = await admin('GET', '/face-index', { user: superAdmin });
@@ -518,6 +533,10 @@ try {
   check('and lists the cases that need a better photo by id and reason only',
     JSON.stringify(status.payload.needsPhoto.map((r) => Object.keys(r).sort())) === JSON.stringify([['at', 'id', 'reason']]) && status.payload.needsPhoto[0].reason === 'multiple_faces',
     JSON.stringify(status.payload.needsPhoto));
+
+  check('it counts faces enrolled small or unclear, and lists other refusals with their reason',
+    status.payload.counts.weak === 1 && status.payload.counts.refused === 1 && status.payload.refused[0].id === 'r_refuse01' && status.payload.refused[0].reason === 'http_422',
+    JSON.stringify({ counts: status.payload.counts, refused: status.payload.refused }));
 
   const run = await admin('POST', '/face-index/backfill', { user: superAdmin, body: { limit: 20 } });
   const ops = g.log.map(([op, id]) => `${op}:${id}`);
@@ -536,6 +555,11 @@ try {
     run.payload.enrolled === 3 && run.payload.removed === 3 && run.payload.rejected === 1 && run.payload.remaining === 0 && run.payload.rateLimited === false,
     JSON.stringify(run.payload));
   check('and is audited', store.audit.some((a) => a.action === 'face_index.backfill' && a.metadata.enrolled === 3));
+  check('a photo refused for another reason is not sent again unasked', !ops.includes('enroll:r_refuse01'));
+  const retry = await admin('POST', '/face-index/backfill', { user: superAdmin, body: { limit: 20, retryRefused: true } });
+  check('and is, once, when the batch is asked to',
+    retry.payload.enrolled === 1 && g.log.filter(([op, id]) => op === 'enroll' && id === 'r_refuse01').length === 1 && !g.log.some(([op, id]) => op === 'enroll' && id === 'r_bad00001') && retry.payload.remaining === 0,
+    JSON.stringify(retry.payload));
 
   // A 429 stops the batch; the rate-limited case is due again in the same run.
   const store2 = { reports: [], audit: [], photos: new Map() };

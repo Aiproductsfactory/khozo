@@ -46,13 +46,48 @@ export const INDEX_TOP_K = 50;
 export const PHOTO_REJECTION_REASONS = new Set(['no_face', 'multiple_faces', 'face_too_small', 'face_not_found_at_box']);
 
 /**
+ * The warnings Aarakshak attaches to a face it enrolled but could barely use.
+ * Such a case is in the gallery, and will be matched less reliably than one
+ * with a larger, sharper face; the desk is told so.
+ */
+export const WEAK_FACE_WARNINGS = new Set(['face_too_small', 'face_small_in_frame', 'low_detector_confidence']);
+
+/**
  * Whether a failed enrolment is worth trying again as it is: the provider did
- * not answer, was busy or broke. A rejected photo, or any other refusal, is
- * not.
+ * not answer, was busy or broke, or refused the key (a key problem, not the
+ * photo's). A rejected photo, or any other refusal, is not.
  */
 export function isRetryableIndexFailure(reason) {
   const r = String(reason || '');
-  return r === 'no_answer' || r === 'rate_limited' || r === 'error' || /^http_5\d\d$/.test(r);
+  return r === 'no_answer' || r === 'rate_limited' || r === 'unauthorized' || r === 'error' || /^http_5\d\d$/.test(r);
+}
+
+// Aarakshak's refusal codes and messages, read for the photo reasons above.
+const PHOTO_REFUSAL_PATTERNS = [
+  [/no[_\s-]?faces?\b|face[_\s-]?not[_\s-]?(found|detected)|no[_\s-]?face[_\s-]?detected/i, 'no_face'],
+  [/multiple|several|more[_\s-]?than[_\s-]?one|too[_\s-]?many[_\s-]?faces/i, 'multiple_faces'],
+  [/too[_\s-]?small|small[_\s-]?face|low[_\s-]?resolution/i, 'face_too_small'],
+];
+
+/**
+ * Why Aarakshak refused a request, from its error body: its own
+ * `{ detail: { code, message } }`, FastAPI's `{ detail: [{ msg }] }`, or a
+ * plain `{ detail: "..." }`. A refusal about the face is read as one of the
+ * photo reasons; any other keeps Aarakshak's code (`refused_<code>`).
+ */
+export function refusalOf(data) {
+  const d = data?.detail;
+  let code = '';
+  let message = '';
+  if (Array.isArray(d)) message = d.map((e) => (typeof e?.msg === 'string' ? e.msg : '')).filter(Boolean).join('; ');
+  else if (d && typeof d === 'object') {
+    code = typeof d.code === 'string' ? d.code : '';
+    message = typeof d.message === 'string' ? d.message : '';
+  } else if (typeof d === 'string') message = d;
+  if (!code && !message) return null;
+  const mapped = PHOTO_REJECTION_REASONS.has(code) ? code : PHOTO_REFUSAL_PATTERNS.find(([re]) => re.test(`${code} ${message}`))?.[1];
+  const ownCode = code.replace(/[^A-Za-z0-9_]/g, '_').slice(0, 40);
+  return { reason: mapped || (ownCode ? `refused_${ownCode}` : null), message: message.slice(0, 200) || null };
 }
 
 const TIMEOUT_MS = 12000;
@@ -218,6 +253,7 @@ export function aarakshakGalleryIndex({ url, key, gallery = '', fetchImpl = fetc
   function reasonOf(res) {
     if (res.status == null) return 'no_answer';
     if (res.status === 429) return 'rate_limited';
+    if (res.status === 401 || res.status === 403) return 'unauthorized';
     return `http_${res.status}`;
   }
 
@@ -253,9 +289,11 @@ export function aarakshakGalleryIndex({ url, key, gallery = '', fetchImpl = fetc
         return { ok: true, faceId: typeof verdict?.face_id === 'string' ? verdict.face_id : null, quality, warnings, requestId: res.requestId };
       }
       const status = typeof verdict?.status === 'string' ? verdict.status : '';
-      const reason = status && status !== 'enrolled' ? status : res.ok ? 'not_enrolled' : reasonOf(res);
+      // A refusal (4xx, other than the key or the rate) says why in its body.
+      const refusal = !res.ok && res.status >= 400 && res.status < 500 && ![401, 403, 429].includes(res.status) ? refusalOf(res.data) : null;
+      const reason = status && status !== 'enrolled' ? status : res.ok ? 'not_enrolled' : refusal?.reason || reasonOf(res);
       warn(`enrol ${caseId}`, res, reason);
-      return { ok: false, reason, quality, warnings, requestId: res.requestId };
+      return { ok: false, reason, detail: refusal?.message || null, quality, warnings, requestId: res.requestId };
     },
 
     async search(photo, topK = INDEX_TOP_K) {
@@ -420,6 +458,8 @@ export async function enrollCaseInIndex(faceIndex, report, photo, updateReport) 
     reason: res?.ok ? null : res?.reason || 'error',
     quality: Number.isFinite(res?.quality) ? res.quality : null,
     warnings: Array.isArray(res?.warnings) && res.warnings.length ? res.warnings : null,
+    // Aarakshak's own words for a refusal, and the id its support asks for.
+    detail: res?.ok ? null : res?.detail || null,
     requestId: res?.ok ? null : res?.requestId || null,
     at: new Date().toISOString(),
   };

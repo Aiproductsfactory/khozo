@@ -17,6 +17,7 @@ import { useAuth } from '../auth.jsx';
 import { asList, fmtDate, isAdultCase, personCategoryOf, ProtectedImage, txt, genderLabel } from '../lib.jsx';
 import { currentLocale, msg, useT } from '../i18n.jsx';
 import { expectedAgeAt } from '../../../shared/match-pool.js';
+import { WEAK_FACE_WARNINGS } from '../../../shared/face-index.js';
 import { useDisplay } from '../useDisplay.js';
 import { useBackClose } from '../useBackClose.js';
 import { ActionMessage } from './useAction.jsx';
@@ -119,13 +120,22 @@ const FACE_INDEX_REFUSALS = {
 };
 
 /**
- * Why the face search gallery (shared/face-index.js) refused a case's photo,
- * when it did. The case is then searched only pairwise, a few cases at a time;
- * replacing the photo puts it in the gallery.
+ * What the face search gallery (shared/face-index.js) made of a case's photo,
+ * when the desk should know: it refused it - the case is then searched only
+ * pairwise, a few cases at a time - or took it with a face too small or
+ * unclear to match reliably. Replacing the photo enrols the new one.
  */
 export function faceIndexFlag(faceIndex) {
-  if (!faceIndex || typeof faceIndex !== 'object' || faceIndex.status !== 'failed') return null;
-  const label = FACE_INDEX_REFUSALS[faceIndex.reason];
+  if (!faceIndex || typeof faceIndex !== 'object') return null;
+  if (faceIndex.status === 'enrolled') {
+    return Array.isArray(faceIndex.warnings) && faceIndex.warnings.some((w) => WEAK_FACE_WARNINGS.has(w))
+      ? { label: msg('In the face search gallery, but the face is small or unclear — a larger, sharper photo will match better'), className: 'bg-slate-100 text-slate-700 ring-slate-200' }
+      : null;
+  }
+  if (faceIndex.status !== 'failed') return null;
+  const reason = String(faceIndex.reason || '');
+  const label = FACE_INDEX_REFUSALS[reason]
+    || (reason.startsWith('refused_') || /^http_4\d\d$/.test(reason) ? msg('Face search gallery refused this photo — use a clearer, larger photo of the face') : null);
   return label ? { label, className: 'bg-amber-50 text-amber-800 ring-amber-200' } : null;
 }
 

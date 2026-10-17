@@ -328,21 +328,41 @@ export default function FoundReports({ view = 'matches' }) {
   // The national desk fills the face search gallery a batch at a time,
   // pausing between batches as long as the server says (Aarakshak's pilot
   // allows 30 calls a minute), until nothing is left or a batch gets nowhere.
-  const runFill = () => action.run('index-fill', async () => {
+  // `retryRefused` also sends again the photos refused for a reason other
+  // than the face (POST /dashboard/face-index/backfill).
+  const runFill = (retryRefused = false) => action.run('index-fill', async () => {
     let since = null;
     let enrolled = 0;
     let removed = 0;
     let last = null;
     let previous = Infinity;
     let limitedInARow = 0;
-    for (let round = 0; round < 60; round += 1) {
+    const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    // A batch request that fails outright (the network, a busy Worker) is
+    // tried twice more, half a minute apart, before the run gives up.
+    const batch = async () => {
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          return await api.post('/dashboard/face-index/backfill', { limit: 10, ...(since ? { since } : {}), ...(retryRefused ? { retryRefused: true } : {}) });
+        } catch (err) {
+          if (attempt >= 2) throw err;
+          // eslint-disable-next-line no-await-in-loop
+          await pause(30000);
+        }
+      }
+    };
+    for (let round = 0; round < 200; round += 1) {
       // eslint-disable-next-line no-await-in-loop
-      last = await api.post('/dashboard/face-index/backfill', { limit: 10, ...(since ? { since } : {}) });
+      last = await batch();
       since = last?.since || since;
       enrolled += Number(last?.enrolled) || 0;
       removed += Number(last?.removed) || 0;
       const remaining = Number(last?.remaining) || 0;
       setFill({ enrolled, removed, remaining, waiting: false, running: true });
+      // The gallery line counts along with the run instead of waiting for its end.
+      const added = Number(last?.enrolled) || 0;
+      if (added) setGallery((g) => (g?.counts ? { ...g, counts: { ...g.counts, enrolled: g.counts.enrolled + added } } : g));
       if (!last?.enabled || remaining <= 0) break;
       if (last.rateLimited) {
         limitedInARow += 1;
@@ -354,7 +374,7 @@ export default function FoundReports({ view = 'matches' }) {
       previous = remaining;
       setFill({ enrolled, removed, remaining, waiting: true, running: true });
       // eslint-disable-next-line no-await-in-loop
-      await new Promise((resolve) => setTimeout(resolve, Math.min(90000, Math.max(0, Number(last.waitMs) || 0))));
+      await pause(Math.min(90000, Math.max(0, Number(last.waitMs) || 0)));
     }
     setFill({ enrolled, removed, remaining: Number(last?.remaining) || 0, waiting: false, running: false });
     loadGallery();
@@ -483,7 +503,7 @@ export default function FoundReports({ view = 'matches' }) {
             <div className="text-right">
               <button
                 type="button"
-                onClick={runFill}
+                onClick={() => runFill()}
                 disabled={action.pending}
                 className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-indigo-600 ring-1 ring-indigo-200 hover:bg-indigo-50"
               >
@@ -492,6 +512,18 @@ export default function FoundReports({ view = 'matches' }) {
               {gallery.counts && (
                 <p className="mt-1 text-[11px] text-slate-500">
                   {t('{enrolled} of {open} open cases in the face search gallery, {needsPhoto} need a better photo', gallery.counts)}
+                </p>
+              )}
+              {gallery.counts?.weak > 0 && (
+                <p className="mt-1 text-[11px] text-slate-500">{t('{weak} of them with a small or unclear face', gallery.counts)}</p>
+              )}
+              {gallery.counts?.refused > 0 && (
+                <p className="mt-1 text-[11px] text-amber-700">
+                  {t('{refused} photos refused by the gallery', gallery.counts)}
+                  {' · '}
+                  <button type="button" onClick={() => runFill(true)} disabled={action.pending} className="font-semibold underline">
+                    {t('Try refused photos again')}
+                  </button>
                 </p>
               )}
               {!gallery.gallery && <p className="mt-1 text-[11px] font-semibold text-red-600">{t('The face search gallery did not answer')}</p>}

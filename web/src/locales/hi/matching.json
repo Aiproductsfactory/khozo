@@ -92,5 +92,10 @@
   "The face search gallery did not answer": "चेहरा खोज गैलरी ने जवाब नहीं दिया",
   "The gallery key belongs to another gallery: {name}": "गैलरी की कुंजी किसी दूसरी गैलरी की है: {name}",
   "{enrolled} added, {removed} removed, {remaining} left": "{enrolled} जोड़े, {removed} हटाए, {remaining} बाकी",
-  "waiting for the per-minute limit": "प्रति मिनट की सीमा के लिए इंतज़ार हो रहा है"
+  "waiting for the per-minute limit": "प्रति मिनट की सीमा के लिए इंतज़ार हो रहा है",
+  "In the face search gallery, but the face is small or unclear — a larger, sharper photo will match better": "चेहरा खोज गैलरी में है, पर चेहरा छोटा या अस्पष्ट है — बड़ी, ज़्यादा साफ़ फ़ोटो से मिलान बेहतर होगा",
+  "Face search gallery refused this photo — use a clearer, larger photo of the face": "चेहरा खोज गैलरी ने यह फ़ोटो स्वीकार नहीं की — चेहरे की ज़्यादा साफ़, बड़ी फ़ोटो लगाएँ",
+  "{weak} of them with a small or unclear face": "इनमें से {weak} में चेहरा छोटा या अस्पष्ट है",
+  "{refused} photos refused by the gallery": "गैलरी ने {refused} फ़ोटो स्वीकार नहीं कीं",
+  "Try refused photos again": "अस्वीकृत फ़ोटो फिर से आज़माएँ"
 }

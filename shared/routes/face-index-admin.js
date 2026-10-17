@@ -21,7 +21,10 @@
  *      missing from the gallery's own list.
  * A photo Aarakshak refused (no face, several faces, too small) is not sent
  * again; the case is listed as needing a better photo, and replacing the
- * photo enrols it (POST /api/reports/:id/photo).
+ * photo enrols it (POST /api/reports/:id/photo). A photo refused for any
+ * other reason is sent again only when the batch is asked to
+ * (`retryRefused: true`), for instance once Aarakshak has fixed a fault, or
+ * to learn a reason that was not recorded.
  *
  * Aarakshak's pilot allows 30 requests a minute per key, shared with live
  * searches. A batch is at most 20 calls, stops at the first 429, and says how
@@ -32,6 +35,7 @@
 import { isForwardPoolCase } from '../match-pool.js';
 import {
   PHOTO_REJECTION_REASONS,
+  WEAK_FACE_WARNINGS,
   enrollCaseInIndex,
   isRetryableIndexFailure,
   removeCaseFromIndex,
@@ -92,8 +96,8 @@ export default function registerFaceIndexAdminRoutes(router, deps) {
 
   function tally(reports, galleryIds = null, now = Date.now()) {
     const inGallery = galleryIds ? new Set(galleryIds) : null;
-    const counts = { open: 0, enrolled: 0, pending: 0, needsPhoto: 0, refused: 0, toRemove: 0, missingFromGallery: 0 };
-    const rows = { pending: [], needsPhoto: [], toRemove: [] };
+    const counts = { open: 0, enrolled: 0, weak: 0, pending: 0, needsPhoto: 0, refused: 0, toRemove: 0, missingFromGallery: 0 };
+    const rows = { pending: [], needsPhoto: [], refused: [], toRemove: [] };
     for (const report of reports) {
       let state = indexStateOf(report, index.name);
       if (state === 'enrolled' && inGallery && !inGallery.has(report.id) && now - timeOf(report.faceIndex?.at) > LIST_SETTLE_MS) {
@@ -101,15 +105,20 @@ export default function registerFaceIndexAdminRoutes(router, deps) {
         state = 'pending';
       }
       if (state !== 'out' && state !== 'to_remove') counts.open += 1;
-      if (state === 'enrolled') counts.enrolled += 1;
-      else if (state === 'pending') {
+      if (state === 'enrolled') {
+        counts.enrolled += 1;
+        // In the gallery, but with a face Aarakshak could barely use.
+        if ((report.faceIndex?.warnings || []).some((w) => WEAK_FACE_WARNINGS.has(w))) counts.weak += 1;
+      } else if (state === 'pending') {
         counts.pending += 1;
         rows.pending.push(report);
       } else if (state === 'needs_photo') {
         counts.needsPhoto += 1;
         rows.needsPhoto.push(report);
-      } else if (state === 'refused') counts.refused += 1;
-      else if (state === 'to_remove') {
+      } else if (state === 'refused') {
+        counts.refused += 1;
+        rows.refused.push(report);
+      } else if (state === 'to_remove') {
         counts.toRemove += 1;
         rows.toRemove.push(report);
       }
@@ -149,14 +158,25 @@ export default function registerFaceIndexAdminRoutes(router, deps) {
       counts: { ...counts, strays: stray.closed.length + (stray.unknownCount || 0) },
       // Case ids and the provider's reason only: the desk opens the case.
       needsPhoto: rows.needsPhoto.slice(0, 200).map((r) => ({ id: r.id, reason: r.faceIndex?.reason || null, at: r.faceIndex?.at || null })),
+      refused: rows.refused.slice(0, 200).map((r) => ({
+        id: r.id,
+        reason: r.faceIndex?.reason || null,
+        detail: r.faceIndex?.detail || null,
+        requestId: r.faceIndex?.requestId || null,
+        at: r.faceIndex?.at || null,
+      })),
     });
   });
 
   router.post('/face-index/backfill', requireRole('super_admin'), async (req, res) => {
     if (!index.enabled) return res.json({ enabled: false, processed: 0, remaining: 0 });
-    const read = readFields(req.body || {}, { limit: 'number', since: ['text', 40] });
+    const read = readFields(req.body || {}, { limit: 'number', since: ['text', 40], retryRefused: 'flag' });
     if (read.error) return res.status(400).json({ error: read.error });
     const limit = Math.max(1, Math.min(INDEX_BATCH_MAX, Math.floor(Number(read.body.limit) || INDEX_BATCH_DEFAULT)));
+    const retryRefused = read.body.retryRefused === true || read.body.retryRefused === 'true';
+    // Open cases due for enrolment: those the gallery lacks, and, when asked,
+    // those whose photo was refused for a reason other than the face.
+    const dueForEnrolment = (rows) => (retryRefused ? [...rows.pending, ...rows.refused] : rows.pending);
     const since = timeOf(read.body.since) || Date.now();
     const sinceIso = new Date(since).toISOString();
     const started = Date.now();
@@ -229,7 +249,7 @@ export default function registerFaceIndexAdminRoutes(router, deps) {
 
     // 2. Open cases the gallery does not hold, the most recently registered
     // first.
-    const pending = tally(reports, galleryIds).rows.pending
+    const pending = dueForEnrolment(tally(reports, galleryIds).rows)
       .filter((r) => !triedThisRun(r))
       .sort((a, b) => timeOf(b.createdAt) - timeOf(a.createdAt));
     for (const report of pending) {
@@ -256,7 +276,7 @@ export default function registerFaceIndexAdminRoutes(router, deps) {
     const after = listReports();
     const remaining =
       tally(after).rows.toRemove.filter((r) => !triedThisRun(r)).length +
-      tally(after, galleryIds).rows.pending.filter((r) => !triedThisRun(r)).length +
+      dueForEnrolment(tally(after, galleryIds).rows).filter((r) => !triedThisRun(r)).length +
       stray.unknown.filter((id) => !removedUnknown.has(id)).length;
 
     const processed = enrolled + removed + failed + rejected;
@@ -280,6 +300,7 @@ export default function registerFaceIndexAdminRoutes(router, deps) {
         remaining,
         reconciled: Boolean(galleryIds),
         unknownGuarded: stray.guarded,
+        retryRefused,
         limit,
         since: sinceIso,
       },
