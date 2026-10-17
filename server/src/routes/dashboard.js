@@ -13,6 +13,7 @@ import {
 import { isPostgres } from '../db.js';
 import { authRequired, passwordChangeRequired, publicUser, requireRole } from '../auth.js';
 import { matchEngineInfo, probeMatchProviders } from '../match.js';
+import { auditPublicRateLimit, clientIp, fixedWindowRateLimit } from '../rateLimit.js';
 
 export default registerDashboardRoutes(Router(), {
   listReports, listFoundReports, listActivity, listUsers,
@@ -22,9 +23,11 @@ export default registerDashboardRoutes(Router(), {
   readPhoto, probeMatchProviders,
   isPostgres,
   authRequired, passwordChangeRequired, publicUser, requireRole,
+  auditPublicRateLimit, clientIp, fixedWindowRateLimit,
   matchEngineInfo,
   settings: {
     nodeEnv: process.env.NODE_ENV,
+    directoryLimit: process.env.KHOZO_DIRECTORY_LIMIT,
     smsGatewayUrl: process.env.KHOZO_SMS_GATEWAY_URL,
     smsApiKey: process.env.KHOZO_SMS_API_KEY,
     exportSigning: {

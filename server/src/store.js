@@ -3,6 +3,7 @@
 // Everything goes through this module, so swapping in Postgres later means rewriting only this file.
 
 import fs from 'node:fs';
+import { auditHead, verifyAuditLinks } from '../../shared/audit-chain.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
@@ -14,7 +15,11 @@ import {
 } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = path.join(__dirname, '..', 'data');
+// KHOZO_DATA_DIR moves the JSON store (db.json and uploads/) elsewhere. The
+// smoke suites point it at a fresh temporary directory, so a test run never
+// reads or rewrites the developer's server/data/db.json - two runs at once, or
+// one killed half way, used to leave test rows in it.
+const DATA_DIR = process.env.KHOZO_DATA_DIR ? path.resolve(process.env.KHOZO_DATA_DIR) : path.join(__dirname, '..', 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 export const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
 
@@ -798,30 +803,11 @@ export function addActivity(entry) {
 // --- Operational audit log ---
 export const listAudit = () => db.audit;
 export function verifyAuditChain(rows = db.audit) {
-  const chronological = rows.slice().reverse();
-  let prevHash = null;
-  let checked = 0;
-  for (const row of chronological) {
-    const expected = auditHash(row, prevHash);
-    if (row.prevHash !== prevHash || row.hash !== expected) {
-      return {
-        ok: false,
-        checked,
-        failedId: row.id,
-        expectedHash: expected,
-        actualHash: row.hash || null,
-        expectedPrevHash: prevHash,
-        actualPrevHash: row.prevHash || null,
-      };
-    }
-    prevHash = row.hash;
-    checked++;
-  }
-  return { ok: true, checked, headHash: prevHash };
+  return verifyAuditLinks(rows, auditHash);
 }
 
 export function addAudit(entry) {
-  const prevHash = db.audit[0]?.hash || null;
+  const prevHash = auditHead(db.audit);
   const row = {
     id: `audit_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
     ts: Date.now(),

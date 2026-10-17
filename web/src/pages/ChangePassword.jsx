@@ -2,17 +2,21 @@ import { useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth.jsx';
 import { Logo } from '../components.jsx';
+import { LanguageSwitcher, useT } from '../i18n.jsx';
 
 export default function ChangePassword() {
+  const t = useT();
   const { user, loading, changePassword, logout } = useAuth();
   const nav = useNavigate();
   const [form, setForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
 
-  if (loading) return <div className="grid min-h-screen place-items-center text-gray-400">Loading...</div>;
+  if (loading) return <div className="grid min-h-screen place-items-center text-gray-400">{t('Loading...')}</div>;
   if (!user) return <Navigate to="/login" replace />;
-  if (!user.mustChangePassword) return <Navigate to="/app" replace />;
+  // Reached two ways: forced, after signing in with a one-time password, or by
+  // choice from the console's account menu. Only the wording differs.
+  const forced = Boolean(user.mustChangePassword);
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
@@ -20,7 +24,7 @@ export default function ChangePassword() {
     e.preventDefault();
     setErr('');
     if (form.newPassword !== form.confirmPassword) {
-      setErr('New password and confirmation do not match');
+      setErr(t('New password and confirmation do not match'));
       return;
     }
     setBusy(true);
@@ -38,37 +42,48 @@ export default function ChangePassword() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 p-6">
-      <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-sm ring-1 ring-black/5">
-        <Logo />
-        <h1 className="mt-6 text-2xl font-bold">Change temporary password</h1>
+    <div className="flex min-h-screen items-start justify-center bg-gray-50 px-4 py-6 sm:items-center sm:p-6">
+      <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-sm ring-1 ring-black/5 sm:p-6">
+        <div className="flex items-center justify-between gap-3">
+          <Logo />
+          <LanguageSwitcher />
+        </div>
+        <h1 className="mt-6 text-2xl font-bold">{forced ? t('Change temporary password') : t('Change password')}</h1>
         <p className="mt-2 text-sm text-gray-500">
-          Your official account was provisioned with a one-time password. Set a new password before opening case workflows.
+          {forced
+            ? t('Your official account was provisioned with a one-time password. Set a new password before opening case workflows.')
+            : t('Choose a new password of at least 8 characters.')}
         </p>
 
         {err && <div className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{err}</div>}
 
         <form onSubmit={submit} className="mt-6 space-y-4">
           <div>
-            <label className="label">Temporary password</label>
-            <input className="field" type="password" value={form.currentPassword} onChange={set('currentPassword')} required />
+            <label className="label" htmlFor="current-password">{forced ? t('Temporary password') : t('Current password')}</label>
+            <input id="current-password" className="field" type="password" autoComplete="current-password" value={form.currentPassword} onChange={set('currentPassword')} required />
           </div>
           <div>
-            <label className="label">New password</label>
-            <input className="field" type="password" minLength={8} value={form.newPassword} onChange={set('newPassword')} required />
+            <label className="label" htmlFor="new-password">{t('New password')}</label>
+            <input id="new-password" className="field" type="password" autoComplete="new-password" minLength={8} value={form.newPassword} onChange={set('newPassword')} required />
           </div>
           <div>
-            <label className="label">Confirm new password</label>
-            <input className="field" type="password" minLength={8} value={form.confirmPassword} onChange={set('confirmPassword')} required />
+            <label className="label" htmlFor="confirm-password">{t('Confirm new password')}</label>
+            <input id="confirm-password" className="field" type="password" autoComplete="new-password" minLength={8} value={form.confirmPassword} onChange={set('confirmPassword')} required />
           </div>
           <button className="btn-primary w-full py-3" disabled={busy}>
-            {busy ? 'Updating...' : 'Update password'}
+            {busy ? t('Updating...') : t('Update password')}
           </button>
         </form>
 
-        <button className="mt-4 w-full text-sm font-semibold text-gray-500 hover:text-gray-800" onClick={logout}>
-          Log out
-        </button>
+        {forced ? (
+          <button className="mt-4 w-full text-sm font-semibold text-gray-500 hover:text-gray-800" onClick={logout}>
+            {t('Log out')}
+          </button>
+        ) : (
+          <button className="mt-4 w-full text-sm font-semibold text-gray-500 hover:text-gray-800" onClick={() => nav('/app')}>
+            {t('Cancel')}
+          </button>
+        )}
       </div>
     </div>
   );

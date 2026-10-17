@@ -138,6 +138,43 @@ export async function upsertMany(env, table, records, ctx) {
   );
 }
 
+/**
+ * Reads one row as it is in the database right now, with a version: the md5 of
+ * its stored JSON. `updateIfVersion` writes only while that version still
+ * holds.
+ */
+export async function readVersioned(env, table, id, ctx) {
+  const { rows } = await query(
+    env,
+    `select data, md5(data::text) as version from public.${table} where id = $1`,
+    [id],
+    ctx,
+  );
+  return rows.length && rows[0].data ? { data: rows[0].data, version: rows[0].version } : null;
+}
+
+/**
+ * Writes `record` over its row only if the row is still the version that was
+ * read (readVersioned): a compare-and-set, for a change that is only right if
+ * nobody else changed the row in between. Returns whether it was written.
+ */
+export async function updateIfVersion(env, table, record, version, ctx) {
+  if (!record?.id || !version) return false;
+  const cols = { ...TABLES[table](record), data: record };
+  const names = Object.keys(cols).filter((name) => name !== 'id');
+  const values = names.map((name) => cols[name]);
+  const sets = names.map((name, i) => `${name} = $${i + 1}`);
+  values.push(record.id, version);
+  const { rowCount } = await query(
+    env,
+    `update public.${table} set ${sets.join(', ')}
+     where id = $${names.length + 1} and md5(data::text) = $${names.length + 2}`,
+    values,
+    ctx,
+  );
+  return rowCount === 1;
+}
+
 export async function savePhotoBlob(env, key, buffer, mime, ctx) {
   await query(
     env,

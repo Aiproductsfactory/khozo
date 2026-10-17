@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { fmtDate } from '../lib.jsx';
 import { useAuth } from '../auth.jsx';
+import { useT, msg, currentLocale } from '../i18n.jsx';
 
 const PRIVACY_REVIEW_ROLES = ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'cwc', 'dcpu', 'state_nodal'];
 const PRIVACY_EXPORT_ROLES = ['super_admin', 'admin', 'state_nodal', 'crime_bureau'];
@@ -23,13 +24,14 @@ const STATE_CLASS = {
 };
 
 const STATE_LABEL = {
-  expired: 'Expired',
-  due_soon: 'Due soon',
-  active: 'Active',
-  missing_retention: 'No retention date',
+  expired: msg('Expired'),
+  due_soon: msg('Due soon'),
+  active: msg('Active'),
+  missing_retention: msg('No retention date'),
 };
 
 export default function PrivacyReview() {
+  const t = useT();
   const { user } = useAuth();
   const [rows, setRows] = useState([]);
   const [capabilities, setCapabilities] = useState(() => defaultCapabilities(user?.role));
@@ -78,12 +80,12 @@ export default function PrivacyReview() {
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-2xl font-bold">Privacy review</h2>
-        <p className="text-sm text-gray-500">Review photo consent, purpose, and retention dates for cases and sightings in your scope.</p>
+        <h2 className="text-2xl font-bold">{t('Privacy review')}</h2>
+        <p className="text-sm text-gray-500">{t('Review photo consent, purpose, and retention dates for cases and sightings in your scope.')}</p>
       </div>
       {capabilities.canExport && (
         <div className="flex justify-end">
-          <button className="btn-ghost" onClick={exportReport}>Export privacy report</button>
+          <button className="btn-ghost" onClick={exportReport}>{t('Export privacy report')}</button>
         </div>
       )}
 
@@ -91,12 +93,12 @@ export default function PrivacyReview() {
         <div className="card p-4 text-sm bg-gray-50/50">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="font-semibold text-gray-700">Anonymization authorization</p>
-              <p className="text-xs text-gray-500">Specify an approval or court order reference for anonymization decisions.</p>
+              <p className="font-semibold text-gray-700">{t('Anonymization authorization')}</p>
+              <p className="text-xs text-gray-500">{t('Specify an approval or court order reference for anonymization decisions.')}</p>
             </div>
             <input
-              className="field py-1.5 text-xs max-w-xs"
-              placeholder="Approval/order reference"
+              className="field py-1.5 text-xs sm:max-w-xs"
+              placeholder={t('Approval/order reference')}
               value={batchApprovalRef}
               onChange={(e) => setBatchApprovalRef(e.target.value)}
             />
@@ -108,88 +110,88 @@ export default function PrivacyReview() {
         <div className="card p-4 text-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="font-semibold">Privacy report generated</p>
-              <p className="text-gray-500">{new Date(exportData.generatedAt).toLocaleString('en-IN')} / {exportData.scope}</p>
+              <p className="font-semibold">{t('Privacy report generated')}</p>
+              <p className="text-gray-500">{new Date(exportData.generatedAt).toLocaleString(currentLocale())} / {exportData.scope}</p>
             </div>
-            <div className="flex gap-2 text-xs">
-              <span className="rounded-full bg-gray-100 px-2 py-1">{exportData.totals.records} records</span>
-              <span className="rounded-full bg-gray-100 px-2 py-1">{exportData.totals.anonymized} anonymized</span>
-              <span className="rounded-full bg-gray-100 px-2 py-1">{exportData.totals.missingRetention} missing retention</span>
+            <div className="flex flex-wrap gap-2 text-xs sm:flex-nowrap">
+              <span className="rounded-full bg-gray-100 px-2 py-1">{t('{n} records', { n: exportData.totals.records })}</span>
+              <span className="rounded-full bg-gray-100 px-2 py-1">{t('{n} anonymized', { n: exportData.totals.anonymized })}</span>
+              <span className="rounded-full bg-gray-100 px-2 py-1">{t('{n} missing retention', { n: exportData.totals.missingRetention })}</span>
             </div>
           </div>
         </div>
       )}
 
       <div className="card overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[960px] text-sm">
+        <div className="stack-scroll overflow-x-auto">
+          <table className="stack-table w-full min-w-[960px] text-sm">
             <thead>
               <tr className="border-b border-black/5 bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
-                <th className="px-4 py-3">Record</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Purpose</th>
-                <th className="px-4 py-3">Consent</th>
-                <th className="px-4 py-3">Retention</th>
-                <th className="px-4 py-3 text-right">Actions</th>
+                <th className="px-4 py-3">{t('Record')}</th>
+                <th className="px-4 py-3">{t('Status')}</th>
+                <th className="px-4 py-3">{t('Purpose')}</th>
+                <th className="px-4 py-3">{t('Consent')}</th>
+                <th className="px-4 py-3">{t('Retention')}</th>
+                <th className="px-4 py-3 text-right">{t('Actions')}</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r) => (
                 <tr key={`${r.type}:${r.id}`} className="border-b border-black/5 last:border-0">
-                  <td className="px-4 py-3">
+                  <td className="stack-full px-4 py-3">
                     <p className="font-semibold">{r.subject}</p>
-                    <p className="text-xs text-gray-400">{r.type === 'report' ? 'Case' : 'Sighting'} / {r.location || 'location unknown'}</p>
+                    <p className="text-xs text-gray-400">{r.type === 'report' ? t('Case') : t('Sighting')} / {r.location || t('location unknown')}</p>
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3" data-label={t('Status')}>
                     <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${STATE_CLASS[r.retentionState] || STATE_CLASS.missing_retention}`}>
-                      {STATE_LABEL[r.retentionState] || r.retentionState}
+                      {STATE_LABEL[r.retentionState] ? t(STATE_LABEL[r.retentionState]) : r.retentionState}
                     </span>
                     <p className="mt-1 text-xs text-gray-400">{r.status}</p>
                   </td>
-                  <td className="px-4 py-3 text-gray-600">{r.dataPurpose}</td>
-                  <td className="px-4 py-3 text-gray-600">{r.photoConsent ? 'Recorded' : 'No photo / not recorded'}</td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 text-gray-600" data-label={t('Purpose')}>{r.dataPurpose}</td>
+                  <td className="px-4 py-3 text-gray-600" data-label={t('Consent')}>{r.photoConsent ? t('Recorded') : t('No photo / not recorded')}</td>
+                  <td className="px-4 py-3" data-label={t('Retention')}>
                     <p className="text-gray-700">{r.retentionUntil ? fmtDate(r.retentionUntil) : '-'}</p>
-                    {r.daysUntilRetention != null && <p className="text-xs text-gray-400">{r.daysUntilRetention} days</p>}
+                    {r.daysUntilRetention != null && <p className="text-xs text-gray-400">{t('{n} days', { n: r.daysUntilRetention })}</p>}
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="stack-full px-4 py-3 text-right">
                     {capabilities.canReview ? (
                       <div className="space-y-2">
                         {capabilities.canAnonymize && (
                           <div className="grid gap-2 text-left sm:grid-cols-[120px_1fr]">
                             <select className="field py-2 text-xs" value={(approvalForms[`${r.type}:${r.id}`] || {}).approvalType || 'privacy_officer'} onChange={setApproval(r, 'approvalType')}>
-                              <option value="privacy_officer">Privacy officer</option>
-                              <option value="cwc_order">CWC order</option>
-                              <option value="court_order">Court order</option>
-                              <option value="data_retention_policy">Retention policy</option>
+                              <option value="privacy_officer">{t('Privacy officer')}</option>
+                              <option value="cwc_order">{t('CWC order')}</option>
+                              <option value="court_order">{t('Court order')}</option>
+                              <option value="data_retention_policy">{t('Retention policy')}</option>
                             </select>
-                            <input className="field py-2 text-xs" value={(approvalForms[`${r.type}:${r.id}`] || {}).approvalReference || ''} onChange={setApproval(r, 'approvalReference')} placeholder="Approval/order reference" />
-                            <input className="field py-2 text-xs sm:col-span-2" maxLength={280} value={(approvalForms[`${r.type}:${r.id}`] || {}).approvalNote || ''} onChange={setApproval(r, 'approvalNote')} placeholder="Approval note" />
+                            <input className="field py-2 text-xs" value={(approvalForms[`${r.type}:${r.id}`] || {}).approvalReference || ''} onChange={setApproval(r, 'approvalReference')} placeholder={t('Approval/order reference')} />
+                            <input className="field py-2 text-xs sm:col-span-2" maxLength={280} value={(approvalForms[`${r.type}:${r.id}`] || {}).approvalNote || ''} onChange={setApproval(r, 'approvalNote')} placeholder={t('Approval note')} />
                           </div>
                         )}
-                        <div className="flex justify-end gap-2">
-                        <button className="btn-ghost" disabled={!!busyId} onClick={() => decide(r, 'close')}>
-                          {busyId === `${r.type}:${r.id}:close` ? 'Saving...' : 'Mark reviewed'}
+                        <div className="flex justify-end gap-2 max-sm:flex-wrap max-sm:[overflow-wrap:normal]">
+                        <button className="btn-ghost max-sm:flex-auto" disabled={!!busyId} onClick={() => decide(r, 'close')}>
+                          {busyId === `${r.type}:${r.id}:close` ? t('Saving...') : t('Mark reviewed')}
                         </button>
                         {capabilities.canAnonymize && (
-                          <button className="btn-ghost" disabled={!!busyId} onClick={() => decide(r, 'anonymize')}>
-                            {busyId === `${r.type}:${r.id}:anonymize` ? 'Saving...' : 'Anonymize'}
+                          <button className="btn-ghost max-sm:flex-auto" disabled={!!busyId} onClick={() => decide(r, 'anonymize')}>
+                            {busyId === `${r.type}:${r.id}:anonymize` ? t('Saving...') : t('Anonymize')}
                           </button>
                         )}
-                        <button className="btn-primary" disabled={!!busyId} onClick={() => decide(r, 'extend')}>
-                          {busyId === `${r.type}:${r.id}:extend` ? 'Saving...' : 'Extend'}
+                        <button className="btn-primary max-sm:flex-auto" disabled={!!busyId} onClick={() => decide(r, 'extend')}>
+                          {busyId === `${r.type}:${r.id}:extend` ? t('Saving...') : t('Extend')}
                         </button>
                         </div>
                       </div>
                     ) : (
-                      <span className="text-xs text-gray-400">Read-only</span>
+                      <span className="text-xs text-gray-400">{t('Read-only')}</span>
                     )}
                   </td>
                 </tr>
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-10 text-center text-gray-400">No privacy retention records in your scope.</td>
+                  <td colSpan={6} className="stack-full px-4 py-10 text-center text-gray-400">{t('No privacy retention records in your scope.')}</td>
                 </tr>
               )}
             </tbody>

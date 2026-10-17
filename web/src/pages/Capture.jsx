@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../api.js';
 import { INDIAN_STATES } from '../../../shared/india.js';
 import { Logo } from '../components.jsx';
-import { Avatar } from '../lib.jsx';
+import { genderLabel, isAdultCategory, PERSON_CATEGORY_OPTIONS } from '../lib.jsx';
 import {
   clearQueuedSighting,
   enqueueSighting,
@@ -14,51 +14,104 @@ import {
   requestBackgroundSync,
 } from '../offlineQueue.js';
 import { formatCoordinates, getDeviceLocation, readPhotoGps } from '../photoLocation.js';
+import { formatBytes, preparePhoto } from '../photoPrep.js';
+import { saveReceipt } from '../myReports.js';
+import ReceiptActions from '../ReceiptActions.jsx';
+import InstallPrompt from '../InstallPrompt.jsx';
+import { useAuth } from '../auth.jsx';
+import { currentLocale, LanguageSwitcher, msg, useT } from '../i18n.jsx';
 
 const ID_PROOF_TYPES = [
-  { id: '', label: 'Not provided' },
-  { id: 'aadhaar', label: 'Aadhaar' },
-  { id: 'voter_id', label: 'Voter ID' },
-  { id: 'passport', label: 'Passport' },
-  { id: 'driving_license', label: 'Driving licence' },
-  { id: 'other', label: 'Other photo ID' },
+  { id: '', label: msg('Not provided') },
+  { id: 'aadhaar', label: msg('Aadhaar') },
+  { id: 'voter_id', label: msg('Voter ID') },
+  { id: 'passport', label: msg('Passport') },
+  { id: 'driving_license', label: msg('Driving licence') },
+  { id: 'other', label: msg('Other photo ID') },
 ];
 
+/*
+ * The copy that changes with who was seen. The child wording is exactly what
+ * the page always said, so the default flow reads as it did.
+ */
+const SEEN_COPY = {
+  child: {
+    title: msg('Spotted a child who may be missing?'),
+    where: msg('Where did you find the child?'),
+    note: msg('Anything that helps identify the child'),
+    agePlaceholder: msg('e.g. 6'),
+    alt: msg('Child'),
+    noPhoto: msg('No photo attached. This will be sent as a text sighting to Childline/CWC intake and no match search will run.'),
+    consent: msg('I confirm this photo may be used only for child-protection review, police/CWC follow-up, and match search. The sighting image is retained for 180 days unless escalated.'),
+    danger: msg('If the child is in immediate danger, call 1098 or 112.'),
+  },
+  woman: {
+    title: msg('Spotted a woman who may be missing?'),
+    where: msg('Where did you see her?'),
+    note: msg('Anything that helps identify her — clothing, language, what she said'),
+    agePlaceholder: msg('e.g. 30'),
+    alt: msg('Woman'),
+    noPhoto: msg('No photo attached. This will be sent as a text sighting for police review and no match search will run.'),
+    consent: msg('I confirm this photo may be used only for police review, follow-up, and match search. The sighting image is retained for 180 days unless escalated.'),
+    danger: msg('If she is in immediate danger, call 112. The Women Helpline 181 and the One Stop Centre (Sakhi) can also help.'),
+  },
+  adult: {
+    title: msg('Spotted a person who may be missing?'),
+    where: msg('Where did you see the person?'),
+    note: msg('Anything that helps identify the person — clothing, language, what they said'),
+    agePlaceholder: msg('e.g. 70'),
+    alt: msg('Person'),
+    noPhoto: msg('No photo attached. This will be sent as a text sighting for police review and no match search will run.'),
+    consent: msg('I confirm this photo may be used only for police review, follow-up, and match search. The sighting image is retained for 180 days unless escalated.'),
+    danger: msg('If the person is in immediate danger, call 112.'),
+  },
+};
+
+// The age a reporter can enter, matching the server's limits for the category.
+const SEEN_AGE_LIMITS = {
+  child: { min: 0, max: 18 },
+  woman: { min: 18, max: 110 },
+  adult: { min: 18, max: 110 },
+};
+
 function LocationStatus({ located, hasPhoto, onClear }) {
+  const t = useT();
   if (!located) return null;
   const { status, accuracy } = located;
   if (status === 'locating') {
-    return <p className="mt-1.5 text-xs text-gray-500">Finding where you are…</p>;
+    return <p className="mt-1.5 text-xs text-gray-500">{t('Finding where you are…')}</p>;
   }
   if (status === 'denied' || status === 'failed') {
     return (
       <p className="mt-1.5 text-xs text-amber-700">
         {status === 'denied'
-          ? 'Location permission is off, so no location was attached. Type the place, or allow location for this site and tap Use GPS.'
-          : 'Could not get a location fix. Type the place, or tap Use GPS to try again.'}
+          ? t('Location permission is off, so no location was attached. Type the place, or allow location for this site and tap Use GPS.')
+          : t('Could not get a location fix. Type the place, or tap Use GPS to try again.')}
       </p>
     );
   }
   const remove = (label) => (
-    <button type="button" className="font-semibold underline underline-offset-2" onClick={onClear}>
+    <button type="button" className="tap-inline font-semibold underline underline-offset-2" onClick={onClear}>
       {label}
     </button>
   );
   if (status === 'photo') {
     return (
       <p className="mt-1.5 text-xs text-khozo-dark">
-        Location taken from the photo’s own GPS. Add a landmark if you can. {remove('Remove')}
+        {t('Location taken from the photo’s own GPS. Add a landmark if you can.')} {remove(t('Remove'))}
       </p>
     );
   }
-  const where = `Your phone’s current location is attached${accuracy ? ` (within about ${Math.round(accuracy)} m)` : ''}.`;
+  const where = accuracy
+    ? t('Your phone’s current location is attached (within about {m} m).', { m: Math.round(accuracy) })
+    : t('Your phone’s current location is attached.');
   return (
     <p className="mt-1.5 text-xs text-khozo-dark">
       {where}{' '}
       {hasPhoto ? (
-        <>If the photo was taken somewhere else, {remove('remove it')} and type that place.</>
+        <>{t('If the photo was taken somewhere else,')} {remove(t('remove it'))} {t('and type that place.')}</>
       ) : (
-        <>Add a landmark if you can. {remove('Remove')}</>
+        <>{t('Add a landmark if you can.')} {remove(t('Remove'))}</>
       )}
     </p>
   );
@@ -72,10 +125,12 @@ function buildSightingFormData(form, file) {
 }
 
 export default function Capture() {
+  const t = useT();
   const [step, setStep] = useState(1);
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
   const [form, setForm] = useState({
+    personCategory: 'child',
     foundLocation: '',
     state: '',
     district: '',
@@ -91,16 +146,42 @@ export default function Capture() {
   });
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
+  // 0..1 while the report is being sent; null otherwise.
+  const [progress, setProgress] = useState(null);
+  // True while the chosen photo is being shrunk on the phone.
+  const [preparing, setPreparing] = useState(false);
+  const [originalSize, setOriginalSize] = useState(0);
+  const { user } = useAuth() || {};
   const [err, setErr] = useState('');
   const [queued, setQueued] = useState([]);
   // { status: 'locating' | 'photo' | 'device' | 'denied' | 'failed', lat, lng, accuracy }
   const [located, setLocated] = useState(null);
   const fileRef = useRef(null);
+  const cameraRef = useRef(null);
   const locateRun = useRef(0);
+  const photoRun = useRef(0);
   const autoLocationText = useRef('');
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const setChecked = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.checked }));
+  const seen = form.personCategory;
+  const copy = SEEN_COPY[seen] || SEEN_COPY.child;
+  const ageLimits = SEEN_AGE_LIMITS[seen] || SEEN_AGE_LIMITS.child;
+
+  // A guessed age outside the new range is dropped rather than sent and
+  // refused; a woman's gender is implied.
+  const chooseSeen = (next) => {
+    setForm((f) => {
+      const limits = SEEN_AGE_LIMITS[next] || SEEN_AGE_LIMITS.child;
+      const ageApprox = f.ageApprox === '' || (Number(f.ageApprox) >= limits.min && Number(f.ageApprox) <= limits.max) ? f.ageApprox : '';
+      return {
+        ...f,
+        personCategory: next,
+        ageApprox,
+        gender: next === 'woman' ? 'Female' : f.personCategory === 'woman' ? '' : f.gender,
+      };
+    });
+  };
 
   /*
    * The location is fetched the moment a photo is chosen, not when the reporter
@@ -152,13 +233,28 @@ export default function Capture() {
     setLocated(null);
   };
 
-  const onFile = (e) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    setFile(f);
-    setPreview(URL.createObjectURL(f));
+  /*
+   * The photo's own GPS is read from the original file first: shrinking it
+   * (below) redraws the picture and drops the EXIF block that holds it. The
+   * shrunk copy, a few hundred KB instead of several MB, is what is sent or
+   * kept in the offline queue.
+   */
+  const onFile = async (e) => {
+    const picked = e.target.files?.[0];
+    // Cleared so choosing the same photo again still fires a change.
+    e.target.value = '';
+    if (!picked) return;
+    const run = ++photoRun.current;
+    setFile(picked);
+    setOriginalSize(picked.size || 0);
+    setPreview(URL.createObjectURL(picked));
     setStep(2);
-    locate(f);
+    locate(picked);
+    setPreparing(true);
+    const ready = await preparePhoto(picked);
+    if (run !== photoRun.current) return;
+    setFile(ready);
+    setPreparing(false);
   };
 
   useEffect(() => {
@@ -173,28 +269,43 @@ export default function Capture() {
         .catch(() => {});
     };
     window.addEventListener('online', flush);
-    return () => window.removeEventListener('online', flush);
+    // The service worker sent a queued report in the background: the list
+    // of waiting reports is out of date (its receipt is saved by pwa.js).
+    const onWorkerMessage = (event) => {
+      if (event.data?.type === 'KHOZO_SIGHTING_SYNCED') getQueuedSightings().then(setQueued).catch(() => {});
+    };
+    navigator.serviceWorker?.addEventListener?.('message', onWorkerMessage);
+    return () => {
+      window.removeEventListener('online', flush);
+      navigator.serviceWorker?.removeEventListener?.('message', onWorkerMessage);
+    };
   }, []);
 
   const submit = async () => {
     setBusy(true);
     setErr('');
+    setProgress(file ? 0 : null);
     try {
       const fd = buildSightingFormData(form, file);
-      const data = await api.postForm('/reports/found', fd);
+      const data = await api.postFormWithProgress('/reports/found', fd, file ? setProgress : undefined);
       setResult(data);
+      if (data?.foundReport?.id) {
+        saveReceipt({ id: data.foundReport.id, at: Date.now(), personCategory: data.foundReport.personCategory || form.personCategory });
+      }
       setStep(3);
+      try { window.scrollTo({ top: 0 }); } catch {}
     } catch (e) {
-      const offlineish = !navigator.onLine || e.message === 'Failed to fetch' || e.message.includes('NetworkError');
+      const offlineish = e.network || !navigator.onLine || e.message === 'Failed to fetch' || String(e.message).includes('NetworkError');
       if (offlineish) {
         const next = await enqueueSighting(form, file);
         setQueued(next);
-        setErr('Network unavailable. Your report is encrypted on this device and will retry when the network returns.');
+        setErr(msg('Network unavailable. Your report is encrypted on this device and will retry when the network returns.'));
       } else {
         setErr(e.message);
       }
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   };
 
@@ -208,6 +319,9 @@ export default function Capture() {
       const next = await getQueuedSightings();
       setQueued(next);
       setResult(data);
+      if (data?.foundReport?.id) {
+        saveReceipt({ id: data.foundReport.id, at: item.createdAt, personCategory: data.foundReport.personCategory || item.form?.personCategory });
+      }
       setStep(3);
     } catch (e) {
       setErr(e.message);
@@ -223,37 +337,47 @@ export default function Capture() {
   return (
     <div className="min-h-screen bg-[#f6f8f5]">
       <header className="border-b border-black/5 bg-white">
-        <div className="mx-auto flex max-w-3xl items-center justify-between px-6 py-4">
+        <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 py-4 sm:px-6">
           <Logo />
-          <Link to="/" className="text-sm font-semibold text-gray-500 hover:text-ink">Home</Link>
+          <div className="flex items-center gap-1 sm:gap-3">
+            <LanguageSwitcher />
+            <Link to={user ? '/app' : '/'} className="inline-flex min-h-11 items-center whitespace-nowrap rounded-lg px-2 text-sm font-semibold text-gray-500 hover:text-ink">
+              {user ? t('Console') : t('Home')}
+            </Link>
+          </div>
         </div>
       </header>
 
-      <div className="mx-auto max-w-3xl px-6 py-10">
-        <div className="mb-8 flex items-center gap-2">
+      <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-10">
+        <div className="mb-6 flex items-center gap-2 sm:mb-8">
           {[1, 2, 3].map((s) => (
             <div key={s} className={`h-1.5 flex-1 rounded-full ${step >= s ? 'bg-khozo' : 'bg-gray-200'}`} />
           ))}
         </div>
 
-        {err && <div className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{err}</div>}
+        {err && <div className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{t(err)}</div>}
 
         {queued.length > 0 && (
           <div className="mb-4 card p-4">
-            <p className="font-semibold">Pending offline reports</p>
-            <p className="text-sm text-gray-500">{queued.length} encrypted on this device. They retry when connectivity returns and expire after {Math.round(QUEUE_TTL_MS / 3600000)} hours.</p>
+            <p className="font-semibold">{t('Pending offline reports')}</p>
+            <p className="text-sm text-gray-500">
+              {t('{n} encrypted on this device. They retry when connectivity returns and expire after {hours} hours.', {
+                n: queued.length,
+                hours: Math.round(QUEUE_TTL_MS / 3600000),
+              })}
+            </p>
             <div className="mt-3 space-y-2">
               {queued.map((item) => (
                 <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-gray-50 px-3 py-2 text-sm">
                   <div>
-                    <p className="font-medium">{item.form?.foundLocation || 'Unknown location'}</p>
-                    <p className="text-xs text-gray-400">{new Date(item.createdAt).toLocaleString('en-IN')}</p>
-                    {item.expiresAt && <p className="text-xs text-gray-400">Expires {new Date(item.expiresAt).toLocaleString('en-IN')}</p>}
-                    {item.lastAttemptAt && <p className="text-xs text-gray-400">Last retry {new Date(item.lastAttemptAt).toLocaleString('en-IN')}{item.lastError ? ` / ${item.lastError}` : ''}</p>}
+                    <p className="font-medium">{item.form?.foundLocation || t('Unknown location')}</p>
+                    <p className="text-xs text-gray-400">{new Date(item.createdAt).toLocaleString(currentLocale())}</p>
+                    {item.expiresAt && <p className="text-xs text-gray-400">{t('Expires {date}', { date: new Date(item.expiresAt).toLocaleString(currentLocale()) })}</p>}
+                    {item.lastAttemptAt && <p className="text-xs text-gray-400">{t('Last retry {date}', { date: new Date(item.lastAttemptAt).toLocaleString(currentLocale()) })}{item.lastError ? ` / ${item.lastError}` : ''}</p>}
                   </div>
-                  <div className="flex gap-2">
-                    <button type="button" className="btn-primary" disabled={busy} onClick={() => retryQueued(item)}>Retry</button>
-                    <button type="button" className="btn-ghost" disabled={busy} onClick={() => removeQueued(item)}>Remove</button>
+                  <div className="flex w-full gap-2 sm:w-auto">
+                    <button type="button" className="btn-primary flex-1 sm:flex-none" disabled={busy} onClick={() => retryQueued(item)}>{t('Retry')}</button>
+                    <button type="button" className="btn-ghost" disabled={busy} onClick={() => removeQueued(item)}>{t('Remove')}</button>
                   </div>
                 </div>
               ))}
@@ -262,49 +386,127 @@ export default function Capture() {
         )}
 
         {step === 1 && (
-          <div className="card p-8 text-center">
-            <h1 className="text-2xl font-bold">Spotted a child who may be missing?</h1>
-            <p className="mt-2 text-gray-500">Capture a photo when it is safe, or continue with location details for CWC/Childline review.</p>
-            <div className="mt-8">
-              <div className="mx-auto grid h-44 w-44 place-items-center rounded-2xl border-2 border-dashed border-gray-300 text-5xl text-gray-300">
-                Photo
+          <div className="card p-5 text-center sm:p-8">
+            <h1 className="text-2xl font-bold">{t(copy.title)}</h1>
+            <p className="mt-2 text-gray-500">
+              {isAdultCategory(seen)
+                ? t('Capture a photo when it is safe, or continue with location details for police review.')
+                : t('Capture a photo when it is safe, or continue with location details for CWC/Childline review.')}
+            </p>
+            {/*
+              Who was seen. Child stays the default, so the flow a reporter has
+              always used is one tap shorter than any other; the choice only
+              changes the wording, the age range and which desk is told.
+            */}
+            <div className="mx-auto mt-6 max-w-md">
+              <p className="text-sm font-semibold text-ink">{t('Who did you see?')}</p>
+              <div role="radiogroup" aria-label={t('Who did you see?')} className="mt-2 grid grid-cols-3 gap-2">
+                {PERSON_CATEGORY_OPTIONS.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={seen === option.id}
+                    onClick={() => chooseSeen(option.id)}
+                    className={`rounded-xl border px-2 py-2 text-sm font-semibold transition ${
+                      seen === option.id
+                        ? 'border-khozo bg-khozo-light text-khozo-dark ring-1 ring-khozo/40'
+                        : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >
+                    {t(option.label)}
+                  </button>
+                ))}
               </div>
-              <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={onFile} className="hidden" />
-              <div className="mt-6 flex flex-wrap justify-center gap-3">
-                <button className="btn-primary" onClick={() => fileRef.current?.click()}>Capture / Upload photo</button>
-                <button className="btn-ghost" onClick={() => { setStep(2); locate(null); }}>Continue without photo</button>
+              <p className="mt-2 text-xs text-gray-500">
+                {t('Not sure of their age? Choose the closest — every report reaches a person who reads it.')}
+              </p>
+            </div>
+            {/*
+              Two ways in: the camera, opened straight away, for someone looking
+              at the child now; and the gallery, for a photo taken a moment ago
+              or sent on by someone else.
+            */}
+            <div className="mt-6 sm:mt-8">
+              <button
+                type="button"
+                onClick={() => cameraRef.current?.click()}
+                className="mx-auto grid h-36 w-36 place-items-center rounded-2xl border-2 border-dashed border-gray-300 text-gray-400 hover:border-khozo hover:text-khozo sm:h-44 sm:w-44"
+                aria-label={t('Take a photo')}
+              >
+                <svg aria-hidden="true" viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h1.6l1.4-2h7l1.4 2h1.6A2.5 2.5 0 0 1 21 8.5v9a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z" />
+                  <circle cx="12" cy="13" r="3.8" />
+                </svg>
+              </button>
+              <input ref={cameraRef} type="file" accept="image/*" capture="environment" onChange={onFile} className="hidden" />
+              <input ref={fileRef} type="file" accept="image/*" onChange={onFile} className="hidden" />
+              <div className="mx-auto mt-6 grid max-w-md gap-3 sm:grid-cols-2">
+                <button type="button" className="btn-primary" onClick={() => cameraRef.current?.click()}>
+                  <span aria-hidden="true">📷</span> {t('Take a photo')}
+                </button>
+                <button type="button" className="btn-ghost" onClick={() => fileRef.current?.click()}>
+                  <span aria-hidden="true">🖼️</span> {t('Choose from gallery')}
+                </button>
+                <button type="button" data-action="continue-without-photo" className="btn-ghost sm:col-span-2" onClick={() => { setStep(2); locate(null); }}>{t('Continue without photo')}</button>
               </div>
+              <p className="mt-4 text-sm text-gray-500">
+                <Link to="/track-sighting" className="inline-flex min-h-11 items-center font-semibold text-khozo hover:underline">{t('Track a report I made')}</Link>
+              </p>
             </div>
           </div>
         )}
 
         {step === 2 && (
-          <div className="card overflow-hidden">
+          <div className="card">
             {preview && (
-              <div className="relative bg-black">
-                <img src={preview} alt="child" className="mx-auto max-h-72 object-contain" />
-                <div className="absolute left-1/2 top-1/2 h-28 w-24 -translate-x-1/2 -translate-y-1/2 rounded border-2 border-yellow-400" />
-                <span className="absolute bottom-2 left-2 rounded bg-yellow-400/90 px-2 py-0.5 text-xs font-semibold text-black">face detected</span>
+              /*
+                The photo as taken, and nothing drawn over it. A yellow "face
+                detected" box used to sit in the middle of every preview, but no
+                detection runs on the phone: it told the sender something had
+                been checked when nothing had.
+              */
+              <div className="overflow-hidden rounded-t-2xl bg-black">
+                <img src={preview} alt={t(copy.alt)} className="mx-auto max-h-72 object-contain" />
               </div>
             )}
-            <div className="space-y-4 p-6">
-              <h2 className="text-lg font-semibold">Where did you find the child?</h2>
+            {file && (
+              <p className="flex flex-wrap items-center justify-between gap-2 border-b border-black/5 px-4 py-2 text-xs text-gray-500 sm:px-6">
+                <span>
+                  {preparing
+                    ? t('Preparing the photo…')
+                    : file.size && originalSize && file.size < originalSize
+                      ? t('Photo made smaller for sending: {from} → {to}', { from: formatBytes(originalSize), to: formatBytes(file.size) })
+                      : t('Photo ready to send ({size})', { size: formatBytes(file.size) })}
+                </span>
+                <button type="button" className="font-semibold text-khozo hover:underline" onClick={() => fileRef.current?.click()}>
+                  {t('Change photo')}
+                </button>
+              </p>
+            )}
+            <div className="space-y-4 p-4 sm:p-6">
+              <h2 className="text-lg font-semibold">{t(copy.where)}</h2>
               {!file && (
                 <div className="rounded-xl bg-blue-50 px-4 py-3 text-sm text-blue-800">
-                  No photo attached. This will be sent as a text sighting to Childline/CWC intake and no match search will run.
+                  {t(copy.noPhoto)}
+                </div>
+              )}
+              {seen === 'woman' && (
+                <div className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-900">
+                  {t(copy.danger)}
                 </div>
               )}
               <div>
-                <label className="label">Found location</label>
+                <label className="label">{t('Found location')}</label>
                 <div className="flex gap-2">
-                  <input className="field" value={form.foundLocation} onChange={set('foundLocation')} placeholder="Area, landmark, city" />
+                  <input className="field" value={form.foundLocation} onChange={set('foundLocation')} placeholder={t('Area, landmark, city')} autoComplete="off" enterKeyHint="next" />
                   <button
                     type="button"
                     className="btn-ghost shrink-0"
                     disabled={located?.status === 'locating'}
                     onClick={() => locate(null)}
                   >
-                    Use GPS
+                    {t('Use GPS')}
                   </button>
                 </div>
                 <LocationStatus located={located} hasPhoto={!!file} onClear={clearLocation} />
@@ -317,72 +519,92 @@ export default function Capture() {
                   location goes to every review desk rather than being refused.
                 */}
                 <div>
-                  <label className="label">State</label>
+                  <label className="label">{t('State')}</label>
                   <select className="field" value={form.state} onChange={set('state')}>
-                    <option value="">Select state (helps us route it faster)</option>
+                    <option value="">{t('Select state (helps us route it faster)')}</option>
                     {INDIAN_STATES.map((state) => (
                       <option key={state} value={state}>{state}</option>
                     ))}
                   </select>
                 </div>
                 <div>
-                  <label className="label">District</label>
-                  <input className="field" value={form.district} onChange={set('district')} placeholder="e.g. Mumbai" />
+                  <label className="label">{t('District')}</label>
+                  <input className="field" value={form.district} onChange={set('district')} placeholder={t('e.g. Mumbai')} autoComplete="off" />
                 </div>
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
-                  <label className="label">Approx. age</label>
-                  <input className="field" type="number" value={form.ageApprox} onChange={set('ageApprox')} placeholder="e.g. 6" />
+                  <label className="label">{t('Approx. age')}</label>
+                  <input className="field" type="number" inputMode="numeric" min={ageLimits.min} max={ageLimits.max} value={form.ageApprox} onChange={set('ageApprox')} placeholder={t(copy.agePlaceholder)} />
+                </div>
+                {seen !== 'woman' && (
+                  <div>
+                    <label className="label">{t('Gender')}</label>
+                    <select className="field" value={form.gender} onChange={set('gender')}>
+                      <option value="">{t('Not sure')}</option>
+                      <option value="Male">{genderLabel('Male', seen)}</option>
+                      <option value="Female">{genderLabel('Female', seen)}</option>
+                    </select>
+                  </div>
+                )}
+                <div>
+                  <label className="label">{t('Your name (optional)')}</label>
+                  <input className="field" value={form.reporterName} onChange={set('reporterName')} autoComplete="name" />
                 </div>
                 <div>
-                  <label className="label">Gender</label>
-                  <select className="field" value={form.gender} onChange={set('gender')}>
-                    <option value="">Not sure</option>
-                    <option>Male</option>
-                    <option>Female</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="label">Your name (optional)</label>
-                  <input className="field" value={form.reporterName} onChange={set('reporterName')} />
-                </div>
-                <div>
-                  <label className="label">Your phone (optional)</label>
-                  <input className="field" value={form.reporterPhone} onChange={set('reporterPhone')} />
+                  <label className="label">{t('Your phone (optional)')}</label>
+                  <input className="field" type="tel" inputMode="tel" autoComplete="tel" value={form.reporterPhone} onChange={set('reporterPhone')} />
                 </div>
               </div>
               <label className="flex gap-3 rounded-xl bg-gray-50 p-3 text-sm text-gray-700">
                 <input type="checkbox" className="mt-1" checked={form.confidentialReporter} onChange={setChecked('confidentialReporter')} />
-                <span>Keep my identity confidential in the review queue.</span>
+                <span>{t('Keep my identity confidential in the review queue.')}</span>
               </label>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
-                  <label className="label">Photo ID proof</label>
+                  <label className="label">{t('Photo ID proof')}</label>
                   <select className="field" value={form.idProofType} onChange={set('idProofType')}>
-                    {ID_PROOF_TYPES.map((type) => <option key={type.id} value={type.id}>{type.label}</option>)}
+                    {ID_PROOF_TYPES.map((type) => <option key={type.id} value={type.id}>{t(type.label)}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="label">ID number</label>
-                  <input className="field" value={form.idProofNumber} onChange={set('idProofNumber')} placeholder="Stored masked" />
+                  <label className="label">{t('ID number')}</label>
+                  <input className="field" value={form.idProofNumber} onChange={set('idProofNumber')} placeholder={t('Stored masked')} autoComplete="off" autoCapitalize="characters" />
                 </div>
               </div>
               <div>
-                <label className="label">Note</label>
-                <textarea className="field" rows={2} value={form.note} onChange={set('note')} placeholder="Anything that helps identify the child" />
+                <label className="label">{t('Note')}</label>
+                <textarea className="field" rows={2} value={form.note} onChange={set('note')} placeholder={t(copy.note)} />
               </div>
               {file && (
                 <label className="flex gap-3 rounded-xl bg-gray-50 p-3 text-sm text-gray-700">
                   <input type="checkbox" className="mt-1" checked={form.photoConsent} onChange={setChecked('photoConsent')} required />
                   <span>
-                    I confirm this photo may be used only for child-protection review, police/CWC follow-up, and match search. The sighting image is retained for 180 days unless escalated.
+                    {t(copy.consent)}
                   </span>
                 </label>
               )}
-              <div className="flex justify-between">
-                <button className="btn-ghost" onClick={() => setStep(1)}>Back</button>
-                <button className="btn-primary" onClick={submit} disabled={busy}>{busy ? 'Submitting...' : file ? 'Submit & search matches' : 'Submit text sighting'}</button>
+              {/*
+                The send button stays at the bottom of the screen on a phone,
+                with the upload's progress on it, so a long form never hides it.
+              */}
+              <div className="safe-bottom sticky bottom-0 z-10 -mx-4 -mb-4 rounded-b-2xl border-t border-black/5 bg-white/95 px-4 pt-3 backdrop-blur sm:static sm:mx-0 sm:mb-0 sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none">
+                {progress != null && (
+                  <div className="mb-2" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress * 100)} aria-label={t('Sending your report')}>
+                    <div className="h-2 overflow-hidden rounded-full bg-gray-200">
+                      <div className="h-full rounded-full bg-khozo transition-[width]" style={{ width: `${Math.round(progress * 100)}%` }} />
+                    </div>
+                    <p className="mt-1 text-xs text-gray-500">
+                      {progress < 1 ? t('Sending photo… {pct}%', { pct: Math.round(progress * 100) }) : t('Checking the photo…')}
+                    </p>
+                  </div>
+                )}
+                <div className="flex gap-3 pb-3 sm:justify-between sm:pb-0">
+                  <button className="btn-ghost" onClick={() => setStep(1)} disabled={busy}>{t('Back')}</button>
+                  <button className="btn-primary flex-1 sm:flex-none" onClick={submit} disabled={busy || preparing}>
+                    {busy ? t('Submitting...') : preparing ? t('Preparing the photo…') : file ? t('Submit & search matches') : t('Submit text sighting')}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -391,62 +613,43 @@ export default function Capture() {
         {step === 3 && result && (
           <div className="space-y-6">
             <div className="card p-6 text-center">
-              <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-khozo-light text-2xl">OK</div>
-              <h2 className="mt-3 text-xl font-bold">Thank you - your report was submitted</h2>
-              <p className="mt-2 text-sm font-semibold text-khozo">Receipt ID: {result.foundReport.id}</p>
+              <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-khozo-light text-khozo-dark">
+                <svg aria-hidden="true" viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
+              </div>
+              <h2 className="mt-3 text-xl font-bold">{t('Thank you - your report was submitted')}</h2>
+              <p className="mt-2 text-sm font-semibold text-khozo">{t('Receipt ID: {id}', { id: result.foundReport.id })}</p>
+              <ReceiptActions id={result.foundReport.id} className="mt-3" />
+              <p className="mt-2 text-xs text-gray-500">{t('Saved on this phone: find it again on the tracking page.')}</p>
               {/*
-                The server decides what a reporter may be told, and says it in
-                `review`. It never returns which child was matched — that would
-                hand a stranger a missing child's identity — so this cannot be
-                inferred client-side from a matched id, which is always absent.
+                The same receipt for every reporter, whatever the engines found.
+                Telling a stranger "possible match", a score, or a candidate's
+                age band tells them that the person they photographed is being
+                looked for — a disclosure in itself, and the kind that can lead
+                someone to a child or a woman who is hiding from them. The
+                outcome lives on the record, for officers. This text is fixed
+                here rather than taken from the response, so a signed-in
+                officer using this page sees the same receipt as the public.
               */}
               <p className="mt-1 text-gray-500">
-                {result.review || 'Your report is saved and will be checked against new cases.'}
+                {t('Thank you. Your report has reached the police and child-protection desks for this area. Keep your receipt number to track it.')}
               </p>
             </div>
 
-            {result.candidates.length > 0 && (
-              <div>
-                <h3 className="mb-3 font-semibold">Closest matches from missing-children records</h3>
-                <div className="space-y-3">
-                  {result.candidates.map((c) => (
-                    <div key={c.rank} className="card flex items-center gap-4 p-4">
-                      <Avatar name={`Candidate ${c.rank}`} size={52} />
-                      <div className="flex-1">
-                        <p className="font-semibold">Candidate #{c.rank}</p>
-                        <p className="text-sm text-gray-500">{c.gender || 'Gender unknown'} / age band {c.ageBand}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className={`text-lg font-bold ${c.score >= 0.8 ? 'text-emerald-600' : c.score >= 0.6 ? 'text-amber-600' : 'text-gray-400'}`}>
-                          {Math.round(c.score * 100)}%
-                        </p>
-                        <p className="text-xs text-gray-400">match</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
             <div className="card p-4 text-sm text-gray-600">
-              <p className="font-semibold text-ink">Review status</p>
-              <p className="mt-1">{result.review}</p>
-              <p className="mt-2 text-xs text-gray-400">{result.foundReport.referralStatus}</p>
-              {result.foundReport.matchEngine && (
-                <p className="mt-1 text-xs text-gray-400">
-                  Match engine: {result.foundReport.matchEngine.provider}
-                  {result.foundReport.matchEngine.biometric ? '' : ' demo workflow scorer'}
-                </p>
-              )}
+              <p className="font-semibold text-ink">{t('What happens next')}</p>
+              <p className="mt-1">{t('An officer reviews every report. You will not be contacted unless the desk needs more detail from you.')}</p>
+              <p className="mt-2">{t((SEEN_COPY[result.foundReport.personCategory] || copy).danger)}</p>
               {result.foundReport.retentionUntil && (
-                <p className="mt-1 text-xs text-gray-400">Photo review retention until {new Date(result.foundReport.retentionUntil).toLocaleDateString('en-IN')}</p>
+                <p className="mt-2 text-xs text-gray-400">{t('Photo review retention until {date}', { date: new Date(result.foundReport.retentionUntil).toLocaleDateString(currentLocale()) })}</p>
               )}
             </div>
 
-            <div className="flex justify-center gap-3">
-              <Link to="/" className="btn-ghost">Done</Link>
-              <Link to="/track-sighting" className="btn-ghost">Track status</Link>
-              <button className="btn-primary" onClick={() => { setStep(1); setResult(null); setFile(null); setPreview(null); clearLocation(); }}>Report another</button>
+            <InstallPrompt />
+
+            <div className="grid gap-3 sm:flex sm:justify-center">
+              <button className="btn-primary sm:order-3" onClick={() => { setStep(1); setResult(null); setFile(null); setPreview(null); setOriginalSize(0); clearLocation(); }}>{t('Report another')}</button>
+              <Link to={`/track-sighting?receipt=${encodeURIComponent(result.foundReport.id)}`} className="btn-ghost sm:order-2">{t('Track status')}</Link>
+              <Link to="/" className="btn-ghost sm:order-1">{t('Done')}</Link>
             </div>
           </div>
         )}

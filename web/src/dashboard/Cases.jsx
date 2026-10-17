@@ -1,8 +1,19 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api.js';
 import { useAuth } from '../auth.jsx';
-import { fmtDate, StatusBadge, Avatar, ROLE_LABELS } from '../lib.jsx';
+import {
+  fmtDate, StatusBadge, Avatar, roleLabel,
+  CategoryBadge, genderLabel, isAdultCase, personCategoryOf, PERSON_CATEGORY_OPTIONS,
+  asList, txt, txtList, PhoneLink,
+} from '../lib.jsx';
+import { ErrorBoundary } from '../components.jsx';
+import { useT, msg, currentLocale } from '../i18n.jsx';
+import { useDisplay } from '../useDisplay.js';
+import { useBackClose } from '../useBackClose.js';
+import { POLICE_ROLES } from '../../../shared/scope.js';
+import { ActionMessage, ActionToast, useAction } from './useAction.jsx';
+import { ConfirmMatchDialog, FamilyContactList, FamilyContactPanel, ReopenCasePanel } from './Reunite.jsx';
 
 const FORMAL_ACTION_ROLES = ['super_admin', 'admin', 'police', 'sjpu'];
 const WORKFLOW_ROLES = ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'dcrb', 'dlsa', 'cwc', 'dcpu', 'rpf', 'cci', 'saa', 'jjb', 'state_nodal', 'sara', 'crime_bureau'];
@@ -10,8 +21,15 @@ const CASE_CLOSE_ROLES = ['super_admin', 'admin', 'police', 'sjpu', 'cwc', 'dcpu
 const CASE_ASSIGN_ROLES = ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'dcrb', 'dlsa', 'cwc', 'dcpu', 'rpf', 'cci', 'saa', 'jjb', 'state_nodal', 'sara', 'crime_bureau'];
 const INVESTIGATION_CHECKLIST_ROLES = ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'dcrb', 'rpf', 'state_nodal', 'crime_bureau'];
 const INTAKE_VERIFY_ROLES = ['super_admin', 'admin', 'police', 'sjpu', 'cwc', 'dcpu', 'state_nodal'];
+// Public appeals are off (shared/case-domain.js isPublicAppeal). These roles
+// see the notice, and can still withdraw an appeal published before the rule.
 const BULLETIN_ROLES = ['super_admin', 'admin', 'police', 'sjpu', 'state_nodal'];
+// Who may re-run the photo search against earlier sightings: the same police
+// roles that see police-provided records (shared/scope.js).
+const REMATCH_ROLES = POLICE_ROLES;
 const CASE_TRANSFER_ROLES = ['super_admin', 'admin', 'state_nodal'];
+// Taking a found or closed case back to missing (POST /reports/:id/reopen).
+const REOPEN_ROLES = POLICE_ROLES;
 const CCI_CARE_ROLES = ['super_admin', 'admin', 'cwc', 'dcpu', 'cci', 'saa', 'state_nodal', 'sara'];
 const JJB_PROCEEDING_ROLES = ['super_admin', 'admin', 'cwc', 'dcpu', 'jjb', 'state_nodal'];
 const STATE_ESCALATION_ROLES = ['super_admin', 'admin', 'state_nodal', 'sara'];
@@ -24,253 +42,273 @@ const ADOPTION_RECORD_ROLES = ['super_admin', 'admin', 'cwc', 'dcpu', 'cci', 'sa
 const CASE_ASSESSMENT_ROLES = ['super_admin', 'admin', 'cwc', 'dcpu', 'cci', 'saa', 'jjb', 'state_nodal', 'sara'];
 const PRODUCTION_RECORD_ROLES = ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'rpf', 'cwc', 'dcpu', 'state_nodal'];
 const WORKFLOW_ACTIONS = [
-  { id: 'refer_cwc', label: 'Refer CWC', roles: ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'dcrb', 'dcpu', 'rpf', 'cci', 'jjb', 'state_nodal', 'crime_bureau'] },
-  { id: 'assign_cci', label: 'Assign CCI', roles: ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'cwc', 'dcpu', 'state_nodal'] },
-  { id: 'refer_jjb', label: 'Refer JJB', roles: ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'cwc', 'dcpu', 'cci', 'state_nodal'] },
-  { id: 'escalate_state', label: 'Escalate State', roles: ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'dcrb', 'cwc', 'dcpu', 'rpf', 'cci', 'jjb', 'crime_bureau'] },
-  { id: 'notify_crime_bureau', label: 'Notify Bureau', roles: ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'dcrb', 'rpf', 'state_nodal'] },
+  { id: 'refer_cwc', childOnly: true, label: msg('Refer CWC'), roles: ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'dcrb', 'dcpu', 'rpf', 'cci', 'jjb', 'state_nodal', 'crime_bureau'] },
+  { id: 'assign_cci', childOnly: true, label: msg('Assign CCI'), roles: ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'cwc', 'dcpu', 'state_nodal'] },
+  { id: 'refer_jjb', childOnly: true, label: msg('Refer JJB'), roles: ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'cwc', 'dcpu', 'cci', 'state_nodal'] },
+  { id: 'escalate_state', label: msg('Escalate State'), roles: ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'dcrb', 'cwc', 'dcpu', 'rpf', 'cci', 'jjb', 'crime_bureau'] },
+  { id: 'notify_crime_bureau', label: msg('Notify Bureau'), roles: ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'dcrb', 'rpf', 'state_nodal'] },
 ];
 const ASSIGNMENT_TYPES = [
-  { id: 'investigation', label: 'Investigation owner' },
-  { id: 'welfare', label: 'Welfare follow-up owner' },
-  { id: 'railway', label: 'Railway / transit owner' },
-  { id: 'cci', label: 'CCI care owner' },
-  { id: 'adoption', label: 'Adoption follow-up owner' },
-  { id: 'jjb', label: 'JJB proceeding owner' },
-  { id: 'bureau', label: 'Records bureau owner' },
-  { id: 'legal', label: 'Legal aid owner' },
+  { id: 'investigation', label: msg('Investigation owner') },
+  { id: 'welfare', label: msg('Welfare follow-up owner') },
+  { id: 'railway', label: msg('Railway / transit owner') },
+  { id: 'cci', childOnly: true, label: msg('CCI care owner') },
+  { id: 'adoption', childOnly: true, label: msg('Adoption follow-up owner') },
+  { id: 'jjb', childOnly: true, label: msg('JJB proceeding owner') },
+  { id: 'bureau', label: msg('Records bureau owner') },
+  { id: 'legal', label: msg('Legal aid owner') },
 ];
 const INVESTIGATION_CHECKLIST_ITEMS = [
-  { id: 'fir_registered', label: 'FIR / GD registered' },
-  { id: 'trackchild_updated', label: 'TrackChild updated' },
-  { id: 'khoyapaya_checked', label: 'Khoya-Paya checked' },
-  { id: 'cctns_linked', label: 'CCTNS linked' },
-  { id: 'ncrb_scrb_alerted', label: 'NCRB / SCRB alerted' },
-  { id: 'lookout_circulated', label: 'Lookout circulated' },
-  { id: 'railway_rpf_alerted', label: 'Railway / RPF alerted' },
-  { id: 'childline_1098_alerted', label: '1098 alerted' },
-  { id: 'cwc_informed', label: 'CWC informed' },
-  { id: 'media_bulletin_reviewed', label: 'Bulletin reviewed' },
-  { id: 'family_statement_recorded', label: 'Family statement' },
-  { id: 'last_seen_verified', label: 'Last-seen verified' },
+  { id: 'fir_registered', label: msg('FIR / GD registered') },
+  { id: 'trackchild_updated', childOnly: true, label: msg('TrackChild updated') },
+  { id: 'khoyapaya_checked', childOnly: true, label: msg('Khoya-Paya checked') },
+  { id: 'cctns_linked', label: msg('CCTNS linked') },
+  { id: 'ncrb_scrb_alerted', label: msg('NCRB / SCRB alerted') },
+  { id: 'lookout_circulated', label: msg('Lookout circulated') },
+  { id: 'railway_rpf_alerted', label: msg('Railway / RPF alerted') },
+  { id: 'childline_1098_alerted', childOnly: true, label: msg('1098 alerted') },
+  { id: 'cwc_informed', childOnly: true, label: msg('CWC informed') },
+  { id: 'media_bulletin_reviewed', label: msg('Bulletin reviewed') },
+  { id: 'family_statement_recorded', label: msg('Family statement') },
+  { id: 'last_seen_verified', label: msg('Last-seen verified') },
 ];
 const CASE_CLOSE_REASONS = [
-  { id: 'restored_family', label: 'Restored to family' },
-  { id: 'transferred_cci', label: 'Transferred to CCI' },
-  { id: 'adoption', label: 'Adoption / aftercare' },
-  { id: 'repatriated', label: 'Repatriated' },
-  { id: 'death', label: 'Death recorded' },
-  { id: 'traced_not_reunited', label: 'Traced, pending reunification' },
-  { id: 'other', label: 'Other closure' },
+  { id: 'restored_family', label: msg('Restored to family') },
+  { id: 'transferred_cci', childOnly: true, label: msg('Transferred to CCI') },
+  { id: 'adoption', childOnly: true, label: msg('Adoption / aftercare') },
+  { id: 'repatriated', label: msg('Repatriated') },
+  { id: 'death', label: msg('Death recorded') },
+  { id: 'traced_not_reunited', label: msg('Traced, pending reunification') },
+  { id: 'other', label: msg('Other closure') },
 ];
 const CCI_ADMISSION_TYPES = [
-  { id: 'temporary_shelter', label: 'Temporary shelter' },
-  { id: 'restoration_pending', label: 'Restoration pending' },
-  { id: 'medical_care', label: 'Medical care' },
-  { id: 'counselling', label: 'Counselling' },
-  { id: 'aftercare_followup', label: 'Aftercare follow-up' },
+  { id: 'temporary_shelter', label: msg('Temporary shelter') },
+  { id: 'restoration_pending', label: msg('Restoration pending') },
+  { id: 'medical_care', label: msg('Medical care') },
+  { id: 'counselling', label: msg('Counselling') },
+  { id: 'aftercare_followup', label: msg('Aftercare follow-up') },
 ];
 const CCI_SERVICE_TYPES = [
-  { id: 'education', label: 'Education' },
-  { id: 'vocational_training', label: 'Vocational training' },
-  { id: 'recreation', label: 'Recreation' },
-  { id: 'health_care', label: 'Health care' },
-  { id: 'counselling', label: 'Counselling' },
-  { id: 'family_tracing', label: 'Family tracing' },
+  { id: 'education', label: msg('Education') },
+  { id: 'vocational_training', label: msg('Vocational training') },
+  { id: 'recreation', label: msg('Recreation') },
+  { id: 'health_care', label: msg('Health care') },
+  { id: 'counselling', label: msg('Counselling') },
+  { id: 'family_tracing', label: msg('Family tracing') },
 ];
 const CCI_PROGRESS_STATES = [
-  { id: 'intake', label: 'Intake' },
-  { id: 'active', label: 'Active' },
-  { id: 'review_due', label: 'Review due' },
-  { id: 'ready_for_restoration', label: 'Ready for restoration' },
-  { id: 'completed', label: 'Completed' },
+  { id: 'intake', label: msg('Intake') },
+  { id: 'active', label: msg('Active') },
+  { id: 'review_due', label: msg('Review due') },
+  { id: 'ready_for_restoration', label: msg('Ready for restoration') },
+  { id: 'completed', label: msg('Completed') },
 ];
 const JJB_PROCEEDING_TYPES = [
-  { id: 'preliminary_hearing', label: 'Preliminary hearing' },
-  { id: 'social_investigation_order', label: 'Social investigation order' },
-  { id: 'rehabilitation_direction', label: 'Rehabilitation direction' },
-  { id: 'family_tracing_direction', label: 'Family tracing direction' },
-  { id: 'final_order_review', label: 'Final order review' },
+  { id: 'preliminary_hearing', label: msg('Preliminary hearing') },
+  { id: 'social_investigation_order', label: msg('Social investigation order') },
+  { id: 'rehabilitation_direction', label: msg('Rehabilitation direction') },
+  { id: 'family_tracing_direction', label: msg('Family tracing direction') },
+  { id: 'final_order_review', label: msg('Final order review') },
 ];
 const STATE_ESCALATION_TYPES = [
-  { id: 'inter_district_coordination', label: 'Inter-district coordination' },
-  { id: 'interstate_coordination', label: 'Interstate coordination' },
-  { id: 'resource_support', label: 'Resource support' },
-  { id: 'policy_exception', label: 'Policy exception' },
-  { id: 'urgent_rescue_coordination', label: 'Urgent rescue coordination' },
+  { id: 'inter_district_coordination', label: msg('Inter-district coordination') },
+  { id: 'interstate_coordination', label: msg('Interstate coordination') },
+  { id: 'resource_support', label: msg('Resource support') },
+  { id: 'policy_exception', label: msg('Policy exception') },
+  { id: 'urgent_rescue_coordination', label: msg('Urgent rescue coordination') },
 ];
 const STATE_ESCALATION_LEVELS = [
-  { id: 'district_to_state', label: 'District to state' },
-  { id: 'state_task_force', label: 'State task force' },
-  { id: 'interstate_desk', label: 'Interstate desk' },
-  { id: 'national_command', label: 'National command' },
+  { id: 'district_to_state', label: msg('District to state') },
+  { id: 'state_task_force', label: msg('State task force') },
+  { id: 'interstate_desk', label: msg('Interstate desk') },
+  { id: 'national_command', label: msg('National command') },
 ];
 const BUREAU_REPORT_TYPES = [
-  { id: 'ncrb_missing_child_update', label: 'NCRB missing-child update' },
-  { id: 'scrb_state_update', label: 'SCRB state update' },
-  { id: 'interstate_alert', label: 'Interstate alert' },
-  { id: 'recurring_pattern_review', label: 'Recurring pattern review' },
-  { id: 'final_trace_update', label: 'Final trace update' },
+  { id: 'ncrb_missing_child_update', label: msg('NCRB missing-child update') },
+  { id: 'scrb_state_update', label: msg('SCRB state update') },
+  { id: 'interstate_alert', label: msg('Interstate alert') },
+  { id: 'recurring_pattern_review', label: msg('Recurring pattern review') },
+  { id: 'final_trace_update', label: msg('Final trace update') },
 ];
 const BUREAU_LEVELS = [
-  { id: 'ncrb', label: 'NCRB' },
-  { id: 'scrb', label: 'SCRB' },
-  { id: 'state_control_room', label: 'State control room' },
+  { id: 'ncrb', label: msg('NCRB') },
+  { id: 'scrb', label: msg('SCRB') },
+  { id: 'state_control_room', label: msg('State control room') },
 ];
 const BUREAU_PRIORITIES = [
-  { id: 'routine', label: 'Routine' },
-  { id: 'priority', label: 'Priority' },
-  { id: 'urgent', label: 'Urgent' },
+  { id: 'routine', label: msg('Routine') },
+  { id: 'priority', label: msg('Priority') },
+  { id: 'urgent', label: msg('Urgent') },
 ];
 const RESTORATION_TYPES = [
-  { id: 'family_restoration', label: 'Family restoration' },
-  { id: 'interstate_transfer', label: 'Interstate restoration' },
-  { id: 'inter_district_transfer', label: 'Inter-district restoration' },
-  { id: 'international_repatriation', label: 'International repatriation' },
-  { id: 'cci_aftercare', label: 'CCI aftercare follow-up' },
+  { id: 'family_restoration', label: msg('Family restoration') },
+  { id: 'interstate_transfer', label: msg('Interstate restoration') },
+  { id: 'inter_district_transfer', label: msg('Inter-district restoration') },
+  { id: 'international_repatriation', label: msg('International repatriation') },
+  { id: 'cci_aftercare', label: msg('CCI aftercare follow-up') },
 ];
 const RESTORATION_STATUSES = [
-  { id: 'planned', label: 'Planned' },
-  { id: 'documents_pending', label: 'Documents pending' },
-  { id: 'transit_scheduled', label: 'Transit scheduled' },
-  { id: 'handed_over', label: 'Handed over' },
-  { id: 'followup_due', label: 'Follow-up due' },
-  { id: 'completed', label: 'Completed' },
+  { id: 'planned', label: msg('Planned') },
+  { id: 'documents_pending', label: msg('Documents pending') },
+  { id: 'transit_scheduled', label: msg('Transit scheduled') },
+  { id: 'handed_over', label: msg('Handed over') },
+  { id: 'followup_due', label: msg('Follow-up due') },
+  { id: 'completed', label: msg('Completed') },
 ];
 const RESTORATION_SUPPORTS = [
-  { id: 'interpreter', label: 'Interpreter' },
-  { id: 'escort', label: 'Escort' },
-  { id: 'medical', label: 'Medical' },
-  { id: 'counsellor', label: 'Counsellor' },
-  { id: 'documents', label: 'Documents' },
-  { id: 'other', label: 'Other' },
+  { id: 'interpreter', label: msg('Interpreter') },
+  { id: 'escort', label: msg('Escort') },
+  { id: 'medical', label: msg('Medical') },
+  { id: 'counsellor', label: msg('Counsellor') },
+  { id: 'documents', label: msg('Documents') },
+  { id: 'other', label: msg('Other') },
 ];
 const RESTORATION_TRAVEL_MODES = [
-  { id: 'rail', label: 'Rail' },
-  { id: 'road', label: 'Road' },
-  { id: 'air', label: 'Air' },
-  { id: 'mixed', label: 'Mixed route' },
-  { id: 'local_handover', label: 'Local handover' },
-  { id: 'not_required', label: 'Not required' },
+  { id: 'rail', label: msg('Rail') },
+  { id: 'road', label: msg('Road') },
+  { id: 'air', label: msg('Air') },
+  { id: 'mixed', label: msg('Mixed route') },
+  { id: 'local_handover', label: msg('Local handover') },
+  { id: 'not_required', label: msg('Not required') },
 ];
 const RESTORATION_DOCUMENT_STATUSES = [
-  { id: 'not_started', label: 'Not started' },
-  { id: 'pending', label: 'Pending' },
-  { id: 'verified', label: 'Verified' },
-  { id: 'exception_approved', label: 'Exception approved' },
+  { id: 'not_started', label: msg('Not started') },
+  { id: 'pending', label: msg('Pending') },
+  { id: 'verified', label: msg('Verified') },
+  { id: 'exception_approved', label: msg('Exception approved') },
 ];
 const RESTORATION_FUNDING_SOURCES = [
-  { id: 'dcpu', label: 'DCPU' },
-  { id: 'cwc', label: 'CWC' },
-  { id: 'state', label: 'State' },
-  { id: 'ngo', label: 'NGO / CSR' },
-  { id: 'family', label: 'Family' },
-  { id: 'not_required', label: 'Not required' },
+  { id: 'dcpu', label: msg('DCPU') },
+  { id: 'cwc', label: msg('CWC') },
+  { id: 'state', label: msg('State') },
+  { id: 'ngo', label: msg('NGO / CSR') },
+  { id: 'family', label: msg('Family') },
+  { id: 'not_required', label: msg('Not required') },
 ];
 const EXTERNAL_ID_TYPES = [
-  { id: 'trackchild', label: 'TrackChild ID' },
-  { id: 'khoyapaya', label: 'Khoya-Paya ID' },
-  { id: 'ncrb', label: 'NCRB ID' },
-  { id: 'scrb', label: 'SCRB ID' },
-  { id: 'cctns', label: 'CCTNS / FIR link' },
-  { id: 'ghar', label: 'GHAR restoration ID' },
-  { id: 'state_portal', label: 'State portal ID' },
-  { id: 'other', label: 'Other external ID' },
+  { id: 'trackchild', label: msg('TrackChild ID') },
+  { id: 'khoyapaya', label: msg('Khoya-Paya ID') },
+  { id: 'ncrb', label: msg('NCRB ID') },
+  { id: 'scrb', label: msg('SCRB ID') },
+  { id: 'cctns', label: msg('CCTNS / FIR link') },
+  { id: 'ghar', label: msg('GHAR restoration ID') },
+  { id: 'state_portal', label: msg('State portal ID') },
+  { id: 'other', label: msg('Other external ID') },
 ];
 const WELFARE_SCHEMES = [
-  { id: 'sponsorship', label: 'Sponsorship care' },
-  { id: 'foster_care', label: 'Foster care' },
-  { id: 'adoption_facilitation', label: 'Adoption facilitation' },
-  { id: 'aftercare', label: 'Aftercare' },
-  { id: 'counselling', label: 'Counselling' },
-  { id: 'medical_support', label: 'Medical support' },
-  { id: 'education_support', label: 'Education support' },
-  { id: 'family_strengthening', label: 'Family strengthening' },
+  { id: 'sponsorship', label: msg('Sponsorship care') },
+  { id: 'foster_care', label: msg('Foster care') },
+  { id: 'adoption_facilitation', label: msg('Adoption facilitation') },
+  { id: 'aftercare', label: msg('Aftercare') },
+  { id: 'counselling', label: msg('Counselling') },
+  { id: 'medical_support', label: msg('Medical support') },
+  { id: 'education_support', label: msg('Education support') },
+  { id: 'family_strengthening', label: msg('Family strengthening') },
 ];
 const WELFARE_STATUSES = [
-  { id: 'referred', label: 'Referred' },
-  { id: 'eligibility_review', label: 'Eligibility review' },
-  { id: 'approved', label: 'Approved' },
-  { id: 'active', label: 'Active' },
-  { id: 'completed', label: 'Completed' },
-  { id: 'rejected', label: 'Rejected' },
+  { id: 'referred', label: msg('Referred') },
+  { id: 'eligibility_review', label: msg('Eligibility review') },
+  { id: 'approved', label: msg('Approved') },
+  { id: 'active', label: msg('Active') },
+  { id: 'completed', label: msg('Completed') },
+  { id: 'rejected', label: msg('Rejected') },
 ];
 const LEGAL_AID_SERVICE_TYPES = [
-  { id: 'legal_aid', label: 'Legal aid' },
-  { id: 'victim_compensation', label: 'Victim compensation' },
-  { id: 'court_support', label: 'Court support' },
-  { id: 'counselling_order_support', label: 'Counselling / protection order support' },
-  { id: 'document_affidavit', label: 'Document or affidavit support' },
-  { id: 'other', label: 'Other legal service' },
+  { id: 'legal_aid', label: msg('Legal aid') },
+  { id: 'victim_compensation', label: msg('Victim compensation') },
+  { id: 'court_support', label: msg('Court support') },
+  { id: 'counselling_order_support', label: msg('Counselling / protection order support') },
+  { id: 'document_affidavit', label: msg('Document or affidavit support') },
+  { id: 'other', label: msg('Other legal service') },
 ];
 const LEGAL_AID_STATUSES = [
-  { id: 'referred', label: 'Referred' },
-  { id: 'application_filed', label: 'Application filed' },
-  { id: 'approved', label: 'Approved' },
-  { id: 'active', label: 'Active' },
-  { id: 'completed', label: 'Completed' },
-  { id: 'rejected', label: 'Rejected' },
+  { id: 'referred', label: msg('Referred') },
+  { id: 'application_filed', label: msg('Application filed') },
+  { id: 'approved', label: msg('Approved') },
+  { id: 'active', label: msg('Active') },
+  { id: 'completed', label: msg('Completed') },
+  { id: 'rejected', label: msg('Rejected') },
 ];
 const ADOPTION_RECORD_TYPES = [
-  { id: 'cwc_order', label: 'CWC adoption order / declaration' },
-  { id: 'legally_free_declaration', label: 'Legally free declaration' },
-  { id: 'carings_registration', label: 'CARINGS registration' },
-  { id: 'saa_intake', label: 'SAA intake' },
-  { id: 'sara_review', label: 'SARA review' },
-  { id: 'pre_adoption_foster_care', label: 'Pre-adoption foster care' },
-  { id: 'followup_visit', label: 'Follow-up visit' },
-  { id: 'other', label: 'Other adoption action' },
+  { id: 'cwc_order', label: msg('CWC adoption order / declaration') },
+  { id: 'legally_free_declaration', label: msg('Legally free declaration') },
+  { id: 'carings_registration', label: msg('CARINGS registration') },
+  { id: 'saa_intake', label: msg('SAA intake') },
+  { id: 'sara_review', label: msg('SARA review') },
+  { id: 'pre_adoption_foster_care', label: msg('Pre-adoption foster care') },
+  { id: 'followup_visit', label: msg('Follow-up visit') },
+  { id: 'other', label: msg('Other adoption action') },
 ];
 const ADOPTION_STATUSES = [
-  { id: 'initiated', label: 'Initiated' },
-  { id: 'pending_documents', label: 'Documents pending' },
-  { id: 'cwc_review', label: 'CWC review' },
-  { id: 'carings_updated', label: 'CARINGS updated' },
-  { id: 'saa_care', label: 'SAA care' },
-  { id: 'sara_review', label: 'SARA review' },
-  { id: 'completed', label: 'Completed' },
-  { id: 'on_hold', label: 'On hold' },
+  { id: 'initiated', label: msg('Initiated') },
+  { id: 'pending_documents', label: msg('Documents pending') },
+  { id: 'cwc_review', label: msg('CWC review') },
+  { id: 'carings_updated', label: msg('CARINGS updated') },
+  { id: 'saa_care', label: msg('SAA care') },
+  { id: 'sara_review', label: msg('SARA review') },
+  { id: 'completed', label: msg('Completed') },
+  { id: 'on_hold', label: msg('On hold') },
 ];
 const CASE_ASSESSMENT_TYPES = [
-  { id: 'social_investigation_report', label: 'Social Investigation Report' },
-  { id: 'individual_care_plan', label: 'Individual Care Plan' },
-  { id: 'family_assessment', label: 'Family assessment' },
-  { id: 'risk_assessment', label: 'Risk assessment' },
-  { id: 'rehabilitation_plan', label: 'Rehabilitation plan' },
+  { id: 'social_investigation_report', label: msg('Social Investigation Report') },
+  { id: 'individual_care_plan', label: msg('Individual Care Plan') },
+  { id: 'family_assessment', label: msg('Family assessment') },
+  { id: 'risk_assessment', label: msg('Risk assessment') },
+  { id: 'rehabilitation_plan', label: msg('Rehabilitation plan') },
 ];
 const CASE_RISK_LEVELS = [
-  { id: 'low', label: 'Low' },
-  { id: 'medium', label: 'Medium' },
-  { id: 'high', label: 'High' },
-  { id: 'critical', label: 'Critical' },
+  { id: 'low', label: msg('Low') },
+  { id: 'medium', label: msg('Medium') },
+  { id: 'high', label: msg('High') },
+  { id: 'critical', label: msg('Critical') },
 ];
 const PRODUCTION_TYPES = [
-  { id: 'cwc', label: 'Produced before CWC' },
-  { id: 'jjb', label: 'Produced before JJB' },
-  { id: 'emergency_medical', label: 'Emergency medical production' },
-  { id: 'cci_intake', label: 'Produced for CCI intake' },
+  { id: 'cwc', label: msg('Produced before CWC') },
+  { id: 'jjb', label: msg('Produced before JJB') },
+  { id: 'emergency_medical', label: msg('Emergency medical production') },
+  { id: 'cci_intake', label: msg('Produced for CCI intake') },
 ];
 const PRODUCTION_OUTCOMES = [
-  { id: 'care_order_pending', label: 'Care order pending' },
-  { id: 'sent_medical', label: 'Sent for medical care' },
-  { id: 'sent_cci', label: 'Sent to CCI' },
-  { id: 'restored_guardian', label: 'Restored to guardian' },
-  { id: 'police_inquiry', label: 'Police inquiry pending' },
-  { id: 'repatriation_started', label: 'Repatriation started' },
+  { id: 'care_order_pending', label: msg('Care order pending') },
+  { id: 'sent_medical', label: msg('Sent for medical care') },
+  { id: 'sent_cci', label: msg('Sent to CCI') },
+  { id: 'restored_guardian', label: msg('Restored to guardian') },
+  { id: 'police_inquiry', label: msg('Police inquiry pending') },
+  { id: 'repatriation_started', label: msg('Repatriation started') },
 ];
+
+/** Milliseconds for sorting, whether a record holds an ISO string or a number. */
+function toMs(value) {
+  const ms = typeof value === 'number' ? value : new Date(value || 0).getTime();
+  return Number.isFinite(ms) ? ms : 0;
+}
 
 // The deck's "Basic Table": the operational register of children, scoped by role.
 export default function Cases() {
+  const t = useT();
+  // Record text (names, references, addresses) in the reader's script.
+  const d = useDisplay();
   const { user } = useAuth();
   const [rows, setRows] = useState([]);
   const [q, setQ] = useState('');
   const [stateFilter, setStateFilter] = useState('');
   const [districtFilter, setDistrictFilter] = useState('');
   const [genderFilter, setGenderFilter] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
+  // Every action in this page runs through one wrapper (useAction.jsx).
+  const action = useAction();
+  const [loadError, setLoadError] = useState('');
+  // { report, sightingId } while the confirmation dialog is open.
+  const [confirming, setConfirming] = useState(null);
+  // The family phone a confirmation answered with, for a case showing none.
+  const [familyPhoneHint, setFamilyPhoneHint] = useState({ id: '', phone: '' });
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [status, setStatus] = useState('');
   const [selected, setSelected] = useState(null);
+  // Phone only: the area and date filters are folded away until asked for.
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  useBackClose(!!selected, () => setSelected(null));
   const [closure, setClosure] = useState({ reason: 'restored_family', note: '', foundLocation: '' });
   const [verify, setVerify] = useState({ firNo: '', note: '' });
   const [assignableUsers, setAssignableUsers] = useState([]);
@@ -402,17 +440,19 @@ export default function Cases() {
     nextAction: '',
   });
   const [caseNote, setCaseNote] = useState('');
+  // { caseId, count, engine } after "Search earlier sightings" answers.
+  const [rematch, setRematch] = useState(null);
   const canAct = FORMAL_ACTION_ROLES.includes(user.role);
 
   /** Filter options drawn from the caseload, so nothing offered returns zero. */
   const facets = useMemo(
     () => ({
-      states: [...new Set(rows.map((r) => r.state).filter(Boolean))].sort(),
+      states: [...new Set(rows.map((r) => txt(r.state)).filter(Boolean))].sort(),
       districts: [
         ...new Set(
           rows
             .filter((r) => !stateFilter || r.state === stateFilter)
-            .map((r) => r.district)
+            .map((r) => txt(r.district))
             .filter(Boolean)
         ),
       ].sort(),
@@ -435,6 +475,7 @@ export default function Cases() {
         if (stateFilter && r.state !== stateFilter) return false;
         if (districtFilter && r.district !== districtFilter) return false;
         if (genderFilter && r.gender !== genderFilter) return false;
+        if (categoryFilter && personCategoryOf(r) !== categoryFilter) return false;
         if (from || to) {
           const when = new Date(r.dateOfMissing || r.createdAt || 0).getTime();
           if (!Number.isFinite(when)) return false;
@@ -444,15 +485,18 @@ export default function Cases() {
         return true;
       })
       .slice()
-      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-  }, [rows, stateFilter, districtFilter, genderFilter, fromDate, toDate]);
+      .sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
+  }, [rows, stateFilter, districtFilter, genderFilter, categoryFilter, fromDate, toDate]);
+  const activeFilters = [stateFilter, districtFilter, genderFilter, categoryFilter, fromDate, toDate].filter(Boolean).length;
   const canWorkflow = WORKFLOW_ROLES.includes(user.role);
   const canAssignCase = CASE_ASSIGN_ROLES.includes(user.role);
   const canRecordInvestigationChecklist = INVESTIGATION_CHECKLIST_ROLES.includes(user.role);
   const canCloseCase = CASE_CLOSE_ROLES.includes(user.role);
   const canVerifyIntake = INTAKE_VERIFY_ROLES.includes(user.role);
   const canManageBulletin = BULLETIN_ROLES.includes(user.role);
+  const canRematch = REMATCH_ROLES.includes(user.role);
   const canTransferCase = CASE_TRANSFER_ROLES.includes(user.role);
+  const canReopen = REOPEN_ROLES.includes(user.role);
   const canRecordCciCare = CCI_CARE_ROLES.includes(user.role);
   const canRecordJjbProceeding = JJB_PROCEEDING_ROLES.includes(user.role);
   const canRecordStateEscalation = STATE_ESCALATION_ROLES.includes(user.role);
@@ -464,15 +508,74 @@ export default function Cases() {
   const canRecordAdoption = ADOPTION_RECORD_ROLES.includes(user.role);
   const canRecordCaseAssessment = CASE_ASSESSMENT_ROLES.includes(user.role);
   const canRecordProduction = PRODUCTION_RECORD_ROLES.includes(user.role);
-  const workflowActions = WORKFLOW_ACTIONS.filter((a) => a.roles.includes(user.role));
+  // Whether the open case is a woman or adult person: the child-protection
+  // steps are not offered, and a traced adult is verified before any family
+  // is told where they are.
+  const adultCase = selected ? isAdultCase(selected) : false;
+  const forCase = (option) => !adultCase || !option.childOnly;
+  const workflowActions = WORKFLOW_ACTIONS.filter((a) => a.roles.includes(user.role)).filter(forCase);
+  const assignmentTypes = ASSIGNMENT_TYPES.filter(forCase);
+  const checklistItems = INVESTIGATION_CHECKLIST_ITEMS.filter(forCase);
+  const closeReasons = CASE_CLOSE_REASONS.filter(forCase);
 
+  // The register itself. A failure is said out loud: an empty table and a
+  // table that could not load must not look the same.
   const load = () => {
     const params = new URLSearchParams();
     if (status) params.set('status', status);
     if (q) params.set('q', q);
-    api.get(`/reports?${params}`).then((d) => setRows(d.reports)).catch(() => {});
+    return api.get(`/reports?${params}`)
+      .then((d) => {
+        const fresh = asList(d?.reports).filter((r) => r && typeof r === 'object' && r.id);
+        setRows(fresh);
+        setLoadError('');
+        // The open case keeps the list's view of its unconfirmed sighting.
+        setSelected((prev) => {
+          if (!prev) return prev;
+          const row = fresh.find((r) => r.id === prev.id);
+          return row ? { ...prev, pendingMatch: row.pendingMatch ?? null } : prev;
+        });
+        return fresh;
+      })
+      .catch((e) => {
+        setLoadError(txt(e?.message) || 'Request failed');
+        return null;
+      });
   };
-  useEffect(load, [status]);
+  useEffect(() => { load(); }, [status]);
+
+  // Arriving from an alert or a sighting card (/app/cases?id=…) opens that
+  // case rather than leaving the officer to find it in the list.
+  const [search] = useSearchParams();
+  const openId = search.get('id') || '';
+  const openedFor = useRef('');
+  useEffect(() => {
+    if (!openId || openedFor.current === openId) return;
+    const row = rows.find((r) => r.id === openId);
+    if (row) {
+      setSelected(row);
+      openedFor.current = openId;
+    }
+  }, [openId, rows]);
+
+  // A message about the last case must not sit on the next one.
+  const clearAction = action.clear;
+  useEffect(() => { clearAction(); }, [selected?.id, clearAction]);
+
+  /**
+   * An action answers with the updated case. The list's `pendingMatch` (the
+   * strongest unconfirmed sighting) is not part of that answer, so it is
+   * carried over from what was on screen.
+   */
+  const showReport = (report) => {
+    if (!report || typeof report !== 'object') return;
+    setSelected((prev) => ({
+      ...report,
+      pendingMatch: report.pendingMatch !== undefined
+        ? report.pendingMatch
+        : prev && prev.id === report.id ? prev.pendingMatch ?? null : null,
+    }));
+  };
 
   useEffect(() => {
     if (!selected || !canAssignCase || ['found', 'closed', 'intake_pending'].includes(selected.status)) {
@@ -481,7 +584,7 @@ export default function Cases() {
     }
     api.get(`/reports/${selected.id}/assignable-users`)
       .then((data) => {
-        const users = data.users || [];
+        const users = asList(data?.users).filter((item) => item && item.id);
         setAssignableUsers(users);
         setAssignment((prev) => {
           const preferred = users.some((item) => item.id === selected.assignedToId)
@@ -493,63 +596,105 @@ export default function Cases() {
       .catch(() => setAssignableUsers([]));
   }, [selected?.id, selected?.status, selected?.assignedToId, canAssignCase]);
 
-  const sendSms = async (r) => {
-    const res = await api.post(`/reports/${r.id}/send-sms`, {});
-    alert(res.message);
+  /**
+   * The dialog's submit. With a linked sighting the sighting is confirmed
+   * (which marks the case found); without one the case records an in-person
+   * recovery. Either way the server requires the verification record, and a
+   * refusal throws so its reason shows in the dialog. Nobody is messaged: the
+   * family panel that replaces this section is where the officer calls them.
+   */
+  const submitConfirmation = async (verification) => {
+    const { report, sightingId } = confirming;
+    const data = sightingId
+      ? await api.post(`/reports/found/${sightingId}/review`, { decision: 'matched', verification })
+      : await api.post(`/reports/${report.id}/confirm-match`, {
+          verification,
+          foundLocation: txt(report.foundLocation) || verification.place,
+        });
+    setFamilyPhoneHint({ id: report.id, phone: txt(data?.familyPhone) });
+    setConfirming(null);
+    const fresh = data?.report ? data : await api.get(`/reports/${report.id}`).catch(() => null);
+    if (fresh?.report) showReport({ ...fresh.report, pendingMatch: null });
     load();
   };
 
-  const confirmMatch = async (r) => {
-    await api.post(`/reports/${r.id}/confirm-match`, { sendSms: true, foundLocation: r.foundLocation || 'Reported location' });
-    setSelected(null);
+  const caseWorkflow = (r, workflowAction) => action.run('workflow', async () => {
+    const data = await api.post(`/reports/${r.id}/case-workflow`, { action: workflowAction });
+    showReport(data.report);
     load();
-  };
+  }, msg('Handoff recorded.'));
 
-  const caseWorkflow = async (r, action) => {
-    const data = await api.post(`/reports/${r.id}/case-workflow`, { action });
-    setSelected(data.report);
-    load();
-  };
-
-  const assignOwner = async (r) => {
-    const data = await api.post(`/reports/${r.id}/assign-owner`, assignment);
-    setSelected(data.report);
+  const assignOwner = (r) => action.run('assign', async () => {
+    // A child-only owner type picked on an earlier case is not offered here.
+    const assignmentType = assignmentTypes.some((type) => type.id === assignment.assignmentType)
+      ? assignment.assignmentType
+      : 'investigation';
+    const data = await api.post(`/reports/${r.id}/assign-owner`, { ...assignment, assignmentType });
+    showReport(data.report);
     setAssignment((current) => ({ ...current, dueDate: '', note: '' }));
     load();
-  };
+  }, msg('Owner assigned.'));
 
-  const closeCase = async (r) => {
+  const closeCase = (r) => action.run('close', async () => {
     const data = await api.post(`/reports/${r.id}/close-case`, {
-      reason: closure.reason,
+      reason: closeReasons.some((reason) => reason.id === closure.reason) ? closure.reason : closeReasons[0].id,
       note: closure.note,
-      foundLocation: closure.foundLocation || r.foundLocation || undefined,
+      foundLocation: closure.foundLocation || txt(r.foundLocation) || undefined,
     });
-    setSelected(data.report);
+    showReport(data.report);
     setClosure({ reason: 'restored_family', note: '', foundLocation: '' });
     load();
-  };
+  }, msg('Case closed.'));
 
-  const addNote = async (r) => {
+  const addNote = (r) => action.run('note', async () => {
     const data = await api.post(`/reports/${r.id}/notes`, { note: caseNote });
-    setSelected(data.report);
+    showReport(data.report);
     setCaseNote('');
     load();
-  };
+  }, msg('Note added.'));
 
-  const verifyIntake = async (r) => {
+  const verifyIntake = (r) => action.run('verify', async () => {
     const data = await api.post(`/reports/${r.id}/verify-intake`, verify);
-    setSelected(data.report);
+    showReport(data.report);
     setVerify({ firNo: '', note: '' });
     load();
-  };
+  }, msg('Intake verified.'));
 
-  const toggleBulletin = async (r, publish) => {
-    const data = await api.post(`/reports/${r.id}/bulletin`, { publish });
-    setSelected(data.report);
+  // Only ever called to withdraw: publishing is refused by the server.
+  const withdrawBulletin = (r) => action.run('bulletin', async () => {
+    const data = await api.post(`/reports/${r.id}/bulletin`, { publish: false });
+    if (data.report) showReport(data.report);
     load();
+  }, msg('The old public appeal was withdrawn.'));
+
+  /*
+   * Compares this case's photo with sightings already received that are not
+   * linked to any case. Possible matches land in the Matches queue exactly as
+   * a forward match does; an officer still confirms each one, and the person
+   * who sent the sighting is never told anything.
+   */
+  const searchEarlierSightings = (r) => {
+    setRematch(null);
+    return action.run('rematch', async () => {
+      const data = await api.post(`/reports/${r.id}/rematch`);
+      // The server's engine summary: { provider, biometric, comparedAgainst,
+      // note }. `biometric: false` means no face was compared at all (no
+      // provider answered, or the search could not run), which is a different
+      // answer from "compared, and nothing matched".
+      const engine = data.engine && typeof data.engine === 'object'
+        ? {
+            provider: txt(data.engine.provider),
+            biometric: Boolean(data.engine.biometric),
+            comparedAgainst: Number(data.engine.comparedAgainst) || 0,
+            note: txt(data.engine.note),
+          }
+        : null;
+      setRematch({ caseId: r.id, count: Number(data.sightingMatches) || 0, engine });
+      load();
+    });
   };
 
-  const exportHandoff = async (r, targetSystem = 'trackchild') => {
+  const exportHandoff = (r, targetSystem = 'trackchild') => action.run('export', async () => {
     const params = new URLSearchParams({
       targetSystem,
       includeHistory: 'true',
@@ -563,18 +708,18 @@ export default function Cases() {
     a.download = `khozo-case-handoff-${r.id}-${targetSystem}.json`;
     a.click();
     URL.revokeObjectURL(url);
-  };
+  }, msg('Handoff file downloaded.'));
 
-  const transferJurisdiction = async (r) => {
+  const transferJurisdiction = (r) => action.run('transfer', async () => {
     const data = await api.post(`/reports/${r.id}/transfer-jurisdiction`, transfer);
-    setSelected(data.report);
+    showReport(data.report);
     setTransfer({ state: user.jurisdiction?.state || '', district: '', station: '', reason: '' });
     load();
-  };
+  }, msg('Case transferred.'));
 
-  const recordCciCare = async (r) => {
+  const recordCciCare = (r) => action.run('cci', async () => {
     const data = await api.post(`/reports/${r.id}/cci-care`, cciCare);
-    setSelected(data.report);
+    showReport(data.report);
     setCciCare({
       admissionType: 'temporary_shelter',
       cciName: user.org || '',
@@ -589,11 +734,11 @@ export default function Cases() {
       carePlan: '',
     });
     load();
-  };
+  }, msg('Record saved.'));
 
-  const recordJjbProceeding = async (r) => {
+  const recordJjbProceeding = (r) => action.run('jjb', async () => {
     const data = await api.post(`/reports/${r.id}/jjb-proceeding`, jjbProceeding);
-    setSelected(data.report);
+    showReport(data.report);
     setJjbProceeding({
       proceedingType: 'preliminary_hearing',
       boardName: user.role === 'jjb' ? user.org || '' : '',
@@ -603,11 +748,11 @@ export default function Cases() {
       directions: '',
     });
     load();
-  };
+  }, msg('Record saved.'));
 
-  const recordStateEscalation = async (r) => {
+  const recordStateEscalation = (r) => action.run('escalation', async () => {
     const data = await api.post(`/reports/${r.id}/state-escalation`, stateEscalation);
-    setSelected(data.report);
+    showReport(data.report);
     setStateEscalation({
       escalationType: 'inter_district_coordination',
       escalationLevel: user.role === 'state_nodal' ? 'state_task_force' : 'district_to_state',
@@ -619,11 +764,11 @@ export default function Cases() {
       actionRequired: '',
     });
     load();
-  };
+  }, msg('Record saved.'));
 
-  const recordBureauReport = async (r) => {
+  const recordBureauReport = (r) => action.run('bureau', async () => {
     const data = await api.post(`/reports/${r.id}/bureau-report`, bureauReport);
-    setSelected(data.report);
+    showReport(data.report);
     setBureauReport({
       reportType: 'ncrb_missing_child_update',
       bureauLevel: user.role === 'crime_bureau' ? 'scrb' : 'state_control_room',
@@ -634,7 +779,7 @@ export default function Cases() {
       summary: '',
     });
     load();
-  };
+  }, msg('Record saved.'));
 
   const setRestorationSupport = (id) => {
     setRestorationPlan((current) => ({
@@ -663,9 +808,13 @@ export default function Cases() {
     }));
   };
 
-  const recordInvestigationChecklist = async (r) => {
-    const data = await api.post(`/reports/${r.id}/investigation-checklist`, investigationChecklist);
-    setSelected(data.report);
+  const recordInvestigationChecklist = (r) => action.run('checklist', async () => {
+    const data = await api.post(`/reports/${r.id}/investigation-checklist`, {
+      ...investigationChecklist,
+      // A box ticked on a child's case and hidden for this one is not sent.
+      items: investigationChecklist.items.filter((id) => checklistItems.some((item) => item.id === id)),
+    });
+    showReport(data.report);
     setInvestigationChecklist({
       items: ['fir_registered', 'trackchild_updated'],
       officerName: user.name || '',
@@ -675,11 +824,11 @@ export default function Cases() {
       note: '',
     });
     load();
-  };
+  }, msg('Record saved.'));
 
-  const recordRestorationPlan = async (r) => {
+  const recordRestorationPlan = (r) => action.run('restoration', async () => {
     const data = await api.post(`/reports/${r.id}/restoration-plan`, restorationPlan);
-    setSelected(data.report);
+    showReport(data.report);
     setRestorationPlan({
       restorationType: 'family_restoration',
       status: 'planned',
@@ -703,11 +852,11 @@ export default function Cases() {
       remarks: '',
     });
     load();
-  };
+  }, msg('Record saved.'));
 
-  const linkExternalId = async (r) => {
+  const linkExternalId = (r) => action.run('external-id', async () => {
     const data = await api.post(`/reports/${r.id}/external-id`, externalId);
-    setSelected(data.report);
+    showReport(data.report);
     setExternalId({
       idType: 'trackchild',
       externalId: '',
@@ -716,11 +865,11 @@ export default function Cases() {
       remarks: '',
     });
     load();
-  };
+  }, msg('External ID linked.'));
 
-  const recordWelfareReferral = async (r) => {
+  const recordWelfareReferral = (r) => action.run('welfare', async () => {
     const data = await api.post(`/reports/${r.id}/welfare-referral`, welfareReferral);
-    setSelected(data.report);
+    showReport(data.report);
     setWelfareReferral({
       scheme: 'sponsorship',
       status: 'referred',
@@ -731,11 +880,11 @@ export default function Cases() {
       eligibilityNote: '',
     });
     load();
-  };
+  }, msg('Record saved.'));
 
-  const recordLegalAidReferral = async (r) => {
+  const recordLegalAidReferral = (r) => action.run('legal-aid', async () => {
     const data = await api.post(`/reports/${r.id}/legal-aid-referral`, legalAidReferral);
-    setSelected(data.report);
+    showReport(data.report);
     setLegalAidReferral({
       serviceType: 'legal_aid',
       status: 'referred',
@@ -747,11 +896,11 @@ export default function Cases() {
       note: '',
     });
     load();
-  };
+  }, msg('Record saved.'));
 
-  const recordAdoption = async (r) => {
+  const recordAdoption = (r) => action.run('adoption', async () => {
     const data = await api.post(`/reports/${r.id}/adoption-record`, adoptionRecord);
-    setSelected(data.report);
+    showReport(data.report);
     setAdoptionRecord({
       recordType: 'carings_registration',
       status: 'initiated',
@@ -763,11 +912,11 @@ export default function Cases() {
       note: '',
     });
     load();
-  };
+  }, msg('Record saved.'));
 
-  const recordCaseAssessment = async (r) => {
+  const recordCaseAssessment = (r) => action.run('assessment', async () => {
     const data = await api.post(`/reports/${r.id}/case-assessment`, caseAssessment);
-    setSelected(data.report);
+    showReport(data.report);
     setCaseAssessment({
       assessmentType: 'social_investigation_report',
       riskLevel: 'medium',
@@ -779,11 +928,11 @@ export default function Cases() {
       recommendation: '',
     });
     load();
-  };
+  }, msg('Record saved.'));
 
-  const recordProduction = async (r) => {
+  const recordProduction = (r) => action.run('production', async () => {
     const data = await api.post(`/reports/${r.id}/production-record`, productionRecord);
-    setSelected(data.report);
+    showReport(data.report);
     setProductionRecord({
       productionType: 'cwc',
       outcome: 'care_order_pending',
@@ -794,98 +943,197 @@ export default function Cases() {
       nextAction: '',
     });
     load();
-  };
+  }, msg('Record saved.'));
 
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-bold">Cases &amp; FIRs</h2>
-          <p className="text-sm text-gray-500">{rows.length} records in your scope</p>
+          <h2 className="text-2xl font-bold">{t('Cases & FIRs')}</h2>
+          <p className="text-sm text-gray-500">
+            {rows.length === 1 ? t('1 record in your scope') : t('{n} records in your scope', { n: rows.length })}
+          </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <form onSubmit={(e) => { e.preventDefault(); load(); }}>
-            <input className="field w-56" placeholder="Search name, FIR, place..." value={q} onChange={(e) => setQ(e.target.value)} />
+        <div className="grid w-full grid-cols-[minmax(0,1fr)_auto] gap-2 sm:flex sm:w-auto sm:flex-wrap">
+          <form role="search" className="col-span-2 sm:col-span-1" onSubmit={(e) => { e.preventDefault(); load(); }}>
+            <input
+              type="search"
+              enterKeyHint="search"
+              autoComplete="off"
+              className="field w-full sm:w-56"
+              placeholder={t('Search name, FIR, place...')}
+              aria-label={t('Search name, FIR, place...')}
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
           </form>
-          <select className="field w-40" value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="">All statuses</option>
-            <option value="intake_pending">Intake pending</option>
-            <option value="missing">Missing</option>
-            <option value="under_review">Under review</option>
-            <option value="found">Found</option>
-            <option value="closed">Closed</option>
+          <select className="field w-full sm:w-40" value={status} onChange={(e) => setStatus(e.target.value)} aria-label={t('Status')}>
+            <option value="">{t('All statuses')}</option>
+            <option value="intake_pending">{t('Intake pending')}</option>
+            <option value="missing">{t('Missing')}</option>
+            <option value="under_review">{t('Under review')}</option>
+            <option value="found">{t('Found')}</option>
+            <option value="closed">{t('Closed')}</option>
           </select>
+          {/* On a phone the area/date filters fold away behind one button. */}
+          <button
+            type="button"
+            onClick={() => setFiltersOpen((v) => !v)}
+            aria-expanded={filtersOpen}
+            className={`btn-ghost sm:hidden ${activeFilters ? 'ring-2 ring-khozo' : ''}`}
+          >
+            {activeFilters ? t('Filters ({n})', { n: activeFilters }) : t('Filters')}
+          </button>
         </div>
       </div>
+
+      {loadError && (
+        <div className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-red-100">
+          {t('The case register could not load: {error}', { error: t(loadError) })}{' '}
+          <button type="button" onClick={() => load()} className="font-semibold underline">{t('Retry')}</button>
+        </div>
+      )}
 
       {/*
         Area, gender and date, applied to the rows already in hand. A caseload
         is searched by "girls, this district, last fortnight" far more often
         than by name, and there was no way to ask that.
       */}
-      <div className="card flex flex-wrap items-end gap-3 p-4">
+      <div className={`card grid-cols-2 items-end gap-3 p-4 sm:flex sm:flex-wrap ${filtersOpen ? 'grid' : 'hidden'}`}>
         <div>
-          <label className="label">State</label>
-          <select className="field w-44" value={stateFilter} onChange={(e) => setStateFilter(e.target.value)}>
-            <option value="">Any state</option>
+          <label className="label">{t('State')}</label>
+          <select className="field w-full sm:w-44" value={stateFilter} onChange={(e) => setStateFilter(e.target.value)}>
+            <option value="">{t('Any state')}</option>
             {facets.states.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
         <div>
-          <label className="label">District</label>
-          <select className="field w-44" value={districtFilter} onChange={(e) => setDistrictFilter(e.target.value)}>
-            <option value="">Any district</option>
+          <label className="label">{t('District')}</label>
+          <select className="field w-full sm:w-44" value={districtFilter} onChange={(e) => setDistrictFilter(e.target.value)}>
+            <option value="">{t('Any district')}</option>
             {facets.districts.map((d) => <option key={d} value={d}>{d}</option>)}
           </select>
         </div>
         <div>
-          <label className="label">Gender</label>
-          <select className="field w-32" value={genderFilter} onChange={(e) => setGenderFilter(e.target.value)}>
-            <option value="">Any</option>
-            <option value="Male">Male</option>
-            <option value="Female">Female</option>
-            <option value="Other">Other</option>
+          <label className="label">{t('Gender')}</label>
+          <select className="field w-full sm:w-32" value={genderFilter} onChange={(e) => setGenderFilter(e.target.value)}>
+            <option value="">{t('Any')}</option>
+            <option value="Male">{t('Male')}</option>
+            <option value="Female">{t('Female')}</option>
+            <option value="Other">{t('Other')}</option>
           </select>
         </div>
         <div>
-          <label className="label">Missing from</label>
-          <input type="date" className="field w-40" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+          <label className="label">{t('Who is missing')}</label>
+          <select className="field w-full sm:w-36" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+            <option value="">{t('Anyone')}</option>
+            {PERSON_CATEGORY_OPTIONS.map((option) => <option key={option.id} value={option.id}>{t(option.label)}</option>)}
+          </select>
         </div>
         <div>
-          <label className="label">Missing to</label>
-          <input type="date" className="field w-40" value={toDate} onChange={(e) => setToDate(e.target.value)} />
+          <label className="label">{t('Missing from')}</label>
+          <input type="date" className="field w-full sm:w-40" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
         </div>
-        <div className="ml-auto flex items-center gap-3">
+        <div>
+          <label className="label">{t('Missing to')}</label>
+          <input type="date" className="field w-full sm:w-40" value={toDate} onChange={(e) => setToDate(e.target.value)} />
+        </div>
+        <div className="col-span-2 flex items-center justify-between gap-3 sm:ml-auto sm:justify-start">
           <p className="text-xs font-medium text-gray-500">
-            {visibleRows.length} of {rows.length} shown
+            {t('{shown} of {total} shown', { shown: visibleRows.length, total: rows.length })}
           </p>
-          {(stateFilter || districtFilter || genderFilter || fromDate || toDate) && (
+          {(stateFilter || districtFilter || genderFilter || categoryFilter || fromDate || toDate) && (
             <button
               type="button"
-              onClick={() => { setStateFilter(''); setDistrictFilter(''); setGenderFilter(''); setFromDate(''); setToDate(''); }}
-              className="text-xs font-semibold text-khozo hover:underline"
+              onClick={() => { setStateFilter(''); setDistrictFilter(''); setGenderFilter(''); setCategoryFilter(''); setFromDate(''); setToDate(''); }}
+              className="px-2 text-xs font-semibold text-khozo hover:underline"
             >
-              Clear filters
+              {t('Clear filters')}
             </button>
           )}
         </div>
       </div>
 
-      <div className="card overflow-hidden">
+      {/*
+        On a phone each case is a card: who, their status and any match
+        waiting, then the facts an officer scans for. The wide register below
+        is the same list for a desk screen.
+      */}
+      <ul className="space-y-3 sm:hidden">
+        {visibleRows.map((r) => (
+          <li key={r.id} className="card overflow-hidden">
+            <button type="button" className="flex w-full items-start gap-3 p-4 text-left" onClick={() => setSelected(r)}>
+              <Avatar name={d(r.childName)} src={r.photoUrl} size={52} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-base font-semibold capitalize">{d(r.childName)}</span>
+                <span className="mt-1 flex flex-wrap items-center gap-1.5 text-sm text-gray-500">
+                  <CategoryBadge category={personCategoryOf(r)} />
+                  <span>{genderLabel(r.gender, personCategoryOf(r))} / {t('age {age}', { age: txt(r.age) || '-' })}</span>
+                </span>
+                <span className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <StatusBadge status={r.status} />
+                </span>
+              </span>
+              <span aria-hidden="true" className="mt-3 text-2xl leading-none text-gray-300">›</span>
+            </button>
+            {r.pendingMatch ? (
+              <Link
+                to={`/app/matches?id=${encodeURIComponent(r.pendingMatch.foundReportId)}`}
+                className="mx-4 -mt-1 mb-3 flex min-h-11 items-center rounded-xl bg-amber-100 px-3 py-2 text-sm font-semibold text-amber-800 ring-1 ring-amber-200"
+              >
+                {t('Matched — pending verification · {pct}%', { pct: Math.round((Number(r.pendingMatch.score) || 0) * 100) })}
+                {r.pendingMatch.corroborated ? ` · ${t('two engines')}` : ''}
+              </Link>
+            ) : null}
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-2 border-t border-black/5 px-4 py-3 text-sm">
+              <div className="min-w-0">
+                <dt className="text-gray-500">{t('FIR no.')}</dt>
+                <dd className="truncate font-medium">{d(r.firNo) || '-'}</dd>
+              </div>
+              <div className="min-w-0">
+                <dt className="text-gray-500">{t('Missing since')}</dt>
+                <dd className="font-medium">{fmtDate(r.dateOfMissing)}</dd>
+              </div>
+              <div className="min-w-0">
+                <dt className="text-gray-500">{t('Address')}</dt>
+                <dd className="font-medium">{d.places(r.district, r.state) || d(r.address) || '-'}</dd>
+              </div>
+              <div className="min-w-0">
+                <dt className="text-gray-500">{t('Parent / contact')}</dt>
+                <dd className="font-medium">
+                  <span className="block truncate">{d(r.parentName) || '-'}</span>
+                  <PhoneLink phone={r.parentPhone} />
+                </dd>
+              </div>
+              {d(r.foundLocation) && (
+                <div className="col-span-2 min-w-0">
+                  <dt className="text-gray-500">{t('Found location')}</dt>
+                  <dd className="font-medium">{d(r.foundLocation)}</dd>
+                </div>
+              )}
+            </dl>
+          </li>
+        ))}
+        {rows.length === 0 && (
+          <li className="card px-4 py-10 text-center text-gray-400">{t('No records found.')}</li>
+        )}
+      </ul>
+
+      <div className="card hidden overflow-hidden sm:block">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[900px] text-sm">
             <thead>
               <tr className="border-b border-black/5 bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
-                <th className="px-4 py-3">Child</th>
-                <th className="px-4 py-3">FIR no.</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Workflow</th>
-                <th className="px-4 py-3">Found location</th>
-                <th className="px-4 py-3">Parent / contact</th>
-                <th className="px-4 py-3">Address</th>
-                <th className="px-4 py-3">Missing since</th>
-                <th className="px-4 py-3">Source</th>
-                {canAct && <th className="px-4 py-3 text-right">Actions</th>}
+                <th className="px-4 py-3">{t('Missing person')}</th>
+                <th className="px-4 py-3">{t('FIR no.')}</th>
+                <th className="px-4 py-3">{t('Status')}</th>
+                <th className="px-4 py-3">{t('Workflow')}</th>
+                <th className="px-4 py-3">{t('Found location')}</th>
+                <th className="px-4 py-3">{t('Parent / contact')}</th>
+                <th className="px-4 py-3">{t('Address')}</th>
+                <th className="px-4 py-3">{t('Missing since')}</th>
+                <th className="px-4 py-3">{t('Source')}</th>
+                {canAct && <th className="px-4 py-3 text-right">{t('Actions')}</th>}
               </tr>
             </thead>
             <tbody>
@@ -893,14 +1141,17 @@ export default function Cases() {
                 <tr key={r.id} className="border-b border-black/5 last:border-0 hover:bg-gray-50/60">
                   <td className="px-4 py-3">
                     <button className="flex items-center gap-3 text-left" onClick={() => setSelected(r)}>
-                      <Avatar name={r.childName} src={r.photoUrl} size={38} />
+                      <Avatar name={d(r.childName)} src={r.photoUrl} size={38} />
                       <div>
-                        <p className="font-semibold capitalize">{r.childName}</p>
-                        <p className="text-xs text-gray-400">{r.gender} / age {r.age ?? '-'}</p>
+                        <p className="font-semibold capitalize">{d(r.childName)}</p>
+                        <p className="flex flex-wrap items-center gap-1.5 text-xs text-gray-400">
+                          <CategoryBadge category={personCategoryOf(r)} />
+                          <span>{genderLabel(r.gender, personCategoryOf(r))} / {t('age {age}', { age: txt(r.age) || '-' })}</span>
+                        </p>
                       </div>
                     </button>
                   </td>
-                  <td className="px-4 py-3 text-gray-600">{r.firNo || <span className="text-gray-300">-</span>}</td>
+                  <td className="px-4 py-3 text-gray-600">{d(r.firNo) || <span className="text-gray-300">-</span>}</td>
                   <td className="px-4 py-3">
                     <StatusBadge status={r.status} />
                     {/* An unconfirmed match is the most urgent fact about a case and
@@ -911,73 +1162,111 @@ export default function Cases() {
                         to={`/app/matches?id=${encodeURIComponent(r.pendingMatch.foundReportId)}`}
                         className="mt-1 inline-block whitespace-nowrap rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-200 hover:bg-amber-200"
                       >
-                        Matched — pending verification · {Math.round(r.pendingMatch.score * 100)}%
-                        {r.pendingMatch.corroborated ? ' · two engines' : ''}
+                        {t('Matched — pending verification · {pct}%', { pct: Math.round((Number(r.pendingMatch.score) || 0) * 100) })}
+                        {r.pendingMatch.corroborated ? ` · ${t('two engines')}` : ''}
                       </Link>
                     ) : null}
                   </td>
-                  <td className="px-4 py-3 text-gray-600">{r.workflowStatus || '-'}</td>
-                  <td className="px-4 py-3 text-gray-600">{r.foundLocation || '-'}</td>
+                  <td className="px-4 py-3 text-gray-600">{txt(r.workflowStatus) || '-'}</td>
+                  <td className="px-4 py-3 text-gray-600">{d(r.foundLocation) || '-'}</td>
                   <td className="px-4 py-3">
-                    <p className="text-gray-700">{r.parentName || '-'}</p>
-                    <p className="text-xs text-gray-400">{r.parentPhone || ''}</p>
+                    <p className="text-gray-700">{d(r.parentName) || '-'}</p>
+                    <p className="text-xs text-gray-400"><PhoneLink phone={r.parentPhone} /></p>
                   </td>
-                  <td className="px-4 py-3 text-gray-600">{[r.district, r.state].filter(Boolean).join(', ') || r.address || '-'}</td>
+                  <td className="px-4 py-3 text-gray-600">{d.places(r.district, r.state) || d(r.address) || '-'}</td>
                   <td className="px-4 py-3 text-gray-600">{fmtDate(r.dateOfMissing)}</td>
-                  <td className="px-4 py-3"><span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs">{ROLE_LABELS[r.registeredByRole] || r.registeredByRole}</span></td>
+                  <td className="px-4 py-3"><span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs">{roleLabel(r.registeredByRole)}</span></td>
                   {canAct && (
                     <td className="px-4 py-3 text-right">
-                      {r.status === 'found' ? (
-                        <button onClick={() => sendSms(r)} className={`text-xs font-medium ${r.smsSent ? 'text-gray-400' : 'text-khozo hover:underline'}`}>
-                          {r.smsSent ? 'alerted' : 'Send SMS'}
+                      {r.status === 'found' && r.familyInformedAt ? (
+                        <button onClick={() => setSelected(r)} className="text-xs font-medium text-gray-400 hover:underline">
+                          {t('Family informed')}
+                        </button>
+                      ) : r.status === 'found' && !isAdultCase(r) ? (
+                        <button onClick={() => setSelected(r)} className="text-xs font-medium text-khozo hover:underline">
+                          {t('Call the family')}
                         </button>
                       ) : (
-                        <button onClick={() => setSelected(r)} className="text-xs font-medium text-khozo hover:underline">Review</button>
+                        <button onClick={() => setSelected(r)} className="text-xs font-medium text-khozo hover:underline">{t('Review')}</button>
                       )}
                     </td>
                   )}
                 </tr>
               ))}
               {rows.length === 0 && (
-                <tr><td colSpan={canAct ? 10 : 9} className="px-4 py-10 text-center text-gray-400">No records found.</td></tr>
+                <tr><td colSpan={canAct ? 10 : 9} className="px-4 py-10 text-center text-gray-400">{t('No records found.')}</td></tr>
               )}
             </tbody>
           </table>
         </div>
       </div>
 
+      {/*
+        The case opens as a panel on a desk screen and as a full-screen sheet
+        on a phone, with a back bar that stays in reach while the officer
+        scrolls the record. The phone's Back button closes it too.
+      */}
       {selected && (
-        <div className="fixed inset-0 z-30 flex justify-end bg-black/30" onClick={() => setSelected(null)}>
-          <div className="h-full w-full max-w-md overflow-y-auto bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-start justify-between">
+        <div className="fixed inset-0 z-[60] flex justify-end bg-black/30" onClick={() => setSelected(null)}>
+          <div
+            data-case-sheet
+            role="dialog"
+            aria-modal="true"
+            aria-label={d(selected.childName) || selected.id}
+            className="animate-sheet-in h-full w-full max-w-md overflow-y-auto overscroll-contain bg-white shadow-xl sm:animate-none"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="sticky top-0 z-10 flex items-center gap-1 border-b border-black/5 bg-white/95 px-2 py-1 backdrop-blur sm:hidden">
+              <button
+                type="button"
+                onClick={() => setSelected(null)}
+                aria-label={t('Close')}
+                className="grid h-11 w-11 place-items-center rounded-xl text-gray-700 hover:bg-gray-100"
+              >
+                <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M15 5l-7 7 7 7" />
+                </svg>
+              </button>
+              <p className="min-w-0 flex-1 truncate text-base font-semibold capitalize">{d(selected.childName)}</p>
+              <span className="pr-2"><StatusBadge status={selected.status} /></span>
+            </div>
+            <div className="p-4 sm:p-6">
+            <ErrorBoundary resetKey={selected.id}>
+            <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-3">
-                <Avatar name={selected.childName} src={selected.photoUrl} size={56} />
+                <Avatar name={d(selected.childName)} src={selected.photoUrl} size={56} />
                 <div>
-                  <h3 className="text-xl font-bold capitalize">{selected.childName}</h3>
-                  <StatusBadge status={selected.status} />
+                  <h3 className="text-xl font-bold capitalize">{d(selected.childName)}</h3>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <CategoryBadge category={personCategoryOf(selected)} />
+                    <StatusBadge status={selected.status} />
+                  </div>
                 </div>
               </div>
-              <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-ink">Close</button>
+              <button onClick={() => setSelected(null)} className="hidden text-gray-400 hover:text-ink sm:inline">{t('Close')}</button>
             </div>
 
             <dl className="mt-6 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
               {[
-                ['FIR no.', selected.firNo || '-'],
-                ['Aadhar', selected.childAadhar || '-'],
-                ['Gender', selected.gender],
-                ['Age', selected.age ?? '-'],
-                ['Height', selected.height ? `${selected.height} cm` : '-'],
-                ['Weight', selected.weight ? `${selected.weight} kg` : '-'],
-                ['Missing since', fmtDate(selected.dateOfMissing)],
-                ['Match score', selected.matchScore ? `${Math.round(selected.matchScore * 100)}%` : '-'],
-                ['Parent', selected.parentName || '-'],
-                ['Contact', selected.parentPhone || '-'],
-                ['Location', [selected.district, selected.state].filter(Boolean).join(', ') || '-'],
-                ['Found at', selected.foundLocation || '-'],
-                ['Workflow', selected.workflowStatus || '-'],
-                ['Assigned to', selected.assignedToName ? `${selected.assignedToName} (${ROLE_LABELS[selected.assignedToRole] || selected.assignedToRole})` : '-'],
-                ['Declaration', selected.declaration?.accepted ? `${selected.declaration.signerName || 'Signer'} / ${selected.declaration.methodLabel || 'Accepted'}` : '-'],
-                ['Closure', selected.closure?.label || '-'],
+                // The only reference the family can use on the public Track my case page.
+                [t('Case ID'), <span className="font-mono text-xs">{selected.id}</span>],
+                [t('FIR no.'), d(selected.firNo) || '-'],
+                [t('Aadhar'), txt(selected.childAadhar) || '-'],
+                [t('Gender'), genderLabel(selected.gender, personCategoryOf(selected)) || '-'],
+                [t('Age'), txt(selected.age) || '-'],
+                [t('Height'), txt(selected.height) ? `${txt(selected.height)} cm` : '-'],
+                [t('Weight'), txt(selected.weight) ? `${txt(selected.weight)} kg` : '-'],
+                [t('Missing since'), fmtDate(selected.dateOfMissing)],
+                [t('Match score'), Number(selected.matchScore) ? `${Math.round(Number(selected.matchScore) * 100)}%` : '-'],
+                [adultCase ? t('Family contact') : t('Parent'), d(selected.parentName) || '-'],
+                [t('Contact'), txt(selected.parentPhone) ? <PhoneLink phone={selected.parentPhone} /> : '-'],
+                [t('Location'), d.places(selected.district, selected.state) || '-'],
+                [t('Address'), d(selected.address) || '-'],
+                [t('Found at'), d(selected.foundLocation) || '-'],
+                [t('Workflow'), txt(selected.workflowStatus) || '-'],
+                [t('Assigned to'), txt(selected.assignedToName) ? `${txt(selected.assignedToName)} (${roleLabel(selected.assignedToRole)})` : '-'],
+                [t('Declaration'), selected.declaration?.accepted ? `${txt(selected.declaration.signerName) || t('Signer')} / ${txt(selected.declaration.methodLabel) || t('Accepted')}` : '-'],
+                [t('Closure'), txt(selected.closure?.label) || '-'],
               ].map(([k, v]) => (
                 <div key={k}>
                   <dt className="text-xs uppercase tracking-wide text-gray-400">{k}</dt>
@@ -988,20 +1277,20 @@ export default function Cases() {
 
             {(selected.hasIdentificationProfile || selected.hasVulnerabilityProfile) && (
               <div className="mt-6 rounded-xl border border-black/5 p-4">
-                <p className="text-sm font-medium">Identification &amp; vulnerability profile</p>
+                <p className="text-sm font-medium">{t('Identification & vulnerability profile')}</p>
                 <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
                   {[
-                    ['Complexion', selected.identificationProfile?.complexion || '-'],
-                    ['Build', selected.identificationProfile?.build || '-'],
-                    ['Hair', selected.identificationProfile?.hair || '-'],
-                    ['Clothing', selected.identificationProfile?.clothing || '-'],
-                    ['Languages', selected.identificationProfile?.languages || '-'],
-                    ['Birth mark', selected.identificationProfile?.birthMark || '-'],
-                    ['Identification mark', selected.identificationProfile?.identificationMark || '-'],
-                    ['Produced by', selected.vulnerabilityProfile?.producedByLabel || '-'],
-                    ['Education', selected.vulnerabilityProfile?.educationLabel || '-'],
-                    ['Disability support', selected.vulnerabilityProfile?.disabilityLabel || '-'],
-                    ['Mental-health concern', selected.vulnerabilityProfile?.mentalHealthConcernLabel || '-'],
+                    [t('Complexion'), txt(selected.identificationProfile?.complexion) || '-'],
+                    [t('Build'), txt(selected.identificationProfile?.build) || '-'],
+                    [t('Hair'), txt(selected.identificationProfile?.hair) || '-'],
+                    [t('Clothing'), d(selected.identificationProfile?.clothing) || '-'],
+                    [t('Languages'), txt(selected.identificationProfile?.languages) || '-'],
+                    [t('Birth mark'), txt(selected.identificationProfile?.birthMark) || '-'],
+                    [t('Identification mark'), d(selected.identificationProfile?.identificationMark) || '-'],
+                    [t('Produced by'), txt(selected.vulnerabilityProfile?.producedByLabel) || '-'],
+                    [t('Education'), txt(selected.vulnerabilityProfile?.educationLabel) || '-'],
+                    [t('Disability support'), txt(selected.vulnerabilityProfile?.disabilityLabel) || '-'],
+                    [t('Mental-health concern'), txt(selected.vulnerabilityProfile?.mentalHealthConcernLabel) || '-'],
                   ].map(([k, v]) => (
                     <div key={k}>
                       <dt className="text-xs uppercase tracking-wide text-gray-400">{k}</dt>
@@ -1009,86 +1298,179 @@ export default function Cases() {
                     </div>
                   ))}
                 </dl>
-                {selected.vulnerabilityProfile?.categoryLabels?.length > 0 && (
+                {asList(selected.vulnerabilityProfile?.categoryLabels).length > 0 && (
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {selected.vulnerabilityProfile.categoryLabels.map((label) => (
+                    {asList(selected.vulnerabilityProfile.categoryLabels).map(txt).filter(Boolean).map((label) => (
                       <span key={label} className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">{label}</span>
                     ))}
                   </div>
                 )}
-                {selected.vulnerabilityProfile?.circumstances && (
-                  <p className="mt-3 whitespace-pre-wrap rounded-lg bg-gray-50 p-3 text-xs text-gray-700">{selected.vulnerabilityProfile.circumstances}</p>
+                {txt(selected.vulnerabilityProfile?.circumstances) && (
+                  <p className="mt-3 whitespace-pre-wrap rounded-lg bg-gray-50 p-3 text-xs text-gray-700">{txt(selected.vulnerabilityProfile.circumstances).split('\n').map(d).join('\n')}</p>
                 )}
               </div>
             )}
 
             {canVerifyIntake && selected.status === 'intake_pending' && (
               <div className="mt-6 rounded-xl bg-sky-50 p-4">
-                <p className="text-sm font-medium">Verify citizen / NGO intake</p>
-                <p className="text-xs text-gray-600">Convert this intake into a formal missing-child case before handoff, closure, or alerts.</p>
+                <p className="text-sm font-medium">{t('Verify citizen / NGO intake')}</p>
+                <p className="text-xs text-gray-600">{t('Convert this intake into a formal missing-child case before handoff, closure, or alerts.')}</p>
                 <div className="mt-3 space-y-3">
                   <input
                     className="field w-full"
                     value={verify.firNo}
                     onChange={(e) => setVerify((v) => ({ ...v, firNo: e.target.value }))}
-                    placeholder="FIR / GD number, or leave blank to auto-generate"
+                    placeholder={t('FIR / GD number, or leave blank to auto-generate')}
                   />
                   <textarea
                     className="field min-h-20 w-full"
                     value={verify.note}
                     onChange={(e) => setVerify((v) => ({ ...v, note: e.target.value }))}
-                    placeholder="Verification note"
+                    placeholder={t('Verification note')}
                   />
-                  <button onClick={() => verifyIntake(selected)} className="btn-primary w-full">Verify intake</button>
+                  <button onClick={() => verifyIntake(selected)} disabled={action.pending} className="btn-primary w-full">{t('Verify intake')}</button>
+                  <ActionMessage action={action} id="verify" />
                 </div>
               </div>
             )}
 
-            {canAct && selected.status !== 'found' && selected.status !== 'intake_pending' && (
+            {/*
+              Confirming opens the verification dialog. With a sighting waiting
+              on the case it confirms that sighting; with none it records an
+              in-person recovery, and only once the officer has filled in how
+              identity was verified. Nobody is messaged either way.
+            */}
+            {canAct && !['found', 'closed', 'intake_pending'].includes(selected.status) && (
               <div className="mt-6 rounded-xl bg-khozo-light p-4">
-                <p className="text-sm font-medium">Confirm this child has been found?</p>
-                <p className="text-xs text-gray-600">This marks the case as reunited and alerts the parent by SMS.</p>
-                <button onClick={() => confirmMatch(selected)} className="btn-primary mt-3 w-full">Confirm match &amp; alert parent</button>
+                <p className="text-sm font-medium">
+                  {adultCase ? t('Confirm this person has been found?') : t('Confirm this child has been found?')}
+                </p>
+                <p className="text-xs text-gray-600">
+                  {selected.pendingMatch?.foundReportId
+                    ? t('A sighting is waiting on this case. Compare the photographs and record how identity was verified.')
+                    : t('No sighting is linked to this case. Use this only when the person has been found and their identity verified in person.')}
+                </p>
+                {adultCase && (
+                  <p className="mt-1 text-xs font-medium text-amber-800">{t('Verify with the person first; share their location with the family only with their consent.')}</p>
+                )}
+                <button
+                  type="button"
+                  disabled={action.pending}
+                  onClick={() => {
+                    action.clear();
+                    setConfirming({
+                      report: selected,
+                      sightingId: txt(selected.pendingMatch?.foundReportId),
+                      score: Number(selected.pendingMatch?.score) || 0,
+                    });
+                  }}
+                  className="btn-primary mt-3 w-full"
+                >
+                  {selected.pendingMatch?.foundReportId ? t('Confirm match…') : t('Record an in-person recovery…')}
+                </button>
               </div>
             )}
 
-            {canManageBulletin && selected.status === 'missing' && selected.intakeStatus !== 'pending_verification' && (
+            {/*
+              After a case is found: call the family, then record it. Khozo sends
+              nothing on its own, so nothing here says a message went out.
+            */}
+            {canAct && selected.status === 'found' && (
+              <FamilyContactPanel
+                report={selected}
+                phoneHint={familyPhoneHint.id === selected.id ? familyPhoneHint.phone : ''}
+                action={action}
+                onReport={(report) => { showReport(report); load(); }}
+              />
+            )}
+            {(!canAct || selected.status !== 'found') && asList(selected.familyContacts).length > 0 && (
               <div className="mt-6 rounded-xl border border-black/5 p-4">
-                <p className="text-sm font-medium">Public bulletin</p>
+                <FamilyContactList report={selected} />
+              </div>
+            )}
+
+            {/* The same rule the server applies (POST /reports/:id/rematch): a
+                stored case photo (a found-child intake shows the sighting's
+                photo but has none of its own), a verified intake, and a case
+                that is neither found nor closed. */}
+            {canRematch && selected.photoFile && selected.caseOrigin !== 'found_child_intake'
+              && !['found', 'closed', 'intake_pending'].includes(selected.status)
+              && selected.intakeStatus !== 'pending_verification' && (
+              <div className="mt-6 rounded-xl border border-black/5 p-4">
+                <p className="text-sm font-medium">{t('Earlier sightings')}</p>
                 <p className="text-xs text-gray-600">
-                  Publish a privacy-safe public alert without contact numbers, Aadhar, exact address, or protected photos.
+                  {t('Compare this case photo with sightings already received that are not linked to a case. Possible matches go to the Matches queue; an officer confirms each one, and the person who sent the sighting is not told anything.')}
                 </p>
                 <button
-                  onClick={() => toggleBulletin(selected, !selected.bulletin?.published)}
-                  className={selected.bulletin?.published ? 'btn-ghost mt-3 w-full' : 'btn-primary mt-3 w-full'}
+                  type="button"
+                  className="btn-ghost mt-3 w-full"
+                  disabled={action.pending}
+                  onClick={() => searchEarlierSightings(selected)}
                 >
-                  {selected.bulletin?.published ? 'Unpublish bulletin' : 'Publish bulletin'}
+                  {action.busy('rematch') ? t('Searching earlier sightings...') : t('Search earlier sightings')}
                 </button>
-                {selected.bulletin?.published && (
-                  <p className="mt-2 text-xs text-gray-400">Published by {selected.bulletin.publishedByName || 'agency'}.</p>
+                <ActionMessage action={action} id="rematch" />
+                {rematch?.caseId === selected.id && !action.busy('rematch') && (
+                    <div className="mt-2 text-xs">
+                      {rematch.count > 0 ? (
+                        <p className="font-medium text-amber-800">
+                          {t('Checked against earlier sightings: {n} possible match(es) sent for review', { n: rematch.count })}{' '}
+                          <Link to="/app/matches" className="font-semibold text-khozo hover:underline">{t('Open the Matches queue')}</Link>
+                        </p>
+                      ) : rematch.engine && !rematch.engine.biometric ? (
+                        <p className="font-medium text-amber-800">{t('No face comparison was made. Try again later.')}</p>
+                      ) : (
+                        <p className="text-gray-600">{t('Checked against earlier sightings: no possible match found.')}</p>
+                      )}
+                      {rematch.engine && !rematch.engine.biometric && rematch.engine.note && (
+                        <p className="mt-1 text-gray-600">{t(rematch.engine.note)}</p>
+                      )}
+                      {rematch.engine?.biometric && (
+                        <p className="mt-1 text-gray-400">
+                          {t('Engine: {engine}', { engine: rematch.engine.provider })}
+                          {' · '}
+                          {t('Compared with {n} earlier sighting(s)', { n: rematch.engine.comparedAgainst })}
+                        </p>
+                      )}
+                    </div>
                 )}
+              </div>
+            )}
+
+            {canManageBulletin && (
+              <div className="mt-6 rounded-xl border border-black/5 p-4">
+                <p className="text-xs text-gray-600">{t('Public appeals are disabled: Khozo never shows names or photos to the public.')}</p>
+                {/* An appeal published before the rule is already hidden from the
+                    public; withdrawing it just tidies the record. */}
+                {selected.bulletin?.published && (
+                  <button type="button" onClick={() => withdrawBulletin(selected)} disabled={action.pending} className="btn-ghost mt-3 w-full">
+                    {t('Withdraw the old public appeal')}
+                  </button>
+                )}
+                <ActionMessage action={action} id="bulletin" />
               </div>
             )}
 
             {canWorkflow && (
               <div className="mt-6 rounded-xl border border-black/5 p-4">
-                <p className="text-sm font-medium">Case notes</p>
-                <p className="text-xs text-gray-600">Add handoff context for police, CWC, CCI, JJB, and command review.</p>
+                <p className="text-sm font-medium">{t('Case notes')}</p>
+                <p className="text-xs text-gray-600">{t('Add handoff context for police, CWC, CCI, JJB, and command review.')}</p>
                 <textarea
                   className="field mt-3 min-h-20 w-full"
                   value={caseNote}
                   onChange={(e) => setCaseNote(e.target.value)}
-                  placeholder="Investigation update, contact attempt, care follow-up..."
+                  placeholder={t('Investigation update, contact attempt, care follow-up...')}
                 />
-                <button className="btn-ghost mt-2 w-full" disabled={caseNote.trim().length < 3} onClick={() => addNote(selected)}>
-                  Add note
+                <button className="btn-ghost mt-2 w-full" disabled={action.pending || caseNote.trim().length < 3} onClick={() => addNote(selected)}>
+                  {t('Add note')}
                 </button>
-                {selected.notes?.length > 0 && (
+                <ActionMessage action={action} id="note" />
+                {asList(selected.notes).length > 0 && (
                   <div className="mt-4 space-y-2">
-                    {selected.notes.slice().reverse().slice(0, 4).map((note) => (
-                      <div key={note.id} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
-                        <p className="whitespace-pre-wrap text-gray-700">{note.note}</p>
-                        <p className="mt-1 text-gray-400">{note.actorName} / {new Date(note.ts).toLocaleString('en-IN')}</p>
+                    {asList(selected.notes).slice().reverse().slice(0, 4).map((note, i) => (
+                      <div key={txt(note?.id) || i} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                        <p className="whitespace-pre-wrap text-gray-700">{d(note?.note)}</p>
+                        <p className="mt-1 text-gray-400">{txt(note?.actorName)} / {new Date(note?.ts).toLocaleString(currentLocale())}</p>
                       </div>
                     ))}
                   </div>
@@ -1098,15 +1480,19 @@ export default function Cases() {
 
             {canAssignCase && !['found', 'closed', 'intake_pending'].includes(selected.status) && (
               <div className="mt-6 rounded-xl border border-black/5 p-4">
-                <p className="text-sm font-medium">Case ownership</p>
-                <p className="text-xs text-gray-600">Assign a responsible desk or officer for the current investigation, welfare, railway, CCI, JJB, or bureau follow-up.</p>
+                <p className="text-sm font-medium">{t('Case ownership')}</p>
+                <p className="text-xs text-gray-600">
+                  {adultCase
+                    ? t('Assign a responsible desk or officer for the current investigation, welfare, railway, legal-aid, or bureau follow-up.')
+                    : t('Assign a responsible desk or officer for the current investigation, welfare, railway, CCI, JJB, or bureau follow-up.')}
+                </p>
                 <div className="mt-3 space-y-3">
                   <select
                     className="field w-full"
-                    value={assignment.assignmentType}
+                    value={assignmentTypes.some((type) => type.id === assignment.assignmentType) ? assignment.assignmentType : 'investigation'}
                     onChange={(e) => setAssignment((a) => ({ ...a, assignmentType: e.target.value }))}
                   >
-                    {ASSIGNMENT_TYPES.map((type) => <option key={type.id} value={type.id}>{type.label}</option>)}
+                    {assignmentTypes.map((type) => <option key={type.id} value={type.id}>{t(type.label)}</option>)}
                   </select>
                   <select
                     className="field w-full"
@@ -1114,10 +1500,10 @@ export default function Cases() {
                     onChange={(e) => setAssignment((a) => ({ ...a, assigneeId: e.target.value }))}
                     disabled={assignableUsers.length === 0}
                   >
-                    {assignableUsers.length === 0 && <option value="">No scoped assignees available</option>}
+                    {assignableUsers.length === 0 && <option value="">{t('No scoped assignees available')}</option>}
                     {assignableUsers.map((person) => (
                       <option key={person.id} value={person.id}>
-                        {person.name} / {ROLE_LABELS[person.role] || person.role}
+                        {txt(person.name)} / {roleLabel(person.role)}
                       </option>
                     ))}
                   </select>
@@ -1131,19 +1517,20 @@ export default function Cases() {
                     className="field min-h-16 w-full"
                     value={assignment.note}
                     onChange={(e) => setAssignment((a) => ({ ...a, note: e.target.value }))}
-                    placeholder="Assignment context or deadline reason"
+                    placeholder={t('Assignment context or deadline reason')}
                   />
-                  <button className="btn-primary w-full" disabled={!assignment.assigneeId} onClick={() => assignOwner(selected)}>
-                    Assign owner
+                  <button className="btn-primary w-full" disabled={action.pending || !assignment.assigneeId} onClick={() => assignOwner(selected)}>
+                    {t('Assign owner')}
                   </button>
+                  <ActionMessage action={action} id="assign" />
                 </div>
-                {selected.assignments?.length > 0 && (
+                {asList(selected.assignments).length > 0 && (
                   <div className="mt-4 space-y-2">
-                    {selected.assignments.slice().reverse().slice(0, 3).map((item) => (
-                      <div key={item.id} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
-                        <p className="font-medium text-gray-700">{item.assignmentLabel}: {item.assigneeName}</p>
-                        <p>{item.assignedByName} / {new Date(item.assignedAt).toLocaleString('en-IN')}</p>
-                        {item.dueDate && <p className="mt-1 text-gray-500">Due {fmtDate(item.dueDate)}</p>}
+                    {asList(selected.assignments).slice().reverse().slice(0, 3).map((item, i) => (
+                      <div key={txt(item?.id) || i} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                        <p className="font-medium text-gray-700">{txt(item?.assignmentLabel)}: {txt(item?.assigneeName)}</p>
+                        <p>{txt(item?.assignedByName)} / {new Date(item?.assignedAt).toLocaleString(currentLocale())}</p>
+                        {item.dueDate && <p className="mt-1 text-gray-500">{t('Due {date}', { date: fmtDate(item.dueDate) })}</p>}
                       </div>
                     ))}
                   </div>
@@ -1153,17 +1540,21 @@ export default function Cases() {
 
             {canRecordInvestigationChecklist && !['found', 'closed', 'intake_pending'].includes(selected.status) && (
               <div className="mt-6 rounded-xl border border-black/5 p-4">
-                <p className="text-sm font-medium">Investigation checklist</p>
-                <p className="text-xs text-gray-600">Record police/SJPU coordination across FIR/GD, TrackChild, CCTNS, NCRB/SCRB, railway, 1098, CWC, and public bulletin decisions.</p>
-                <div className="mt-3 grid grid-cols-2 gap-2">
-                  {INVESTIGATION_CHECKLIST_ITEMS.map((item) => (
+                <p className="text-sm font-medium">{t('Investigation checklist')}</p>
+                <p className="text-xs text-gray-600">
+                  {adultCase
+                    ? t('Record police coordination across FIR/GD, CCTNS, NCRB/SCRB, railway, and lookout decisions.')
+                    : t('Record police/SJPU coordination across FIR/GD, TrackChild, CCTNS, NCRB/SCRB, railway, 1098, CWC, and lookout decisions.')}
+                </p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {checklistItems.map((item) => (
                     <label key={item.id} className="flex items-center gap-2 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
                       <input
                         type="checkbox"
                         checked={investigationChecklist.items.includes(item.id)}
                         onChange={() => setInvestigationChecklistItem(item.id)}
                       />
-                      <span>{item.label}</span>
+                      <span>{t(item.label)}</span>
                     </label>
                   ))}
                 </div>
@@ -1172,15 +1563,15 @@ export default function Cases() {
                     className="field w-full"
                     value={investigationChecklist.officerName}
                     onChange={(e) => setInvestigationChecklist((c) => ({ ...c, officerName: e.target.value }))}
-                    placeholder="Officer / desk name"
+                    placeholder={t('Officer / desk name')}
                   />
                   <input
                     className="field w-full"
                     value={investigationChecklist.stationDiaryNo}
                     onChange={(e) => setInvestigationChecklist((c) => ({ ...c, stationDiaryNo: e.target.value }))}
-                    placeholder="Station diary / coordination reference"
+                    placeholder={t('Station diary / coordination reference')}
                   />
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
                     <input
                       className="field w-full"
                       type="date"
@@ -1198,24 +1589,25 @@ export default function Cases() {
                     className="field min-h-16 w-full"
                     value={investigationChecklist.note}
                     onChange={(e) => setInvestigationChecklist((c) => ({ ...c, note: e.target.value }))}
-                    placeholder="Coordination note"
+                    placeholder={t('Coordination note')}
                   />
                   <button
                     className="btn-primary w-full"
-                    disabled={investigationChecklist.items.length === 0 || investigationChecklist.officerName.trim().length < 3 || !investigationChecklist.actionDate}
+                    disabled={action.pending || !investigationChecklist.items.some((id) => checklistItems.some((item) => item.id === id)) || investigationChecklist.officerName.trim().length < 3 || !investigationChecklist.actionDate}
                     onClick={() => recordInvestigationChecklist(selected)}
                   >
-                    Record checklist
+                    {t('Record checklist')}
                   </button>
+                  <ActionMessage action={action} id="checklist" />
                 </div>
-                {selected.investigationChecklist?.length > 0 && (
+                {asList(selected.investigationChecklist).length > 0 && (
                   <div className="mt-4 space-y-2">
-                    {selected.investigationChecklist.slice().reverse().slice(0, 3).map((record) => (
-                      <div key={record.id} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
-                        <p className="font-medium text-gray-700">{record.itemLabels?.join(', ')}</p>
-                        <p>{record.officerName} / {record.actorName}</p>
-                        {record.stationDiaryNo && <p className="mt-1 text-gray-500">Ref: {record.stationDiaryNo}</p>}
-                        {record.followupDate && <p className="mt-1 text-gray-400">Follow-up: {fmtDate(record.followupDate)}</p>}
+                    {asList(selected.investigationChecklist).slice().reverse().slice(0, 3).map((record, i) => (
+                      <div key={txt(record?.id) || i} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                        <p className="font-medium text-gray-700">{txtList(record.itemLabels)}</p>
+                        <p>{txt(record.officerName)} / {txt(record.actorName)}</p>
+                        {record.stationDiaryNo && <p className="mt-1 text-gray-500">{t('Ref: {ref}', { ref: record.stationDiaryNo })}</p>}
+                        {record.followupDate && <p className="mt-1 text-gray-400">{t('Follow-up: {date}', { date: fmtDate(record.followupDate) })}</p>}
                       </div>
                     ))}
                   </div>
@@ -1225,21 +1617,26 @@ export default function Cases() {
 
             {canWorkflow && !['found', 'closed', 'intake_pending'].includes(selected.status) && workflowActions.length > 0 && (
               <div className="mt-6 rounded-xl border border-black/5 p-4">
-                <p className="text-sm font-medium">Institutional workflow</p>
-                <p className="text-xs text-gray-600">Record CWC, CCI, JJB, state, or crime-records handoff without confirming reunification.</p>
-                <div className="mt-3 grid grid-cols-2 gap-2">
-                  {workflowActions.map((action) => (
-                    <button key={action.id} onClick={() => caseWorkflow(selected, action.id)} className="btn-ghost py-2 text-xs">
-                      {action.label}
+                <p className="text-sm font-medium">{t('Institutional workflow')}</p>
+                <p className="text-xs text-gray-600">
+                  {adultCase
+                    ? t('Record a state or crime-records handoff without confirming that the person has been found.')
+                    : t('Record CWC, CCI, JJB, state, or crime-records handoff without confirming reunification.')}
+                </p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {workflowActions.map((workflowAction) => (
+                    <button key={workflowAction.id} onClick={() => caseWorkflow(selected, workflowAction.id)} disabled={action.pending} className="btn-ghost py-2 text-xs">
+                      {t(workflowAction.label)}
                     </button>
                   ))}
                 </div>
-                {selected.workflow?.length > 0 && (
+                <ActionMessage action={action} id="workflow" />
+                {asList(selected.workflow).length > 0 && (
                   <div className="mt-4 space-y-2">
-                    {selected.workflow.slice().reverse().slice(0, 3).map((event) => (
-                      <div key={event.id} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
-                        <p className="font-medium text-gray-700">{event.label}</p>
-                        <p>{event.actorName} / {new Date(event.ts).toLocaleString('en-IN')}</p>
+                    {asList(selected.workflow).slice().reverse().slice(0, 3).map((event, i) => (
+                      <div key={txt(event?.id) || i} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                        <p className="font-medium text-gray-700">{txt(event?.label)}</p>
+                        <p>{txt(event?.actorName)} / {new Date(event?.ts).toLocaleString(currentLocale())}</p>
                       </div>
                     ))}
                   </div>
@@ -1247,25 +1644,25 @@ export default function Cases() {
               </div>
             )}
 
-            {canRecordCciCare && !['found', 'closed', 'intake_pending'].includes(selected.status) && (
+            {canRecordCciCare && !adultCase && !['found', 'closed', 'intake_pending'].includes(selected.status) && (
               <div className="mt-6 rounded-xl border border-black/5 p-4">
-                <p className="text-sm font-medium">CCI care record</p>
-                <p className="text-xs text-gray-600">Record admission, care plan, and next welfare review after CWC/DCPU handoff.</p>
+                <p className="text-sm font-medium">{t('CCI care record')}</p>
+                <p className="text-xs text-gray-600">{t('Record admission, care plan, and next welfare review after CWC/DCPU handoff.')}</p>
                 <div className="mt-3 space-y-3">
                   <select
                     className="field w-full"
                     value={cciCare.admissionType}
                     onChange={(e) => setCciCare((c) => ({ ...c, admissionType: e.target.value }))}
                   >
-                    {CCI_ADMISSION_TYPES.map((type) => <option key={type.id} value={type.id}>{type.label}</option>)}
+                    {CCI_ADMISSION_TYPES.map((type) => <option key={type.id} value={type.id}>{t(type.label)}</option>)}
                   </select>
                   <input
                     className="field w-full"
                     value={cciCare.cciName}
                     onChange={(e) => setCciCare((c) => ({ ...c, cciName: e.target.value }))}
-                    placeholder="CCI / shelter name"
+                    placeholder={t('CCI / shelter name')}
                   />
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
                     <input
                       className="field w-full"
                       type="date"
@@ -1284,9 +1681,9 @@ export default function Cases() {
                     value={cciCare.progressStatus}
                     onChange={(e) => setCciCare((c) => ({ ...c, progressStatus: e.target.value }))}
                   >
-                    {CCI_PROGRESS_STATES.map((progress) => <option key={progress.id} value={progress.id}>{progress.label}</option>)}
+                    {CCI_PROGRESS_STATES.map((progress) => <option key={progress.id} value={progress.id}>{t(progress.label)}</option>)}
                   </select>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
                     {CCI_SERVICE_TYPES.map((service) => (
                       <label key={service.id} className="flex items-center gap-2 rounded-lg border border-black/5 px-3 py-2 text-xs text-gray-600">
                         <input
@@ -1294,65 +1691,66 @@ export default function Cases() {
                           checked={cciCare.services.includes(service.id)}
                           onChange={() => setCciService(service.id)}
                         />
-                        {service.label}
+                        {t(service.label)}
                       </label>
                     ))}
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
                     <input
                       className="field w-full"
                       value={cciCare.healthStatus}
                       onChange={(e) => setCciCare((c) => ({ ...c, healthStatus: e.target.value }))}
-                      placeholder="Health care progress"
+                      placeholder={t('Health care progress')}
                     />
                     <input
                       className="field w-full"
                       value={cciCare.educationStatus}
                       onChange={(e) => setCciCare((c) => ({ ...c, educationStatus: e.target.value }))}
-                      placeholder="Education progress"
+                      placeholder={t('Education progress')}
                     />
                     <input
                       className="field w-full"
                       value={cciCare.counsellingStatus}
                       onChange={(e) => setCciCare((c) => ({ ...c, counsellingStatus: e.target.value }))}
-                      placeholder="Counselling progress"
+                      placeholder={t('Counselling progress')}
                     />
                     <input
                       className="field w-full"
                       value={cciCare.familyTracingStatus}
                       onChange={(e) => setCciCare((c) => ({ ...c, familyTracingStatus: e.target.value }))}
-                      placeholder="Family tracing progress"
+                      placeholder={t('Family tracing progress')}
                     />
                   </div>
                   <textarea
                     className="field min-h-24 w-full"
                     value={cciCare.carePlan}
                     onChange={(e) => setCciCare((c) => ({ ...c, carePlan: e.target.value }))}
-                    placeholder="Care plan, medical/counselling needs, guardian contact plan..."
+                    placeholder={t('Care plan, medical/counselling needs, guardian contact plan...')}
                   />
                   <button
                     className="btn-primary w-full"
-                    disabled={cciCare.cciName.trim().length < 3 || cciCare.carePlan.trim().length < 10 || !cciCare.admissionDate}
+                    disabled={action.pending || cciCare.cciName.trim().length < 3 || cciCare.carePlan.trim().length < 10 || !cciCare.admissionDate}
                     onClick={() => recordCciCare(selected)}
                   >
-                    Record CCI care
+                    {t('Record CCI care')}
                   </button>
+                  <ActionMessage action={action} id="cci" />
                 </div>
-                {selected.cciCareRecords?.length > 0 && (
+                {asList(selected.cciCareRecords).length > 0 && (
                   <div className="mt-4 space-y-2">
-                    {selected.cciCareRecords.slice().reverse().slice(0, 3).map((record) => (
-                      <div key={record.id} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
-                        <p className="font-medium text-gray-700">{record.label} / {record.cciName}</p>
-                        <p>{record.actorName} / {new Date(record.recordedAt).toLocaleString('en-IN')}</p>
-                        {record.progressLabel && <p className="mt-1 text-gray-500">Progress: {record.progressLabel}</p>}
-                        {record.serviceLabels?.length > 0 && <p className="mt-1 text-gray-400">{record.serviceLabels.join(' / ')}</p>}
+                    {asList(selected.cciCareRecords).slice().reverse().slice(0, 3).map((record, i) => (
+                      <div key={txt(record?.id) || i} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                        <p className="font-medium text-gray-700">{txt(record.label)} / {txt(record.cciName)}</p>
+                        <p>{txt(record.actorName)} / {new Date(record.recordedAt).toLocaleString(currentLocale())}</p>
+                        {record.progressLabel && <p className="mt-1 text-gray-500">{t('Progress: {status}', { status: record.progressLabel })}</p>}
+                        {txtList(record.serviceLabels) && <p className="mt-1 text-gray-400">{txtList(record.serviceLabels, ' / ')}</p>}
                         {record.serviceProgress && (
                           <p className="mt-1 text-gray-500">
-                            {[record.serviceProgress.healthStatus, record.serviceProgress.educationStatus, record.serviceProgress.counsellingStatus, record.serviceProgress.familyTracingStatus].filter(Boolean).join(' / ')}
+                            {[record.serviceProgress.healthStatus, record.serviceProgress.educationStatus, record.serviceProgress.counsellingStatus, record.serviceProgress.familyTracingStatus].map(txt).filter(Boolean).join(' / ')}
                           </p>
                         )}
-                        <p className="mt-1 whitespace-pre-wrap text-gray-700">{record.carePlan}</p>
-                        {record.nextReviewDate && <p className="mt-1 text-gray-400">Next review: {fmtDate(record.nextReviewDate)}</p>}
+                        <p className="mt-1 whitespace-pre-wrap text-gray-700">{txt(record.carePlan)}</p>
+                        {record.nextReviewDate && <p className="mt-1 text-gray-400">{t('Next review: {date}', { date: fmtDate(record.nextReviewDate) })}</p>}
                       </div>
                     ))}
                   </div>
@@ -1360,31 +1758,31 @@ export default function Cases() {
               </div>
             )}
 
-            {canRecordJjbProceeding && !['found', 'closed', 'intake_pending'].includes(selected.status) && (
+            {canRecordJjbProceeding && !adultCase && !['found', 'closed', 'intake_pending'].includes(selected.status) && (
               <div className="mt-6 rounded-xl border border-black/5 p-4">
-                <p className="text-sm font-medium">JJB proceeding</p>
-                <p className="text-xs text-gray-600">Record board orders, social investigation directions, and next hearing dates.</p>
+                <p className="text-sm font-medium">{t('JJB proceeding')}</p>
+                <p className="text-xs text-gray-600">{t('Record board orders, social investigation directions, and next hearing dates.')}</p>
                 <div className="mt-3 space-y-3">
                   <select
                     className="field w-full"
                     value={jjbProceeding.proceedingType}
                     onChange={(e) => setJjbProceeding((j) => ({ ...j, proceedingType: e.target.value }))}
                   >
-                    {JJB_PROCEEDING_TYPES.map((type) => <option key={type.id} value={type.id}>{type.label}</option>)}
+                    {JJB_PROCEEDING_TYPES.map((type) => <option key={type.id} value={type.id}>{t(type.label)}</option>)}
                   </select>
                   <input
                     className="field w-full"
                     value={jjbProceeding.boardName}
                     onChange={(e) => setJjbProceeding((j) => ({ ...j, boardName: e.target.value }))}
-                    placeholder="JJB / board name"
+                    placeholder={t('JJB / board name')}
                   />
                   <input
                     className="field w-full"
                     value={jjbProceeding.caseNo}
                     onChange={(e) => setJjbProceeding((j) => ({ ...j, caseNo: e.target.value }))}
-                    placeholder="JJB case number, if available"
+                    placeholder={t('JJB case number, if available')}
                   />
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
                     <input
                       className="field w-full"
                       type="date"
@@ -1402,24 +1800,25 @@ export default function Cases() {
                     className="field min-h-24 w-full"
                     value={jjbProceeding.directions}
                     onChange={(e) => setJjbProceeding((j) => ({ ...j, directions: e.target.value }))}
-                    placeholder="Board directions, social investigation order, rehabilitation actions..."
+                    placeholder={t('Board directions, social investigation order, rehabilitation actions...')}
                   />
                   <button
                     className="btn-primary w-full"
-                    disabled={jjbProceeding.boardName.trim().length < 3 || jjbProceeding.directions.trim().length < 10 || !jjbProceeding.orderDate}
+                    disabled={action.pending || jjbProceeding.boardName.trim().length < 3 || jjbProceeding.directions.trim().length < 10 || !jjbProceeding.orderDate}
                     onClick={() => recordJjbProceeding(selected)}
                   >
-                    Record JJB proceeding
+                    {t('Record JJB proceeding')}
                   </button>
+                  <ActionMessage action={action} id="jjb" />
                 </div>
-                {selected.jjbProceedings?.length > 0 && (
+                {asList(selected.jjbProceedings).length > 0 && (
                   <div className="mt-4 space-y-2">
-                    {selected.jjbProceedings.slice().reverse().slice(0, 3).map((record) => (
-                      <div key={record.id} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
-                        <p className="font-medium text-gray-700">{record.label} / {record.boardName}</p>
-                        <p>{record.actorName} / {new Date(record.recordedAt).toLocaleString('en-IN')}</p>
-                        <p className="mt-1 whitespace-pre-wrap text-gray-700">{record.directions}</p>
-                        {record.nextHearingDate && <p className="mt-1 text-gray-400">Next hearing: {fmtDate(record.nextHearingDate)}</p>}
+                    {asList(selected.jjbProceedings).slice().reverse().slice(0, 3).map((record, i) => (
+                      <div key={txt(record?.id) || i} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                        <p className="font-medium text-gray-700">{txt(record.label)} / {txt(record.boardName)}</p>
+                        <p>{txt(record.actorName)} / {new Date(record.recordedAt).toLocaleString(currentLocale())}</p>
+                        <p className="mt-1 whitespace-pre-wrap text-gray-700">{txt(record.directions)}</p>
+                        {record.nextHearingDate && <p className="mt-1 text-gray-400">{t('Next hearing: {date}', { date: fmtDate(record.nextHearingDate) })}</p>}
                       </div>
                     ))}
                   </div>
@@ -1429,45 +1828,45 @@ export default function Cases() {
 
             {canRecordStateEscalation && !['found', 'closed', 'intake_pending'].includes(selected.status) && (
               <div className="mt-6 rounded-xl border border-black/5 p-4">
-                <p className="text-sm font-medium">State escalation</p>
-                <p className="text-xs text-gray-600">Record state nodal coordination, urgent rescue support, or interstate action requests.</p>
+                <p className="text-sm font-medium">{t('State escalation')}</p>
+                <p className="text-xs text-gray-600">{t('Record state nodal coordination, urgent rescue support, or interstate action requests.')}</p>
                 <div className="mt-3 space-y-3">
                   <select
                     className="field w-full"
                     value={stateEscalation.escalationType}
                     onChange={(e) => setStateEscalation((s) => ({ ...s, escalationType: e.target.value }))}
                   >
-                    {STATE_ESCALATION_TYPES.map((type) => <option key={type.id} value={type.id}>{type.label}</option>)}
+                    {STATE_ESCALATION_TYPES.map((type) => <option key={type.id} value={type.id}>{t(type.label)}</option>)}
                   </select>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
                     <select
                       className="field w-full"
                       value={stateEscalation.escalationLevel}
                       onChange={(e) => setStateEscalation((s) => ({ ...s, escalationLevel: e.target.value }))}
                     >
-                      {STATE_ESCALATION_LEVELS.map((level) => <option key={level.id} value={level.id}>{level.label}</option>)}
+                      {STATE_ESCALATION_LEVELS.map((level) => <option key={level.id} value={level.id}>{t(level.label)}</option>)}
                     </select>
                     <select
                       className="field w-full"
                       value={stateEscalation.priority}
                       onChange={(e) => setStateEscalation((s) => ({ ...s, priority: e.target.value }))}
                     >
-                      {BUREAU_PRIORITIES.map((priority) => <option key={priority.id} value={priority.id}>{priority.label}</option>)}
+                      {BUREAU_PRIORITIES.map((priority) => <option key={priority.id} value={priority.id}>{t(priority.label)}</option>)}
                     </select>
                   </div>
                   <input
                     className="field w-full"
                     value={stateEscalation.authorityName}
                     onChange={(e) => setStateEscalation((s) => ({ ...s, authorityName: e.target.value }))}
-                    placeholder="Authority / nodal desk"
+                    placeholder={t('Authority / nodal desk')}
                   />
                   <input
                     className="field w-full"
                     value={stateEscalation.referenceNo}
                     onChange={(e) => setStateEscalation((s) => ({ ...s, referenceNo: e.target.value }))}
-                    placeholder="Reference number, if issued"
+                    placeholder={t('Reference number, if issued')}
                   />
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
                     <input
                       className="field w-full"
                       type="date"
@@ -1485,25 +1884,26 @@ export default function Cases() {
                     className="field min-h-24 w-full"
                     value={stateEscalation.actionRequired}
                     onChange={(e) => setStateEscalation((s) => ({ ...s, actionRequired: e.target.value }))}
-                    placeholder="Action required, coordination support, rescue resources, interstate request..."
+                    placeholder={t('Action required, coordination support, rescue resources, interstate request...')}
                   />
                   <button
                     className="btn-primary w-full"
-                    disabled={stateEscalation.authorityName.trim().length < 3 || stateEscalation.actionRequired.trim().length < 10 || !stateEscalation.escalatedDate}
+                    disabled={action.pending || stateEscalation.authorityName.trim().length < 3 || stateEscalation.actionRequired.trim().length < 10 || !stateEscalation.escalatedDate}
                     onClick={() => recordStateEscalation(selected)}
                   >
-                    Record state escalation
+                    {t('Record state escalation')}
                   </button>
+                  <ActionMessage action={action} id="escalation" />
                 </div>
-                {selected.stateEscalations?.length > 0 && (
+                {asList(selected.stateEscalations).length > 0 && (
                   <div className="mt-4 space-y-2">
-                    {selected.stateEscalations.slice().reverse().slice(0, 3).map((record) => (
-                      <div key={record.id} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
-                        <p className="font-medium text-gray-700">{record.levelLabel} / {record.label}</p>
-                        <p>{record.actorName} / {new Date(record.recordedAt).toLocaleString('en-IN')}</p>
-                        <p className="mt-1 whitespace-pre-wrap text-gray-700">{record.actionRequired}</p>
-                        {record.referenceNo && <p className="mt-1 text-gray-400">Ref: {record.referenceNo}</p>}
-                        {record.dueDate && <p className="mt-1 text-gray-400">Due: {fmtDate(record.dueDate)}</p>}
+                    {asList(selected.stateEscalations).slice().reverse().slice(0, 3).map((record, i) => (
+                      <div key={txt(record?.id) || i} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                        <p className="font-medium text-gray-700">{txt(record.levelLabel)} / {txt(record.label)}</p>
+                        <p>{txt(record.actorName)} / {new Date(record.recordedAt).toLocaleString(currentLocale())}</p>
+                        <p className="mt-1 whitespace-pre-wrap text-gray-700">{txt(record.actionRequired)}</p>
+                        {record.referenceNo && <p className="mt-1 text-gray-400">{t('Ref: {ref}', { ref: record.referenceNo })}</p>}
+                        {record.dueDate && <p className="mt-1 text-gray-400">{t('Due: {date}', { date: fmtDate(record.dueDate) })}</p>}
                       </div>
                     ))}
                   </div>
@@ -1513,39 +1913,39 @@ export default function Cases() {
 
             {canRecordBureauReport && !['closed', 'intake_pending'].includes(selected.status) && (
               <div className="mt-6 rounded-xl border border-black/5 p-4">
-                <p className="text-sm font-medium">NCRB / SCRB report</p>
-                <p className="text-xs text-gray-600">Record state or national crime-records reporting for interstate alerts, pattern review, or trace updates.</p>
+                <p className="text-sm font-medium">{t('NCRB / SCRB report')}</p>
+                <p className="text-xs text-gray-600">{t('Record state or national crime-records reporting for interstate alerts, pattern review, or trace updates.')}</p>
                 <div className="mt-3 space-y-3">
                   <select
                     className="field w-full"
                     value={bureauReport.reportType}
                     onChange={(e) => setBureauReport((b) => ({ ...b, reportType: e.target.value }))}
                   >
-                    {BUREAU_REPORT_TYPES.map((type) => <option key={type.id} value={type.id}>{type.label}</option>)}
+                    {BUREAU_REPORT_TYPES.map((type) => <option key={type.id} value={type.id}>{t(type.label)}</option>)}
                   </select>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
                     <select
                       className="field w-full"
                       value={bureauReport.bureauLevel}
                       onChange={(e) => setBureauReport((b) => ({ ...b, bureauLevel: e.target.value }))}
                     >
-                      {BUREAU_LEVELS.map((level) => <option key={level.id} value={level.id}>{level.label}</option>)}
+                      {BUREAU_LEVELS.map((level) => <option key={level.id} value={level.id}>{t(level.label)}</option>)}
                     </select>
                     <select
                       className="field w-full"
                       value={bureauReport.priority}
                       onChange={(e) => setBureauReport((b) => ({ ...b, priority: e.target.value }))}
                     >
-                      {BUREAU_PRIORITIES.map((priority) => <option key={priority.id} value={priority.id}>{priority.label}</option>)}
+                      {BUREAU_PRIORITIES.map((priority) => <option key={priority.id} value={priority.id}>{t(priority.label)}</option>)}
                     </select>
                   </div>
                   <input
                     className="field w-full"
                     value={bureauReport.referenceNo}
                     onChange={(e) => setBureauReport((b) => ({ ...b, referenceNo: e.target.value }))}
-                    placeholder="Reference number, if issued"
+                    placeholder={t('Reference number, if issued')}
                   />
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
                     <input
                       className="field w-full"
                       type="date"
@@ -1563,25 +1963,26 @@ export default function Cases() {
                     className="field min-h-24 w-full"
                     value={bureauReport.summary}
                     onChange={(e) => setBureauReport((b) => ({ ...b, summary: e.target.value }))}
-                    placeholder="Report summary, alert rationale, interstate coordination notes..."
+                    placeholder={t('Report summary, alert rationale, interstate coordination notes...')}
                   />
                   <button
                     className="btn-primary w-full"
-                    disabled={bureauReport.summary.trim().length < 10 || !bureauReport.submittedDate}
+                    disabled={action.pending || bureauReport.summary.trim().length < 10 || !bureauReport.submittedDate}
                     onClick={() => recordBureauReport(selected)}
                   >
-                    Record bureau report
+                    {t('Record bureau report')}
                   </button>
+                  <ActionMessage action={action} id="bureau" />
                 </div>
-                {selected.bureauReports?.length > 0 && (
+                {asList(selected.bureauReports).length > 0 && (
                   <div className="mt-4 space-y-2">
-                    {selected.bureauReports.slice().reverse().slice(0, 3).map((record) => (
-                      <div key={record.id} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
-                        <p className="font-medium text-gray-700">{record.bureauLabel} / {record.label}</p>
-                        <p>{record.actorName} / {new Date(record.recordedAt).toLocaleString('en-IN')}</p>
-                        <p className="mt-1 whitespace-pre-wrap text-gray-700">{record.summary}</p>
-                        {record.referenceNo && <p className="mt-1 text-gray-400">Ref: {record.referenceNo}</p>}
-                        {record.nextReviewDate && <p className="mt-1 text-gray-400">Next review: {fmtDate(record.nextReviewDate)}</p>}
+                    {asList(selected.bureauReports).slice().reverse().slice(0, 3).map((record, i) => (
+                      <div key={txt(record?.id) || i} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                        <p className="font-medium text-gray-700">{txt(record.bureauLabel)} / {txt(record.label)}</p>
+                        <p>{txt(record.actorName)} / {new Date(record.recordedAt).toLocaleString(currentLocale())}</p>
+                        <p className="mt-1 whitespace-pre-wrap text-gray-700">{txt(record.summary)}</p>
+                        {record.referenceNo && <p className="mt-1 text-gray-400">{t('Ref: {ref}', { ref: record.referenceNo })}</p>}
+                        {record.nextReviewDate && <p className="mt-1 text-gray-400">{t('Next review: {date}', { date: fmtDate(record.nextReviewDate) })}</p>}
                       </div>
                     ))}
                   </div>
@@ -1591,30 +1992,31 @@ export default function Cases() {
 
             {canLinkExternalId && selected.status !== 'intake_pending' && (
               <div className="mt-6 rounded-xl border border-black/5 p-4">
-                <p className="text-sm font-medium">External system IDs</p>
-                <p className="text-xs text-gray-600">Link TrackChild, NCRB, CCTNS, GHAR, or state portal identifiers for cross-system traceability.</p>
-                <button className="btn-ghost mt-3 w-full" onClick={() => exportHandoff(selected)}>
-                  Export TrackChild handoff JSON
+                <p className="text-sm font-medium">{t('External system IDs')}</p>
+                <p className="text-xs text-gray-600">{t('Link TrackChild, NCRB, CCTNS, GHAR, or state portal identifiers for cross-system traceability.')}</p>
+                <button className="btn-ghost mt-3 w-full" disabled={action.pending} onClick={() => exportHandoff(selected)}>
+                  {t('Export TrackChild handoff JSON')}
                 </button>
+                <ActionMessage action={action} id="export" />
                 <div className="mt-3 space-y-3">
                   <select
                     className="field w-full"
                     value={externalId.idType}
                     onChange={(e) => setExternalId((x) => ({ ...x, idType: e.target.value }))}
                   >
-                    {EXTERNAL_ID_TYPES.map((type) => <option key={type.id} value={type.id}>{type.label}</option>)}
+                    {EXTERNAL_ID_TYPES.map((type) => <option key={type.id} value={type.id}>{t(type.label)}</option>)}
                   </select>
                   <input
                     className="field w-full"
                     value={externalId.externalId}
                     onChange={(e) => setExternalId((x) => ({ ...x, externalId: e.target.value }))}
-                    placeholder="External ID / reference number"
+                    placeholder={t('External ID / reference number')}
                   />
                   <input
                     className="field w-full"
                     value={externalId.issuingSystem}
                     onChange={(e) => setExternalId((x) => ({ ...x, issuingSystem: e.target.value }))}
-                    placeholder="Issuing system / desk"
+                    placeholder={t('Issuing system / desk')}
                   />
                   <input
                     className="field w-full"
@@ -1626,23 +2028,24 @@ export default function Cases() {
                     className="field min-h-16 w-full"
                     value={externalId.remarks}
                     onChange={(e) => setExternalId((x) => ({ ...x, remarks: e.target.value }))}
-                    placeholder="Linking remarks"
+                    placeholder={t('Linking remarks')}
                   />
                   <button
                     className="btn-primary w-full"
-                    disabled={externalId.externalId.trim().length < 3}
+                    disabled={action.pending || externalId.externalId.trim().length < 3}
                     onClick={() => linkExternalId(selected)}
                   >
-                    Link external ID
+                    {t('Link external ID')}
                   </button>
+                  <ActionMessage action={action} id="external-id" />
                 </div>
-                {selected.externalIds?.length > 0 && (
+                {asList(selected.externalIds).length > 0 && (
                   <div className="mt-4 space-y-2">
-                    {selected.externalIds.slice().reverse().slice(0, 4).map((record) => (
-                      <div key={record.id} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
-                        <p className="font-medium text-gray-700">{record.label} / {record.externalId}</p>
-                        <p>{record.issuingSystem} / {record.actorName}</p>
-                        {record.issuedDate && <p className="mt-1 text-gray-400">Issued: {fmtDate(record.issuedDate)}</p>}
+                    {asList(selected.externalIds).slice().reverse().slice(0, 4).map((record, i) => (
+                      <div key={txt(record?.id) || i} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                        <p className="font-medium text-gray-700">{txt(record.label)} / {txt(record.externalId)}</p>
+                        <p>{txt(record.issuingSystem)} / {txt(record.actorName)}</p>
+                        {record.issuedDate && <p className="mt-1 text-gray-400">{t('Issued: {date}', { date: fmtDate(record.issuedDate) })}</p>}
                       </div>
                     ))}
                   </div>
@@ -1652,64 +2055,64 @@ export default function Cases() {
 
             {canRecordRestorationPlan && !['closed', 'intake_pending'].includes(selected.status) && (
               <div className="mt-6 rounded-xl border border-black/5 p-4">
-                <p className="text-sm font-medium">Restoration / repatriation</p>
-                <p className="text-xs text-gray-600">Record restoration route, handover authority, supports, and follow-up dates after rescue or CCI/JJB review.</p>
+                <p className="text-sm font-medium">{t('Restoration / repatriation')}</p>
+                <p className="text-xs text-gray-600">{t('Record restoration route, handover authority, supports, and follow-up dates after rescue or CCI/JJB review.')}</p>
                 <div className="mt-3 space-y-3">
                   <select
                     className="field w-full"
                     value={restorationPlan.restorationType}
                     onChange={(e) => setRestorationPlan((r) => ({ ...r, restorationType: e.target.value }))}
                   >
-                    {RESTORATION_TYPES.map((type) => <option key={type.id} value={type.id}>{type.label}</option>)}
+                    {RESTORATION_TYPES.map((type) => <option key={type.id} value={type.id}>{t(type.label)}</option>)}
                   </select>
                   <select
                     className="field w-full"
                     value={restorationPlan.status}
                     onChange={(e) => setRestorationPlan((r) => ({ ...r, status: e.target.value }))}
                   >
-                    {RESTORATION_STATUSES.map((statusOption) => <option key={statusOption.id} value={statusOption.id}>{statusOption.label}</option>)}
+                    {RESTORATION_STATUSES.map((statusOption) => <option key={statusOption.id} value={statusOption.id}>{t(statusOption.label)}</option>)}
                   </select>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
                     <input
                       className="field w-full"
                       value={restorationPlan.fromState}
                       onChange={(e) => setRestorationPlan((r) => ({ ...r, fromState: e.target.value }))}
-                      placeholder={selected.state || 'From state'}
+                      placeholder={txt(selected.state) || t('From state')}
                     />
                     <input
                       className="field w-full"
                       value={restorationPlan.fromDistrict}
                       onChange={(e) => setRestorationPlan((r) => ({ ...r, fromDistrict: e.target.value }))}
-                      placeholder={selected.district || 'From district'}
+                      placeholder={txt(selected.district) || t('From district')}
                     />
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
                     <input
                       className="field w-full"
                       value={restorationPlan.toState}
                       onChange={(e) => setRestorationPlan((r) => ({ ...r, toState: e.target.value }))}
-                      placeholder="To state"
+                      placeholder={t('To state')}
                     />
                     <input
                       className="field w-full"
                       value={restorationPlan.toDistrict}
                       onChange={(e) => setRestorationPlan((r) => ({ ...r, toDistrict: e.target.value }))}
-                      placeholder="To district"
+                      placeholder={t('To district')}
                     />
                   </div>
                   <input
                     className="field w-full"
                     value={restorationPlan.guardianName}
                     onChange={(e) => setRestorationPlan((r) => ({ ...r, guardianName: e.target.value }))}
-                    placeholder={selected.parentName || 'Guardian / receiving person'}
+                    placeholder={txt(selected.parentName) || t('Guardian / receiving person')}
                   />
                   <input
                     className="field w-full"
                     value={restorationPlan.handoverAuthority}
                     onChange={(e) => setRestorationPlan((r) => ({ ...r, handoverAuthority: e.target.value }))}
-                    placeholder="CWC / DCPU / police / embassy authority"
+                    placeholder={t('CWC / DCPU / police / embassy authority')}
                   />
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
                     <input
                       className="field w-full"
                       type="date"
@@ -1723,13 +2126,13 @@ export default function Cases() {
                       onChange={(e) => setRestorationPlan((r) => ({ ...r, followupDate: e.target.value }))}
                     />
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
                     <select
                       className="field w-full"
                       value={restorationPlan.travelMode}
                       onChange={(e) => setRestorationPlan((r) => ({ ...r, travelMode: e.target.value }))}
                     >
-                      {RESTORATION_TRAVEL_MODES.map((mode) => <option key={mode.id} value={mode.id}>{mode.label}</option>)}
+                      {RESTORATION_TRAVEL_MODES.map((mode) => <option key={mode.id} value={mode.id}>{t(mode.label)}</option>)}
                     </select>
                     <input
                       className="field w-full"
@@ -1738,51 +2141,51 @@ export default function Cases() {
                       onChange={(e) => setRestorationPlan((r) => ({ ...r, travelDate: e.target.value }))}
                     />
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
                     <input
                       className="field w-full"
                       value={restorationPlan.escortAuthority}
                       onChange={(e) => setRestorationPlan((r) => ({ ...r, escortAuthority: e.target.value }))}
-                      placeholder="Escort authority"
+                      placeholder={t('Escort authority')}
                     />
                     <input
                       className="field w-full"
                       value={restorationPlan.escortContact}
                       onChange={(e) => setRestorationPlan((r) => ({ ...r, escortContact: e.target.value }))}
-                      placeholder="Escort contact"
+                      placeholder={t('Escort contact')}
                     />
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
                     <select
                       className="field w-full"
                       value={restorationPlan.documentStatus}
                       onChange={(e) => setRestorationPlan((r) => ({ ...r, documentStatus: e.target.value }))}
                     >
-                      {RESTORATION_DOCUMENT_STATUSES.map((statusOption) => <option key={statusOption.id} value={statusOption.id}>{statusOption.label}</option>)}
+                      {RESTORATION_DOCUMENT_STATUSES.map((statusOption) => <option key={statusOption.id} value={statusOption.id}>{t(statusOption.label)}</option>)}
                     </select>
                     <input
                       className="field w-full"
                       value={restorationPlan.documentReference}
                       onChange={(e) => setRestorationPlan((r) => ({ ...r, documentReference: e.target.value }))}
-                      placeholder="Document reference"
+                      placeholder={t('Document reference')}
                     />
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
                     <select
                       className="field w-full"
                       value={restorationPlan.fundingSource}
                       onChange={(e) => setRestorationPlan((r) => ({ ...r, fundingSource: e.target.value }))}
                     >
-                      {RESTORATION_FUNDING_SOURCES.map((source) => <option key={source.id} value={source.id}>{source.label}</option>)}
+                      {RESTORATION_FUNDING_SOURCES.map((source) => <option key={source.id} value={source.id}>{t(source.label)}</option>)}
                     </select>
                     <input
                       className="field w-full"
                       value={restorationPlan.fundingReference}
                       onChange={(e) => setRestorationPlan((r) => ({ ...r, fundingReference: e.target.value }))}
-                      placeholder="Funding reference"
+                      placeholder={t('Funding reference')}
                     />
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
                     {RESTORATION_SUPPORTS.map((support) => (
                       <label key={support.id} className="flex items-center gap-2 rounded-lg border border-black/5 px-3 py-2 text-xs text-gray-600">
                         <input
@@ -1790,7 +2193,7 @@ export default function Cases() {
                           checked={restorationPlan.supports.includes(support.id)}
                           onChange={() => setRestorationSupport(support.id)}
                         />
-                        {support.label}
+                        {t(support.label)}
                       </label>
                     ))}
                   </div>
@@ -1798,33 +2201,34 @@ export default function Cases() {
                     className="field min-h-24 w-full"
                     value={restorationPlan.remarks}
                     onChange={(e) => setRestorationPlan((r) => ({ ...r, remarks: e.target.value }))}
-                    placeholder="Restoration route, document checks, handover terms, aftercare follow-up..."
+                    placeholder={t('Restoration route, document checks, handover terms, aftercare follow-up...')}
                   />
                   <button
                     className="btn-primary w-full"
-                    disabled={restorationPlan.toState.trim().length < 2 || restorationPlan.toDistrict.trim().length < 2 || restorationPlan.handoverAuthority.trim().length < 3 || restorationPlan.remarks.trim().length < 10}
+                    disabled={action.pending || restorationPlan.toState.trim().length < 2 || restorationPlan.toDistrict.trim().length < 2 || restorationPlan.handoverAuthority.trim().length < 3 || restorationPlan.remarks.trim().length < 10}
                     onClick={() => recordRestorationPlan(selected)}
                   >
-                    Record restoration plan
+                    {t('Record restoration plan')}
                   </button>
+                  <ActionMessage action={action} id="restoration" />
                 </div>
-                {selected.restorationPlans?.length > 0 && (
+                {asList(selected.restorationPlans).length > 0 && (
                   <div className="mt-4 space-y-2">
-                    {selected.restorationPlans.slice().reverse().slice(0, 3).map((record) => (
-                      <div key={record.id} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
-                        <p className="font-medium text-gray-700">{record.label} / {record.statusLabel}</p>
-                        <p>{record.actorName} / {new Date(record.recordedAt).toLocaleString('en-IN')}</p>
-                        <p className="mt-1 text-gray-700">{[record.to?.district, record.to?.state].filter(Boolean).join(', ')}</p>
+                    {asList(selected.restorationPlans).slice().reverse().slice(0, 3).map((record, i) => (
+                      <div key={txt(record?.id) || i} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                        <p className="font-medium text-gray-700">{txt(record.label)} / {txt(record.statusLabel)}</p>
+                        <p>{txt(record.actorName)} / {new Date(record.recordedAt).toLocaleString(currentLocale())}</p>
+                        <p className="mt-1 text-gray-700">{[record.to?.district, record.to?.state].map(txt).filter(Boolean).join(', ')}</p>
                         {record.travel && (
                           <p className="mt-1 text-gray-500">
-                            {record.travel.modeLabel}{record.travel.travelDate ? ` / travel ${fmtDate(record.travel.travelDate)}` : ''}{record.travel.escortAuthority ? ` / escort ${record.travel.escortAuthority}` : ''}
+                            {txt(record.travel.modeLabel)}{record.travel.travelDate ? ` / ${t('travel {date}', { date: fmtDate(record.travel.travelDate) })}` : ''}{record.travel.escortAuthority ? ` / ${t('escort {name}', { name: record.travel.escortAuthority })}` : ''}
                           </p>
                         )}
-                        {record.documents && <p className="mt-1 text-gray-500">Documents: {record.documents.statusLabel}</p>}
-                        {record.funding && <p className="mt-1 text-gray-500">Funding: {record.funding.sourceLabel}</p>}
-                        <p className="mt-1 whitespace-pre-wrap text-gray-700">{record.remarks}</p>
-                        {record.supportLabels?.length > 0 && <p className="mt-1 text-gray-400">{record.supportLabels.join(' / ')}</p>}
-                        {record.followupDate && <p className="mt-1 text-gray-400">Follow-up: {fmtDate(record.followupDate)}</p>}
+                        {record.documents && <p className="mt-1 text-gray-500">{t('Documents: {status}', { status: record.documents.statusLabel })}</p>}
+                        {record.funding && <p className="mt-1 text-gray-500">{t('Funding: {source}', { source: record.funding.sourceLabel })}</p>}
+                        <p className="mt-1 whitespace-pre-wrap text-gray-700">{txt(record.remarks)}</p>
+                        {txtList(record.supportLabels) && <p className="mt-1 text-gray-400">{txtList(record.supportLabels, ' / ')}</p>}
+                        {record.followupDate && <p className="mt-1 text-gray-400">{t('Follow-up: {date}', { date: fmtDate(record.followupDate) })}</p>}
                       </div>
                     ))}
                   </div>
@@ -1832,38 +2236,38 @@ export default function Cases() {
               </div>
             )}
 
-            {canRecordWelfareReferral && !['closed', 'intake_pending'].includes(selected.status) && (
+            {canRecordWelfareReferral && !adultCase && !['closed', 'intake_pending'].includes(selected.status) && (
               <div className="mt-6 rounded-xl border border-black/5 p-4">
-                <p className="text-sm font-medium">Welfare referral</p>
-                <p className="text-xs text-gray-600">Record sponsorship, foster care, adoption, aftercare, counselling, medical, education, or family-strengthening referrals.</p>
+                <p className="text-sm font-medium">{t('Welfare referral')}</p>
+                <p className="text-xs text-gray-600">{t('Record sponsorship, foster care, adoption, aftercare, counselling, medical, education, or family-strengthening referrals.')}</p>
                 <div className="mt-3 space-y-3">
                   <select
                     className="field w-full"
                     value={welfareReferral.scheme}
                     onChange={(e) => setWelfareReferral((w) => ({ ...w, scheme: e.target.value }))}
                   >
-                    {WELFARE_SCHEMES.map((scheme) => <option key={scheme.id} value={scheme.id}>{scheme.label}</option>)}
+                    {WELFARE_SCHEMES.map((scheme) => <option key={scheme.id} value={scheme.id}>{t(scheme.label)}</option>)}
                   </select>
                   <select
                     className="field w-full"
                     value={welfareReferral.status}
                     onChange={(e) => setWelfareReferral((w) => ({ ...w, status: e.target.value }))}
                   >
-                    {WELFARE_STATUSES.map((statusOption) => <option key={statusOption.id} value={statusOption.id}>{statusOption.label}</option>)}
+                    {WELFARE_STATUSES.map((statusOption) => <option key={statusOption.id} value={statusOption.id}>{t(statusOption.label)}</option>)}
                   </select>
                   <input
                     className="field w-full"
                     value={welfareReferral.agencyName}
                     onChange={(e) => setWelfareReferral((w) => ({ ...w, agencyName: e.target.value }))}
-                    placeholder="DCPU / CWC / agency / NGO desk"
+                    placeholder={t('DCPU / CWC / agency / NGO desk')}
                   />
                   <input
                     className="field w-full"
                     value={welfareReferral.referralNo}
                     onChange={(e) => setWelfareReferral((w) => ({ ...w, referralNo: e.target.value }))}
-                    placeholder="Referral / scheme number"
+                    placeholder={t('Referral / scheme number')}
                   />
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
                     <input
                       className="field w-full"
                       type="date"
@@ -1881,25 +2285,26 @@ export default function Cases() {
                     className="field min-h-24 w-full"
                     value={welfareReferral.eligibilityNote}
                     onChange={(e) => setWelfareReferral((w) => ({ ...w, eligibilityNote: e.target.value }))}
-                    placeholder="Eligibility basis, family situation, immediate support needs..."
+                    placeholder={t('Eligibility basis, family situation, immediate support needs...')}
                   />
                   <button
                     className="btn-primary w-full"
-                    disabled={welfareReferral.agencyName.trim().length < 3 || welfareReferral.eligibilityNote.trim().length < 10 || !welfareReferral.referredDate}
+                    disabled={action.pending || welfareReferral.agencyName.trim().length < 3 || welfareReferral.eligibilityNote.trim().length < 10 || !welfareReferral.referredDate}
                     onClick={() => recordWelfareReferral(selected)}
                   >
-                    Record welfare referral
+                    {t('Record welfare referral')}
                   </button>
+                  <ActionMessage action={action} id="welfare" />
                 </div>
-                {selected.welfareReferrals?.length > 0 && (
+                {asList(selected.welfareReferrals).length > 0 && (
                   <div className="mt-4 space-y-2">
-                    {selected.welfareReferrals.slice().reverse().slice(0, 3).map((record) => (
-                      <div key={record.id} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
-                        <p className="font-medium text-gray-700">{record.label} / {record.statusLabel}</p>
-                        <p>{record.agencyName} / {record.actorName}</p>
-                        <p className="mt-1 whitespace-pre-wrap text-gray-700">{record.eligibilityNote}</p>
-                        {record.referralNo && <p className="mt-1 text-gray-400">Ref: {record.referralNo}</p>}
-                        {record.reviewDate && <p className="mt-1 text-gray-400">Review: {fmtDate(record.reviewDate)}</p>}
+                    {asList(selected.welfareReferrals).slice().reverse().slice(0, 3).map((record, i) => (
+                      <div key={txt(record?.id) || i} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                        <p className="font-medium text-gray-700">{txt(record.label)} / {txt(record.statusLabel)}</p>
+                        <p>{txt(record.agencyName)} / {txt(record.actorName)}</p>
+                        <p className="mt-1 whitespace-pre-wrap text-gray-700">{txt(record.eligibilityNote)}</p>
+                        {record.referralNo && <p className="mt-1 text-gray-400">{t('Ref: {ref}', { ref: record.referralNo })}</p>}
+                        {record.reviewDate && <p className="mt-1 text-gray-400">{t('Review: {date}', { date: fmtDate(record.reviewDate) })}</p>}
                       </div>
                     ))}
                   </div>
@@ -1909,36 +2314,36 @@ export default function Cases() {
 
             {canRecordLegalAidReferral && !['closed', 'intake_pending'].includes(selected.status) && (
               <div className="mt-6 rounded-xl border border-black/5 p-4">
-                <p className="text-sm font-medium">Legal-aid referral</p>
-                <p className="text-xs text-gray-600">Record DLSA legal aid, victim compensation, court support, and document or affidavit follow-up.</p>
+                <p className="text-sm font-medium">{t('Legal-aid referral')}</p>
+                <p className="text-xs text-gray-600">{t('Record DLSA legal aid, victim compensation, court support, and document or affidavit follow-up.')}</p>
                 <div className="mt-3 space-y-3">
                   <select
                     className="field w-full"
                     value={legalAidReferral.serviceType}
                     onChange={(e) => setLegalAidReferral((l) => ({ ...l, serviceType: e.target.value }))}
                   >
-                    {LEGAL_AID_SERVICE_TYPES.map((type) => <option key={type.id} value={type.id}>{type.label}</option>)}
+                    {LEGAL_AID_SERVICE_TYPES.map((type) => <option key={type.id} value={type.id}>{t(type.label)}</option>)}
                   </select>
                   <select
                     className="field w-full"
                     value={legalAidReferral.status}
                     onChange={(e) => setLegalAidReferral((l) => ({ ...l, status: e.target.value }))}
                   >
-                    {LEGAL_AID_STATUSES.map((statusOption) => <option key={statusOption.id} value={statusOption.id}>{statusOption.label}</option>)}
+                    {LEGAL_AID_STATUSES.map((statusOption) => <option key={statusOption.id} value={statusOption.id}>{t(statusOption.label)}</option>)}
                   </select>
                   <input
                     className="field w-full"
                     value={legalAidReferral.authorityName}
                     onChange={(e) => setLegalAidReferral((l) => ({ ...l, authorityName: e.target.value }))}
-                    placeholder="DLSA / legal services authority"
+                    placeholder={t('DLSA / legal services authority')}
                   />
                   <input
                     className="field w-full"
                     value={legalAidReferral.applicationNo}
                     onChange={(e) => setLegalAidReferral((l) => ({ ...l, applicationNo: e.target.value }))}
-                    placeholder="Application / case reference"
+                    placeholder={t('Application / case reference')}
                   />
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid gap-2 sm:grid-cols-3">
                     <input
                       className="field w-full"
                       type="date"
@@ -1962,26 +2367,27 @@ export default function Cases() {
                     className="field min-h-24 w-full"
                     value={legalAidReferral.note}
                     onChange={(e) => setLegalAidReferral((l) => ({ ...l, note: e.target.value }))}
-                    placeholder="Legal support need, application status, next action..."
+                    placeholder={t('Legal support need, application status, next action...')}
                   />
                   <button
                     className="btn-primary w-full"
-                    disabled={legalAidReferral.authorityName.trim().length < 3 || legalAidReferral.note.trim().length < 10 || !legalAidReferral.referredDate}
+                    disabled={action.pending || legalAidReferral.authorityName.trim().length < 3 || legalAidReferral.note.trim().length < 10 || !legalAidReferral.referredDate}
                     onClick={() => recordLegalAidReferral(selected)}
                   >
-                    Record legal-aid referral
+                    {t('Record legal-aid referral')}
                   </button>
+                  <ActionMessage action={action} id="legal-aid" />
                 </div>
-                {selected.legalAidReferrals?.length > 0 && (
+                {asList(selected.legalAidReferrals).length > 0 && (
                   <div className="mt-4 space-y-2">
-                    {selected.legalAidReferrals.slice().reverse().slice(0, 3).map((record) => (
-                      <div key={record.id} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
-                        <p className="font-medium text-gray-700">{record.label} / {record.statusLabel}</p>
-                        <p>{record.authorityName} / {record.actorName}</p>
-                        <p className="mt-1 whitespace-pre-wrap text-gray-700">{record.note}</p>
-                        {record.applicationNo && <p className="mt-1 text-gray-400">Ref: {record.applicationNo}</p>}
-                        {record.hearingDate && <p className="mt-1 text-gray-400">Hearing: {fmtDate(record.hearingDate)}</p>}
-                        {record.reviewDate && <p className="mt-1 text-gray-400">Review: {fmtDate(record.reviewDate)}</p>}
+                    {asList(selected.legalAidReferrals).slice().reverse().slice(0, 3).map((record, i) => (
+                      <div key={txt(record?.id) || i} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                        <p className="font-medium text-gray-700">{txt(record.label)} / {txt(record.statusLabel)}</p>
+                        <p>{txt(record.authorityName)} / {txt(record.actorName)}</p>
+                        <p className="mt-1 whitespace-pre-wrap text-gray-700">{txt(record.note)}</p>
+                        {record.applicationNo && <p className="mt-1 text-gray-400">{t('Ref: {ref}', { ref: record.applicationNo })}</p>}
+                        {record.hearingDate && <p className="mt-1 text-gray-400">{t('Hearing: {date}', { date: fmtDate(record.hearingDate) })}</p>}
+                        {record.reviewDate && <p className="mt-1 text-gray-400">{t('Review: {date}', { date: fmtDate(record.reviewDate) })}</p>}
                       </div>
                     ))}
                   </div>
@@ -1989,46 +2395,46 @@ export default function Cases() {
               </div>
             )}
 
-            {canRecordAdoption && !['closed', 'intake_pending'].includes(selected.status) && (
+            {canRecordAdoption && !adultCase && !['closed', 'intake_pending'].includes(selected.status) && (
               <div className="mt-6 rounded-xl border border-black/5 p-4">
-                <p className="text-sm font-medium">Adoption / CARINGS record</p>
-                <p className="text-xs text-gray-600">Record CWC orders, legally-free declarations, SAA intake, SARA review, CARINGS updates, or pre-adoption foster care follow-up.</p>
+                <p className="text-sm font-medium">{t('Adoption / CARINGS record')}</p>
+                <p className="text-xs text-gray-600">{t('Record CWC orders, legally-free declarations, SAA intake, SARA review, CARINGS updates, or pre-adoption foster care follow-up.')}</p>
                 <div className="mt-3 space-y-3">
                   <select
                     className="field w-full"
                     value={adoptionRecord.recordType}
                     onChange={(e) => setAdoptionRecord((a) => ({ ...a, recordType: e.target.value }))}
                   >
-                    {ADOPTION_RECORD_TYPES.map((type) => <option key={type.id} value={type.id}>{type.label}</option>)}
+                    {ADOPTION_RECORD_TYPES.map((type) => <option key={type.id} value={type.id}>{t(type.label)}</option>)}
                   </select>
                   <select
                     className="field w-full"
                     value={adoptionRecord.status}
                     onChange={(e) => setAdoptionRecord((a) => ({ ...a, status: e.target.value }))}
                   >
-                    {ADOPTION_STATUSES.map((statusOption) => <option key={statusOption.id} value={statusOption.id}>{statusOption.label}</option>)}
+                    {ADOPTION_STATUSES.map((statusOption) => <option key={statusOption.id} value={statusOption.id}>{t(statusOption.label)}</option>)}
                   </select>
                   <input
                     className="field w-full"
                     value={adoptionRecord.agencyName}
                     onChange={(e) => setAdoptionRecord((a) => ({ ...a, agencyName: e.target.value }))}
-                    placeholder="SAA / SARA / CWC authority"
+                    placeholder={t('SAA / SARA / CWC authority')}
                   />
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
                     <input
                       className="field w-full"
                       value={adoptionRecord.caringsId}
                       onChange={(e) => setAdoptionRecord((a) => ({ ...a, caringsId: e.target.value }))}
-                      placeholder="CARINGS reference"
+                      placeholder={t('CARINGS reference')}
                     />
                     <input
                       className="field w-full"
                       value={adoptionRecord.orderNo}
                       onChange={(e) => setAdoptionRecord((a) => ({ ...a, orderNo: e.target.value }))}
-                      placeholder="Order / declaration number"
+                      placeholder={t('Order / declaration number')}
                     />
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
                     <input
                       className="field w-full"
                       type="date"
@@ -2046,26 +2452,27 @@ export default function Cases() {
                     className="field min-h-24 w-full"
                     value={adoptionRecord.note}
                     onChange={(e) => setAdoptionRecord((a) => ({ ...a, note: e.target.value }))}
-                    placeholder="Adoption follow-up status, document gap, next action..."
+                    placeholder={t('Adoption follow-up status, document gap, next action...')}
                   />
                   <button
                     className="btn-primary w-full"
-                    disabled={adoptionRecord.agencyName.trim().length < 3 || adoptionRecord.note.trim().length < 10 || !adoptionRecord.orderDate}
+                    disabled={action.pending || adoptionRecord.agencyName.trim().length < 3 || adoptionRecord.note.trim().length < 10 || !adoptionRecord.orderDate}
                     onClick={() => recordAdoption(selected)}
                   >
-                    Record adoption follow-up
+                    {t('Record adoption follow-up')}
                   </button>
+                  <ActionMessage action={action} id="adoption" />
                 </div>
-                {selected.adoptionRecords?.length > 0 && (
+                {asList(selected.adoptionRecords).length > 0 && (
                   <div className="mt-4 space-y-2">
-                    {selected.adoptionRecords.slice().reverse().slice(0, 3).map((record) => (
-                      <div key={record.id} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
-                        <p className="font-medium text-gray-700">{record.label} / {record.statusLabel}</p>
-                        <p>{record.agencyName} / {record.actorName}</p>
-                        <p className="mt-1 whitespace-pre-wrap text-gray-700">{record.note}</p>
-                        {record.caringsId && <p className="mt-1 text-gray-400">CARINGS: {record.caringsId}</p>}
-                        {record.orderNo && <p className="mt-1 text-gray-400">Order: {record.orderNo}</p>}
-                        {record.nextReviewDate && <p className="mt-1 text-gray-400">Review: {fmtDate(record.nextReviewDate)}</p>}
+                    {asList(selected.adoptionRecords).slice().reverse().slice(0, 3).map((record, i) => (
+                      <div key={txt(record?.id) || i} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                        <p className="font-medium text-gray-700">{txt(record.label)} / {txt(record.statusLabel)}</p>
+                        <p>{txt(record.agencyName)} / {txt(record.actorName)}</p>
+                        <p className="mt-1 whitespace-pre-wrap text-gray-700">{txt(record.note)}</p>
+                        {record.caringsId && <p className="mt-1 text-gray-400">CARINGS: {txt(record.caringsId)}</p>}
+                        {record.orderNo && <p className="mt-1 text-gray-400">{t('Order: {no}', { no: record.orderNo })}</p>}
+                        {record.nextReviewDate && <p className="mt-1 text-gray-400">{t('Review: {date}', { date: fmtDate(record.nextReviewDate) })}</p>}
                       </div>
                     ))}
                   </div>
@@ -2073,32 +2480,32 @@ export default function Cases() {
               </div>
             )}
 
-            {canRecordCaseAssessment && !['closed', 'intake_pending'].includes(selected.status) && (
+            {canRecordCaseAssessment && !adultCase && !['closed', 'intake_pending'].includes(selected.status) && (
               <div className="mt-6 rounded-xl border border-black/5 p-4">
-                <p className="text-sm font-medium">SIR / care assessment</p>
-                <p className="text-xs text-gray-600">Record social investigation, individual care plan, risk, family, or rehabilitation assessment details.</p>
+                <p className="text-sm font-medium">{t('SIR / care assessment')}</p>
+                <p className="text-xs text-gray-600">{t('Record social investigation, individual care plan, risk, family, or rehabilitation assessment details.')}</p>
                 <div className="mt-3 space-y-3">
                   <select
                     className="field w-full"
                     value={caseAssessment.assessmentType}
                     onChange={(e) => setCaseAssessment((a) => ({ ...a, assessmentType: e.target.value }))}
                   >
-                    {CASE_ASSESSMENT_TYPES.map((type) => <option key={type.id} value={type.id}>{type.label}</option>)}
+                    {CASE_ASSESSMENT_TYPES.map((type) => <option key={type.id} value={type.id}>{t(type.label)}</option>)}
                   </select>
                   <select
                     className="field w-full"
                     value={caseAssessment.riskLevel}
                     onChange={(e) => setCaseAssessment((a) => ({ ...a, riskLevel: e.target.value }))}
                   >
-                    {CASE_RISK_LEVELS.map((risk) => <option key={risk.id} value={risk.id}>{risk.label}</option>)}
+                    {CASE_RISK_LEVELS.map((risk) => <option key={risk.id} value={risk.id}>{t(risk.label)}</option>)}
                   </select>
                   <input
                     className="field w-full"
                     value={caseAssessment.assessorName}
                     onChange={(e) => setCaseAssessment((a) => ({ ...a, assessorName: e.target.value }))}
-                    placeholder="Assessor / probation officer / CWC member"
+                    placeholder={t('Assessor / probation officer / CWC member')}
                   />
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
                     <input
                       className="field w-full"
                       type="date"
@@ -2116,37 +2523,38 @@ export default function Cases() {
                     className="field min-h-20 w-full"
                     value={caseAssessment.findings}
                     onChange={(e) => setCaseAssessment((a) => ({ ...a, findings: e.target.value }))}
-                    placeholder="Findings"
+                    placeholder={t('Findings')}
                   />
                   <textarea
                     className="field min-h-20 w-full"
                     value={caseAssessment.carePlan}
                     onChange={(e) => setCaseAssessment((a) => ({ ...a, carePlan: e.target.value }))}
-                    placeholder="Individual care plan / rehabilitation actions"
+                    placeholder={t('Individual care plan / rehabilitation actions')}
                   />
                   <textarea
                     className="field min-h-16 w-full"
                     value={caseAssessment.recommendation}
                     onChange={(e) => setCaseAssessment((a) => ({ ...a, recommendation: e.target.value }))}
-                    placeholder="Recommendation"
+                    placeholder={t('Recommendation')}
                   />
                   <button
                     className="btn-primary w-full"
-                    disabled={caseAssessment.assessorName.trim().length < 3 || caseAssessment.findings.trim().length < 10 || caseAssessment.carePlan.trim().length < 10 || !caseAssessment.assessmentDate}
+                    disabled={action.pending || caseAssessment.assessorName.trim().length < 3 || caseAssessment.findings.trim().length < 10 || caseAssessment.carePlan.trim().length < 10 || !caseAssessment.assessmentDate}
                     onClick={() => recordCaseAssessment(selected)}
                   >
-                    Record assessment
+                    {t('Record assessment')}
                   </button>
+                  <ActionMessage action={action} id="assessment" />
                 </div>
-                {selected.caseAssessments?.length > 0 && (
+                {asList(selected.caseAssessments).length > 0 && (
                   <div className="mt-4 space-y-2">
-                    {selected.caseAssessments.slice().reverse().slice(0, 3).map((record) => (
-                      <div key={record.id} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
-                        <p className="font-medium text-gray-700">{record.label} / {record.riskLabel}</p>
-                        <p>{record.assessorName} / {record.actorName}</p>
-                        <p className="mt-1 whitespace-pre-wrap text-gray-700">{record.findings}</p>
-                        <p className="mt-1 whitespace-pre-wrap text-gray-700">{record.carePlan}</p>
-                        {record.nextReviewDate && <p className="mt-1 text-gray-400">Review: {fmtDate(record.nextReviewDate)}</p>}
+                    {asList(selected.caseAssessments).slice().reverse().slice(0, 3).map((record, i) => (
+                      <div key={txt(record?.id) || i} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                        <p className="font-medium text-gray-700">{txt(record.label)} / {txt(record.riskLabel)}</p>
+                        <p>{txt(record.assessorName)} / {txt(record.actorName)}</p>
+                        <p className="mt-1 whitespace-pre-wrap text-gray-700">{txt(record.findings)}</p>
+                        <p className="mt-1 whitespace-pre-wrap text-gray-700">{txt(record.carePlan)}</p>
+                        {record.nextReviewDate && <p className="mt-1 text-gray-400">{t('Review: {date}', { date: fmtDate(record.nextReviewDate) })}</p>}
                       </div>
                     ))}
                   </div>
@@ -2154,38 +2562,38 @@ export default function Cases() {
               </div>
             )}
 
-            {canRecordProduction && !['closed', 'intake_pending'].includes(selected.status) && (
+            {canRecordProduction && !adultCase && !['closed', 'intake_pending'].includes(selected.status) && (
               <div className="mt-6 rounded-xl border border-black/5 p-4">
-                <p className="text-sm font-medium">CWC / JJB production</p>
-                <p className="text-xs text-gray-600">Record rescue-to-production timing, authority, outcome, and 24-hour deadline status.</p>
+                <p className="text-sm font-medium">{t('CWC / JJB production')}</p>
+                <p className="text-xs text-gray-600">{t('Record rescue-to-production timing, authority, outcome, and 24-hour deadline status.')}</p>
                 <div className="mt-3 space-y-3">
                   <select
                     className="field w-full"
                     value={productionRecord.productionType}
                     onChange={(e) => setProductionRecord((p) => ({ ...p, productionType: e.target.value }))}
                   >
-                    {PRODUCTION_TYPES.map((type) => <option key={type.id} value={type.id}>{type.label}</option>)}
+                    {PRODUCTION_TYPES.map((type) => <option key={type.id} value={type.id}>{t(type.label)}</option>)}
                   </select>
                   <select
                     className="field w-full"
                     value={productionRecord.outcome}
                     onChange={(e) => setProductionRecord((p) => ({ ...p, outcome: e.target.value }))}
                   >
-                    {PRODUCTION_OUTCOMES.map((outcome) => <option key={outcome.id} value={outcome.id}>{outcome.label}</option>)}
+                    {PRODUCTION_OUTCOMES.map((outcome) => <option key={outcome.id} value={outcome.id}>{t(outcome.label)}</option>)}
                   </select>
                   <input
                     className="field w-full"
                     value={productionRecord.authorityName}
                     onChange={(e) => setProductionRecord((p) => ({ ...p, authorityName: e.target.value }))}
-                    placeholder="CWC / JJB / medical authority"
+                    placeholder={t('CWC / JJB / medical authority')}
                   />
                   <input
                     className="field w-full"
                     value={productionRecord.orderNo}
                     onChange={(e) => setProductionRecord((p) => ({ ...p, orderNo: e.target.value }))}
-                    placeholder="Order / production number"
+                    placeholder={t('Order / production number')}
                   />
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid gap-2 sm:grid-cols-2">
                     <input
                       className="field w-full"
                       type="datetime-local"
@@ -2203,25 +2611,26 @@ export default function Cases() {
                     className="field min-h-20 w-full"
                     value={productionRecord.nextAction}
                     onChange={(e) => setProductionRecord((p) => ({ ...p, nextAction: e.target.value }))}
-                    placeholder="Next action after production"
+                    placeholder={t('Next action after production')}
                   />
                   <button
                     className="btn-primary w-full"
-                    disabled={productionRecord.authorityName.trim().length < 3 || productionRecord.nextAction.trim().length < 10 || !productionRecord.rescueAt || !productionRecord.producedAt}
+                    disabled={action.pending || productionRecord.authorityName.trim().length < 3 || productionRecord.nextAction.trim().length < 10 || !productionRecord.rescueAt || !productionRecord.producedAt}
                     onClick={() => recordProduction(selected)}
                   >
-                    Record production
+                    {t('Record production')}
                   </button>
+                  <ActionMessage action={action} id="production" />
                 </div>
-                {selected.productionRecords?.length > 0 && (
+                {asList(selected.productionRecords).length > 0 && (
                   <div className="mt-4 space-y-2">
-                    {selected.productionRecords.slice().reverse().slice(0, 3).map((record) => (
-                      <div key={record.id} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
-                        <p className="font-medium text-gray-700">{record.label} / {record.outcomeLabel}</p>
-                        <p>{record.authorityName} / {record.actorName}</p>
-                        <p className="mt-1 text-gray-700">{record.hoursToProduce}h / {record.deadlineStatus === 'within_24h' ? 'within 24h' : 'delayed'}</p>
-                        <p className="mt-1 whitespace-pre-wrap text-gray-700">{record.nextAction}</p>
-                        {record.orderNo && <p className="mt-1 text-gray-400">Order: {record.orderNo}</p>}
+                    {asList(selected.productionRecords).slice().reverse().slice(0, 3).map((record, i) => (
+                      <div key={txt(record?.id) || i} className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                        <p className="font-medium text-gray-700">{txt(record.label)} / {txt(record.outcomeLabel)}</p>
+                        <p>{txt(record.authorityName)} / {txt(record.actorName)}</p>
+                        <p className="mt-1 text-gray-700">{t('{n}h', { n: record.hoursToProduce })} / {record.deadlineStatus === 'within_24h' ? t('within 24h') : t('delayed')}</p>
+                        <p className="mt-1 whitespace-pre-wrap text-gray-700">{txt(record.nextAction)}</p>
+                        {record.orderNo && <p className="mt-1 text-gray-400">{t('Order: {no}', { no: record.orderNo })}</p>}
                       </div>
                     ))}
                   </div>
@@ -2231,54 +2640,79 @@ export default function Cases() {
 
             {canTransferCase && !['found', 'closed', 'intake_pending'].includes(selected.status) && (
               <div className="mt-6 rounded-xl border border-black/5 p-4">
-                <p className="text-sm font-medium">Transfer jurisdiction</p>
-                <p className="text-xs text-gray-600">Move this case to another district when investigation or child-protection follow-up shifts.</p>
+                <p className="text-sm font-medium">{t('Transfer jurisdiction')}</p>
+                <p className="text-xs text-gray-600">{t('Move this case to another district when investigation or child-protection follow-up shifts.')}</p>
                 <div className="mt-3 grid gap-2">
-                  <input className="field w-full" value={transfer.state} onChange={(e) => setTransfer((t) => ({ ...t, state: e.target.value }))} placeholder="Target state" />
-                  <input className="field w-full" value={transfer.district} onChange={(e) => setTransfer((t) => ({ ...t, district: e.target.value }))} placeholder="Target district" />
-                  <input className="field w-full" value={transfer.station} onChange={(e) => setTransfer((t) => ({ ...t, station: e.target.value }))} placeholder="Target station / desk" />
-                  <textarea className="field min-h-16 w-full" value={transfer.reason} onChange={(e) => setTransfer((t) => ({ ...t, reason: e.target.value }))} placeholder="Transfer reason" />
-                  <button className="btn-ghost w-full" disabled={!transfer.state.trim() || !transfer.district.trim()} onClick={() => transferJurisdiction(selected)}>
-                    Transfer case
+                  <input className="field w-full" value={transfer.state} onChange={(e) => setTransfer((prev) => ({ ...prev, state: e.target.value }))} placeholder={t('Target state')} />
+                  <input className="field w-full" value={transfer.district} onChange={(e) => setTransfer((prev) => ({ ...prev, district: e.target.value }))} placeholder={t('Target district')} />
+                  <input className="field w-full" value={transfer.station} onChange={(e) => setTransfer((prev) => ({ ...prev, station: e.target.value }))} placeholder={t('Target station / desk')} />
+                  <textarea className="field min-h-16 w-full" value={transfer.reason} onChange={(e) => setTransfer((prev) => ({ ...prev, reason: e.target.value }))} placeholder={t('Transfer reason')} />
+                  <button className="btn-ghost w-full" disabled={action.pending || !transfer.state.trim() || !transfer.district.trim()} onClick={() => transferJurisdiction(selected)}>
+                    {t('Transfer case')}
                   </button>
+                  <ActionMessage action={action} id="transfer" />
                 </div>
-                {selected.transfers?.length > 0 && (
-                  <p className="mt-2 text-xs text-gray-400">{selected.transfers.length} jurisdiction transfer{selected.transfers.length === 1 ? '' : 's'} recorded.</p>
+                {asList(selected.transfers).length > 0 && (
+                  <p className="mt-2 text-xs text-gray-400">{asList(selected.transfers).length === 1 ? t('1 jurisdiction transfer recorded.') : t('{n} jurisdiction transfers recorded.', { n: asList(selected.transfers).length })}</p>
                 )}
               </div>
             )}
 
             {canCloseCase && !['closed', 'intake_pending'].includes(selected.status) && (
               <div className="mt-6 rounded-xl border border-black/5 p-4">
-                <p className="text-sm font-medium">Close case outcome</p>
-                <p className="text-xs text-gray-600">Record the final TrackChild-style outcome after CWC/police review.</p>
+                <p className="text-sm font-medium">{t('Close case outcome')}</p>
+                <p className="text-xs text-gray-600">{t('Record the final TrackChild-style outcome after CWC/police review.')}</p>
                 <div className="mt-3 space-y-3">
-                  <select className="field w-full" value={closure.reason} onChange={(e) => setClosure((c) => ({ ...c, reason: e.target.value }))}>
-                    {CASE_CLOSE_REASONS.map((reason) => <option key={reason.id} value={reason.id}>{reason.label}</option>)}
+                  <select className="field w-full" value={closeReasons.some((reason) => reason.id === closure.reason) ? closure.reason : closeReasons[0].id} onChange={(e) => setClosure((c) => ({ ...c, reason: e.target.value }))}>
+                    {closeReasons.map((reason) => <option key={reason.id} value={reason.id}>{t(reason.label)}</option>)}
                   </select>
                   <input
                     className="field w-full"
                     value={closure.foundLocation}
                     onChange={(e) => setClosure((c) => ({ ...c, foundLocation: e.target.value }))}
-                    placeholder={selected.foundLocation || 'Restoration / transfer location'}
+                    placeholder={txt(selected.foundLocation) || t('Restoration / transfer location')}
                   />
                   <textarea
                     className="field min-h-20 w-full"
                     value={closure.note}
                     onChange={(e) => setClosure((c) => ({ ...c, note: e.target.value }))}
-                    placeholder="Closure note"
+                    placeholder={t('Closure note')}
                   />
-                  <button onClick={() => closeCase(selected)} className="btn-primary w-full">Close case</button>
+                  <button onClick={() => closeCase(selected)} disabled={action.pending} className="btn-primary w-full">{t('Close case')}</button>
+                  <ActionMessage action={action} id="close" />
                 </div>
               </div>
             )}
 
-            {canAct && selected.status === 'found' && !selected.smsSent && (
-              <button onClick={() => { sendSms(selected); setSelected(null); }} className="btn-primary mt-6 w-full">Send SMS alert to parent</button>
+            {canReopen && ['found', 'closed'].includes(selected.status) && (
+              <ReopenCasePanel
+                report={selected}
+                action={action}
+                onReport={(report) => { showReport({ ...report, pendingMatch: null }); load(); }}
+              />
             )}
+
+            </ErrorBoundary>
+            </div>
           </div>
         </div>
       )}
+
+      {confirming && (
+        <ErrorBoundary>
+          <ConfirmMatchDialog
+            report={confirming.report}
+            sighting={confirming.sightingId
+              ? { id: confirming.sightingId, matchScore: confirming.score, personCategory: confirming.report.personCategory }
+              : null}
+            action={action}
+            onSubmit={submitConfirmation}
+            onCancel={() => { setConfirming(null); action.clear(); }}
+          />
+        </ErrorBoundary>
+      )}
+
+      <ActionToast action={action} />
     </div>
   );
 }

@@ -14,6 +14,7 @@ function assert(condition, message) {
 const expected = {
   cases: ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'dcrb', 'dlsa', 'cwc', 'dcpu', 'rpf', 'cci', 'saa', 'jjb', 'state_nodal', 'sara', 'crime_bureau', 'parent', 'ngo'],
   register: ['super_admin', 'admin', 'police', 'sjpu', 'parent', 'ngo'],
+  'bulk-import': ['super_admin', 'admin', 'police', 'sjpu'],
   matches: ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'dcrb', 'dlsa', 'cwc', 'dcpu', 'rpf', 'cci', 'saa', 'jjb', 'state_nodal', 'sara', 'crime_bureau'],
   'cci-register': ['super_admin', 'admin', 'cwc', 'dcpu', 'cci', 'saa', 'state_nodal', 'sara'],
   privacy: ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'dcrb', 'dlsa', 'cwc', 'dcpu', 'rpf', 'cci', 'saa', 'jjb', 'state_nodal', 'sara', 'crime_bureau'],
@@ -40,6 +41,8 @@ for (const [route, roles] of Object.entries(expected)) {
 }
 
 assert(!expected.register.includes('cwc'), 'CWC must not deep-link into case/FIR registration');
+assert(!expected['bulk-import'].includes('cwc'), 'CWC must not deep-link into bulk case import');
+assert(!expected['bulk-import'].includes('parent') && !expected['bulk-import'].includes('ngo'), 'Parents and NGOs must not bulk-import cases');
 assert(!expected.network.includes('parent'), 'Parent must not deep-link into stakeholder provisioning');
 assert(!expected.matches.includes('parent'), 'Parent must not deep-link into sighting review');
 assert(!expected.grievances.includes('parent'), 'Parent must not deep-link into grievance review');

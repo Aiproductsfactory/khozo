@@ -13,8 +13,10 @@
 
 import { nanoid } from 'nanoid';
 
-import { canAccessReport, scopeFoundReports, scopeReports } from '../scope.js';
+import { POLICE_ROLES, canAccessReport, isPoliceOnly, scopeFoundReports, scopeReports } from '../scope.js';
 import { resolveSightingLocation } from '../geocode.js';
+import { isReverseMatchCandidate, wasLinkRejected } from '../match-pool.js';
+import { sendSms, smsGatewayConfigured } from '../sms.js';
 // The case vocabulary, validation and public-redaction rules are shared with the
 // Cloudflare Worker build so the two runtimes cannot drift apart. See
 // shared/case-domain.js.
@@ -88,15 +90,27 @@ import {
   PRODUCTION_TYPES,
   PRODUCTION_OUTCOMES,
   HANDOFF_TARGET_SYSTEMS,
+  POLICE_VISIBILITY_ROLES,
+  REPORT_VISIBILITY_VALUES,
+  personCategoryOf,
+  isAdultCategory,
+  isAdultCase,
+  categoryAge,
+  nonFamilyPhoneSet,
+  familyPhone,
   isPendingCitizenIntake,
   generatedFirNo,
   canTransferToJurisdiction,
   canAssignUserToReport,
   assignableUsersForReport,
+  isPublicAppeal,
+  PUBLIC_APPEALS_DISABLED,
   bulletinPayload,
   publicSearchPayload,
   publicSightingStatus,
   publicCaseStatus,
+  isCitizenRole,
+  citizenCaseView,
   stable,
   signedCaseExport,
   latestRecord,
@@ -110,6 +124,15 @@ import {
   isTruthy,
   retentionUntil,
   cleanText,
+  invalidValue,
+  readFields,
+  nestedValueField,
+  parseVerification,
+  VERIFICATION_REQUIRED,
+  FAMILY_CONTACT_METHODS,
+  PERSON_CONSENT_REQUIRED,
+  FAMILY_SMS_MESSAGES,
+  familySmsText,
   parseDateInput,
   parseDateTimeInput,
   optionalDateInput,
@@ -137,6 +160,17 @@ export default function registerReportRoutes(router, deps) {
     authRequired, optionalAuth, passwordChangeRequired, requireRole,
     auditPublicRateLimit, clientIp, fixedWindowRateLimit,
     rankMatches,
+    // The reverse search: a newly registered case's photo against the stored
+    // sightings. Optional only so that a harness exercising other routes need
+    // not stub it; both runtimes supply it.
+    rankSightingMatches = null,
+    // Links a stored sighting to a case only if it is still what the search
+    // saw: `(id, makePatch, isEligible) => Promise<linked record | null>`. The
+    // Worker supplies it, because its store is a per-request copy read seconds
+    // before the comparisons finish, and another request may have linked,
+    // reviewed or anonymised the sighting meanwhile. Express has one live
+    // in-memory store, where re-reading the row just before writing is enough.
+    claimFoundReport = null,
     detectPerson,
     upload,
     // Injectable so the reverse geocoder can be stubbed in tests rather than
@@ -147,27 +181,265 @@ export default function registerReportRoutes(router, deps) {
 
   const protectedRoute = [authRequired, passwordChangeRequired];
 
+  // ---- Strict request bodies (readFields in shared/case-domain.js) -----------
+  //
+  // No write route here stores an object it was sent. Every JSON body is
+  // checked once, before any handler: a top-level field holding an object, or
+  // an array of anything but strings and numbers, is refused with
+  // `Invalid value for <field>`. Only a match confirmation's `verification` is
+  // an object by design. A multipart body is flat strings by construction and
+  // is read after the upload is parsed, by each route's own field list.
+  router.use((req, res, next) => {
+    const field = nestedValueField(req.body, ['verification']);
+    if (field) return res.status(400).json({ error: invalidValue(field) });
+    return next();
+  });
+
+  /** The fields a case registration (POST /, one bulk-import row too) reads. */
+  const REPORT_FIELDS = {
+    personCategory: ['text', 20],
+    visibility: ['text', 20],
+    childName: ['text', 120],
+    childAadhar: ['text', 20],
+    gender: ['text', 10],
+    age: 'number',
+    height: 'number',
+    weight: 'number',
+    dateOfMissing: ['text', 40],
+    firNo: ['text', 80],
+    dataPurpose: ['text', 80],
+    parentName: ['text', 120],
+    parentPhone: ['text', 20],
+    parentEmail: ['text', 160],
+    address: ['text', 300],
+    state: ['text', 80],
+    district: ['text', 80],
+    zip: ['text', 12],
+    // Profile fields; buildChildProfile cuts each to its own length.
+    complexion: ['text', 400],
+    build: ['text', 400],
+    hair: ['text', 400],
+    clothing: ['text', 400],
+    languages: ['text', 400],
+    birthMark: ['text', 400],
+    identificationMark: ['text', 400],
+    circumstances: ['text', 1200],
+    producedByType: ['text', 40],
+    educationLevel: ['text', 40],
+    disabilityStatus: ['text', 40],
+    mentalHealthConcern: ['text', 40],
+    vulnerabilityCategories: 'list',
+    // Read long so validateMissingReport can still refuse them as too long.
+    declarationSignerName: ['text', 400],
+    declarationSignerRole: ['text', 200],
+    relationshipToChild: ['text', 400],
+    declarationMethod: ['text', 40],
+    declarationAccepted: 'flag',
+    photoConsent: 'flag',
+    allowDuplicate: 'flag',
+  };
+
+  /** The fields a sighting (POST /found) reads. */
+  const FOUND_FIELDS = {
+    personCategory: ['text', 20],
+    // Read long so validateFoundReport can still refuse them as too long.
+    foundLocation: ['text', 2000],
+    note: ['text', 4000],
+    reporterName: ['text', 120],
+    reporterPhone: ['text', 20],
+    confidentialReporter: 'flag',
+    ageApprox: 'number',
+    gender: ['text', 10],
+    state: ['text', 80],
+    district: ['text', 80],
+    lat: 'number',
+    lng: 'number',
+    idProofType: ['text', 40],
+    idProofNumber: ['text', 40],
+    photoConsent: 'flag',
+  };
+
+  /** The fields a formal found-child intake reads. */
+  const FORMAL_INTAKE_FIELDS = {
+    childName: ['text', 80],
+    guardianName: ['text', 120],
+    intakeAuthority: ['text', 140],
+    note: ['text', 800],
+    admissionDate: ['text', 40],
+    nextReviewDate: ['text', 40],
+    ageApprox: 'number',
+    gender: ['text', 10],
+    state: ['text', 80],
+    district: ['text', 80],
+    complexion: ['text', 400],
+    build: ['text', 400],
+    hair: ['text', 400],
+    clothing: ['text', 400],
+    languages: ['text', 400],
+    birthMark: ['text', 400],
+    identificationMark: ['text', 400],
+    circumstances: ['text', 1200],
+    producedByType: ['text', 40],
+    educationLevel: ['text', 40],
+    disabilityStatus: ['text', 40],
+    mentalHealthConcern: ['text', 40],
+    vulnerabilityCategories: 'list',
+  };
+
+  /** A case workflow event, as appended to `report.workflow`. */
+  function workflowEvent(user, action, label, note = null, extra = {}) {
+    const now = Date.now();
+    return {
+      id: `wf_${now}_${Math.random().toString(36).slice(2, 7)}`,
+      ts: now,
+      action,
+      label,
+      note: note || null,
+      ...extra,
+      actorId: user.id,
+      actorName: user.name,
+      actorRole: user.role,
+    };
+  }
+
+  /** The patch that appends `event` to a case's workflow. */
+  function withWorkflowEvent(report, event) {
+    return {
+      workflow: [...(Array.isArray(report.workflow) ? report.workflow : []), event],
+      workflowStatus: event.label,
+      lastWorkflowAction: event.action,
+      lastWorkflowAt: new Date(event.ts).toISOString(),
+    };
+  }
+
   /**
-   * Alerts every authority account that a child has been spotted.
+   * What a confirmed match writes on the case: found, where, how the identity
+   * was verified (parseVerification), and the workflow event that carries it.
+   */
+  function matchConfirmedPatch(report, user, { verification, foundLocation, matchScore, foundReportId = null }) {
+    const event = workflowEvent(user, 'match_confirmed', 'Match confirmed', verification.note, {
+      verification,
+      foundReportId,
+    });
+    return {
+      status: 'found',
+      foundLocation,
+      matchScore,
+      verification,
+      foundAt: new Date(event.ts).toISOString(),
+      ...withWorkflowEvent(report, event),
+    };
+  }
+
+  // ---- Telling the family -------------------------------------------------------
+  //
+  // Khozo used to mark `smsSent: true` and answer "SMS sent to <phone>" with no
+  // gateway connected at all, so an officer believed the family had been told
+  // and did not call them. Now an SMS is recorded only when the gateway took
+  // it (shared/sms.js); otherwise the officer is given the family's number and
+  // asked to call, and records the call (POST /:id/family-contacted).
+
+  /**
+   * The family's phone, or null when the case holds none: a number recorded as
+   * the registering officer's own, or any agency account's, is not the family's
+   * (familyPhone in shared/case-domain.js).
+   */
+  function familyPhoneOf(report) {
+    return familyPhone(report, nonFamilyPhoneSet(listUsers()));
+  }
+
+  /** A family contact, as kept in `report.familyContacts`. */
+  function familyContact(user, method, note = null, extra = {}) {
+    return {
+      at: new Date().toISOString(),
+      byId: user.id,
+      byName: user.name,
+      byRole: user.role,
+      method,
+      note: note || null,
+      ...extra,
+    };
+  }
+
+  /**
+   * Sends the family the case SMS if Khozo can, and records what happened.
+   * Returns `{ sent, reason, phone }`; reason is one of FAMILY_SMS_MESSAGES.
+   * Never throws: a gateway fault is an answer, not an error.
+   */
+  async function smsFamily(report, user, trigger) {
+    const phone = familyPhoneOf(report);
+    let outcome;
+    if (!smsGatewayConfigured(settings)) {
+      outcome = { sent: false, reason: 'no_gateway', phone };
+    } else if (!phone) {
+      outcome = { sent: false, reason: 'no_family_phone', phone: null };
+    } else {
+      const result = await sendSms({ to: digits(phone), message: familySmsText(report, user) }, { settings, fetchImpl });
+      outcome = result.sent
+        ? { sent: true, reason: 'sent', phone }
+        : { sent: false, reason: 'gateway_failed', phone, gatewayStatus: result.status ?? null };
+    }
+    const scope = { state: report.state, district: report.district, reportId: report.id };
+    if (outcome.sent) {
+      const current = findReport(report.id) || report;
+      const contact = familyContact(user, 'sms', null, { via: 'gateway' });
+      updateReport(report.id, {
+        smsSent: true,
+        smsSentAt: contact.at,
+        familyInformedAt: contact.at,
+        familyContacts: [...(Array.isArray(current.familyContacts) ? current.familyContacts : []), contact],
+      });
+      addActivity({ actor: user.name, action: `SMS alert sent to ${report.parentName || 'parent'}`, target: report.childName, icon: 'sms', actorId: user.id, scope });
+    }
+    addAudit({
+      actorId: user.id,
+      actorName: user.name,
+      actorRole: user.role,
+      action: outcome.sent ? 'case.sms_sent' : 'case.sms_not_sent',
+      targetType: 'report',
+      targetId: report.id,
+      summary: outcome.sent ? `SMS alert sent for ${report.childName}` : `No SMS sent for ${report.childName}: ${outcome.reason}`,
+      scope,
+      metadata: {
+        trigger,
+        reason: outcome.reason,
+        phoneSuffix: phone ? digits(phone).slice(-4) : null,
+        gatewayStatus: outcome.gatewayStatus ?? null,
+      },
+    });
+    return outcome;
+  }
+
+  /**
+   * Alerts authority accounts that a child (or a woman, or a person) has been
+   * spotted.
    *
    * Deliberately not scoped to the district the sighting falls in. A citizen
    * reporting a child rarely knows which jurisdiction they are standing in, and
    * a trafficked child is by definition moving between them; an alert that only
    * reaches one district is the alert that arrives too late. So every
-   * authority — police, SJPU, AHTU, CWC, DCPU, RPF, CCI, SAA, JJB, DLSA, the
-   * state and national desks and registered NGOs — is told, and the message
-   * carries only where and when. Parents are not notified: they are told about
-   * their own child by an officer, never about every sighting in the country.
+   * authority — police, SJPU, AHTU, DCRB, CWC, DCPU, RPF, CCI, SAA, JJB, DLSA,
+   * the state and national desks — is told, and the message carries only where
+   * and when.
+   *
+   * Only official desks (REVIEW_ROLES). Parents and NGOs are never notified:
+   * anyone can create either account with a phone number, and an inbox that
+   * listed every sighting, or said which ones "may match", would tell a member
+   * of the public whether the photo they sent matched a missing person. A
+   * family is told about its own case by an officer.
+   *
+   * `recipients` overrides the audience with an explicit list of accounts
+   * (see caseOfficers); `exclude` leaves accounts out by id.
    *
    * Opening the sighting behind the alert still goes through the ordinary
    * jurisdiction rules, so knowing that a child was seen does not grant access
    * to that child's record.
    */
-  function notifyAuthorities({ kind, title, body, priority = 'normal', scope = {}, roles = null }) {
-    const recipients = listUsers().filter(
-      (u) => u.role !== 'parent' && (!roles || roles.includes(u.role))
+  function notifyAuthorities({ kind, title, body, priority = 'normal', scope = {}, roles = null, recipients = null, exclude = null }) {
+    const audience = (recipients || listUsers()).filter(
+      (u) => REVIEW_ROLES.includes(u.role) && (!roles || roles.includes(u.role)) && !exclude?.has(u.id)
     );
-    for (const recipient of recipients) {
+    for (const recipient of audience) {
       addNotification({
         userId: recipient.id,
         kind,
@@ -183,7 +455,317 @@ export default function registerReportRoutes(router, deps) {
           recipient.jurisdiction.state === scope.state,
       });
     }
-    return recipients.length;
+    return audience.length;
+  }
+
+  /**
+   * The only accounts told that a sighting may match a case, or that a match
+   * was confirmed: police officers who can open that case.
+   *
+   * "Possible match" is the one fact a lookalike photo must not leak. Sent to
+   * every desk it told non-police desks that a police-only record exists and
+   * where (shared/scope.js), and it told anyone holding a sighting receipt
+   * whether their photo had matched. The officers who own the case are the ones
+   * who have to act on it.
+   */
+  function caseOfficers(report) {
+    if (!report) return [];
+    return listUsers().filter((u) => POLICE_ROLES.includes(u.role) && canAccessReport(u, report));
+  }
+
+  // ---- Linking a sighting to a case: shared by both directions ---------------
+  //
+  // A sighting is linked to a case by the forward search (a new sighting
+  // against the open cases, POST /found) and by the reverse search (a newly
+  // registered case against the stored sightings, POST / and POST /:id/rematch).
+  // The rule, the evidence kept on the record and the officers' alert are the
+  // same whichever way round the link was found, so they live here once.
+
+  /**
+   * Whether a comparison result is put in front of an officer.
+   *
+   * Calibrated against real Aarakshak output: photographs of the same person
+   * score 0.48-0.86, different people score below 0.07. 0.6 sat inside the
+   * genuine-match range and routed real matches away from police review. This
+   * only decides whether an officer is shown the candidate - a human still
+   * confirms - so it is set to catch matches, not to be conservative. A
+   * candidate reaches an officer only when a biometric engine compared the
+   * faces: the non-biometric scorer produces no candidates, and this guard makes
+   * that a property of the route rather than of one module.
+   */
+  function isStrongMatch(candidate, engine) {
+    return Boolean(candidate) && Boolean(engine?.biometric) && candidate.score >= MATCH_REVIEW_THRESHOLD;
+  }
+
+  /** What the comparison found, as kept on the sighting for the reviewer. */
+  function matchEvidence(best, matchEngine) {
+    // Photo quality is recorded for the reviewer but deliberately does NOT gate
+    // routing. Gating on it was tried and rejected: the provider raises
+    // `low_detector_confidence` on plenty of genuine matches too, so the filter
+    // dropped a real one. Surfacing an extra face for a human to reject costs an
+    // officer a minute; suppressing a real match costs a child.
+    const lowQualityPhoto = Boolean(best?.lowQuality || best?.warnings?.length);
+    return {
+      photoQualityWarnings: best?.warnings?.length ? best.warnings : null,
+      lowQualityPhoto: lowQualityPhoto || null,
+      matchScore: best ? best.score : 0,
+      // Both engines' numbers, kept rather than recomputed-and-dropped. The row
+      // deliberately shows the LOWER of the two, so an officer looking at 52%
+      // cannot tell from that number alone whether one engine was conservative
+      // or the two disagreed. These fields are what the compare view reads to
+      // answer that; without them it silently renders a single-engine story.
+      primaryScore: best?.primaryScore ?? null,
+      secondOpinionScore: best?.secondOpinionScore ?? null,
+      secondOpinionProvider: best?.secondOpinionProvider || null,
+      secondOpinion: best?.secondOpinion || null,
+      enginesDisagree: best?.enginesDisagree ?? null,
+      // Kept on the record, not just returned once. A reviewer deciding what a
+      // score means has to know whether it came from a face comparison or from
+      // the non-biometric fallback, and an auditor has to know months later.
+      matchEngine: {
+        provider: matchEngine.provider,
+        modelVersion: matchEngine.modelVersion || null,
+        biometric: Boolean(matchEngine.biometric),
+        // Survives even when every candidate was withheld, which is the case
+        // where the queue would otherwise read as "nothing was found" when what
+        // actually happened is "two engines looked and would not agree".
+        corroborated: Boolean(matchEngine.corroborated),
+        secondOpinion: matchEngine.secondOpinion || null,
+        comparedAgainst: matchEngine.comparedAgainst ?? null,
+      },
+    };
+  }
+
+  /** "Near the bus stand, Surat, Gujarat": a place, for an alert. */
+  function placeText(foundLocation, { state, district } = {}) {
+    return `${foundLocation}${state ? `, ${[district, state].filter(Boolean).join(', ')}` : ''}`;
+  }
+
+  /** Where the sighting itself was, for an alert. */
+  function sightingWhere(sighting) {
+    return placeText(sighting.foundLocation, sighting);
+  }
+
+  /**
+   * The jurisdiction the reporter gave (or their phone placed them in). A
+   * strong match overwrites the sighting's own state and district with the
+   * matched case's, so this is kept separately; records from before it was
+   * kept fall back to the sighting's current jurisdiction.
+   */
+  function reportedLocationOf(sighting) {
+    if (sighting?.reportedLocation) return sighting.reportedLocation;
+    return { state: sighting?.state || null, district: sighting?.district || null };
+  }
+
+  /**
+   * Alerts authorities about a sighting. An alert carries where and when and the
+   * category the reporter chose; never who the person is.
+   *
+   * Two copies:
+   *   - the police officers who can open the matched case, if there is one
+   *     (caseOfficers), are told it is a possible match, at high priority, with
+   *     the case's jurisdiction;
+   *   - every other desk, when `broadcast` is set, gets exactly the alert an
+   *     unmatched sighting raises: the place the reporter gave, normal
+   *     priority, nothing about a match. A desk that cannot open the case - or
+   *     anyone holding a desk account and the receipt of a sighting they sent -
+   *     cannot read the match from its inbox.
+   */
+  function alertSighting(sighting, { matchedReport = null, broadcast = true, matchedBody = null } = {}) {
+    const personCategory = personCategoryOf(sighting);
+    const officers = matchedReport ? caseOfficers(matchedReport) : [];
+    if (officers.length) {
+      notifyAuthorities({
+        kind: 'sighting_reported',
+        title: personCategory === 'woman'
+          ? 'Possible match — woman spotted'
+          : personCategory === 'adult' ? 'Possible match — person spotted' : 'Possible match — child spotted',
+        body: matchedBody || `A sighting was reported at ${sightingWhere(sighting)}.`,
+        priority: 'high',
+        recipients: officers,
+        // `matched` lets the alert open the page that actually contains the
+        // record: an unmatched sighting is not on the Matches queue, so routing
+        // there by default lands the officer on an empty page.
+        scope: { state: sighting.state, district: sighting.district, foundReportId: sighting.id, matched: true },
+      });
+    }
+    if (broadcast) {
+      const reported = reportedLocationOf(sighting);
+      notifyAuthorities({
+        kind: 'sighting_reported',
+        title: personCategory === 'woman' ? 'Woman spotted' : personCategory === 'adult' ? 'Person spotted' : 'Child spotted',
+        body: `A sighting was reported at ${placeText(sighting.foundLocation, reported)}.`,
+        priority: 'normal',
+        exclude: new Set(officers.map((u) => u.id)),
+        scope: { state: reported.state || null, district: reported.district || null, foundReportId: sighting.id, matched: false },
+      });
+    }
+    return officers;
+  }
+
+  /**
+   * The sighting fields a reverse link overwrites, as they were before it. Kept
+   * on the link so an officer who rejects it puts the sighting back exactly
+   * where it was: in its own district, in the CWC or police workflow it was in.
+   */
+  const LINK_RESTORED_FIELDS = [
+    'status', 'state', 'district', 'referralStatus', 'referredTo1098',
+    'matchScore', 'primaryScore', 'secondOpinionScore', 'secondOpinionProvider', 'secondOpinion',
+    'enginesDisagree', 'matchEngine', 'photoQualityWarnings', 'lowQualityPhoto',
+  ];
+
+  function previousSightingFields(sighting) {
+    return Object.fromEntries(LINK_RESTORED_FIELDS.map((key) => [key, sighting[key] ?? null]));
+  }
+
+  /** A sighting whose current link to a case was made by the reverse search. */
+  function isReverseLinked(sighting) {
+    return Boolean(
+      sighting?.matchedReportId &&
+      sighting.reverseMatch?.previous &&
+      sighting.reverseMatch.reportId === sighting.matchedReportId
+    );
+  }
+
+  /**
+   * The reverse search: compares a case's photo with the stored sightings and
+   * links each one the engines agree on, exactly as the forward search links a
+   * strong match - the sighting moves to the Matches queue (`pending_review`,
+   * `matchedReportId`), takes the case's jurisdiction so the case's officers
+   * see it, and keeps the engines' evidence. The police officers who can open
+   * the case are alerted, without being told who the person is (alertSighting);
+   * nobody else is told anything new.
+   *
+   * What the link overwrote is kept on it (`reverseMatch.previous`): a
+   * lookalike linked to a sighting a CWC desk was already following up must not
+   * take that sighting away from them for good. An officer who rejects the link
+   * restores it (POST /found/:id/review), and the same case is not proposed for
+   * it again (`rejectedLinks`).
+   *
+   * Exists because the forward search only ever looks at the cases that exist
+   * when a sighting arrives. A child photographed at a railway station on
+   * Monday and reported missing on Wednesday was never compared with that
+   * photo; now registering the case is what compares them.
+   *
+   * Runs inside the request, never after the response: the Worker's store
+   * replica is flushed at the end of the request, so work left running after it
+   * could be lost. A failure here never fails the registration that triggered
+   * it - the case is already stored, and an officer can run /rematch.
+   *
+   * The person who sent the sighting is told nothing, and their receipt cannot
+   * show it: its stage depends on nothing but time (publicSightingStatus).
+   */
+  async function matchStoredSightings(report, { trigger, actor }) {
+    const result = (sightingMatches, engine) => ({ sightingMatches, engine: engineSummary(engine) });
+    if (!report?.photoFile || report.anonymizedAt) {
+      return result(0, { provider: 'none', biometric: false, reason: 'The case has no photo to compare.' });
+    }
+    if (typeof rankSightingMatches !== 'function') {
+      return result(0, { provider: 'none', biometric: false, reason: 'Reverse matching is not available on this runtime.' });
+    }
+    try {
+      const photo = await readPhoto(report.photoFile);
+      if (!photo) return result(0, { provider: 'none', biometric: false, reason: 'The case photo could not be read.' });
+      const { candidates, engine } = await rankSightingMatches(photo, {
+        state: report.state,
+        district: report.district,
+        reportId: report.id,
+      });
+
+      const eligible = (row) => isReverseMatchCandidate(row) && !wasLinkRejected(row, report.id);
+      const linkPatch = (row, candidate) => ({
+        ...matchEvidence(candidate, engine),
+        matchedReportId: report.id,
+        // The case's jurisdiction, as on a forward match, so the officers
+        // who own the case are the ones who see the sighting.
+        state: report.state || null,
+        district: report.district || null,
+        status: 'pending_review',
+        referralStatus: 'Police review pending',
+        reverseMatch: {
+          reportId: report.id,
+          trigger,
+          previousStatus: row.status,
+          previous: previousSightingFields(row),
+          matchedAt: new Date().toISOString(),
+        },
+      });
+
+      let linked = 0;
+      for (const candidate of candidates) {
+        if (!isStrongMatch(candidate, engine)) continue;
+        // Re-read rather than trust the ranking's snapshot: a sighting another
+        // request linked, reviewed or anonymised in the meantime is not taken
+        // over. On Express the store is live, so checking and writing with no
+        // await between them is enough. The Worker's store is a copy read when
+        // the request began, seconds of comparisons ago, so there the check
+        // and the write happen together against the database (claimFoundReport).
+        const current = findFoundReport(candidate.sighting?.id);
+        if (!current || !eligible(current)) continue;
+        let sighting;
+        if (typeof claimFoundReport === 'function') {
+          // eslint-disable-next-line no-await-in-loop
+          sighting = await claimFoundReport(current.id, (row) => linkPatch(row, candidate), eligible);
+          if (!sighting) continue;
+        } else {
+          const patch = linkPatch(current, candidate);
+          updateFoundReport(current.id, patch);
+          sighting = { ...current, ...patch };
+        }
+        const previousStatus = sighting.reverseMatch.previousStatus;
+        addActivity({
+          actor: 'Khozo matching',
+          action: 'Linked an earlier sighting to a newly registered case for police review',
+          target: sighting.foundLocation,
+          icon: 'upload',
+          scope: { state: sighting.state, district: sighting.district, matchedReportId: report.id },
+        });
+        addAudit({
+          actorName: 'Khozo matching',
+          actorRole: 'system',
+          action: 'sighting.reverse_matched',
+          targetType: 'foundReport',
+          targetId: sighting.id,
+          summary: `Linked earlier sighting at ${sighting.foundLocation} to case ${report.id} for police review`,
+          scope: { matchedReportId: report.id, state: sighting.state, district: sighting.district },
+          metadata: {
+            reportId: report.id,
+            trigger,
+            triggeredByRole: actor?.role || null,
+            previousStatus,
+            matchScore: sighting.matchScore,
+            matchEngine: sighting.matchEngine,
+          },
+        });
+        // Only the case's police officers hear about it. Every desk was told
+        // about this sighting when it arrived; a second alert to them now would
+        // be the news that it matched someone.
+        alertSighting(sighting, {
+          matchedReport: report,
+          broadcast: false,
+          matchedBody: `An earlier sighting at ${sightingWhere(sighting)} may match a newly registered case.`,
+        });
+        linked += 1;
+      }
+      return result(linked, engine);
+    } catch (err) {
+      console.warn('[reports] reverse sighting match failed:', err?.message || err);
+      return result(0, { provider: 'none', biometric: false, reason: 'The comparison could not be completed.' });
+    }
+  }
+
+  /** The engine as an officer is told about it: no candidate, no score. */
+  function engineSummary(engine) {
+    if (!engine) return null;
+    return {
+      provider: engine.provider || 'none',
+      modelVersion: engine.modelVersion || null,
+      biometric: Boolean(engine.biometric),
+      corroborated: Boolean(engine.corroborated),
+      comparedAgainst: engine.comparedAgainst ?? 0,
+      pool: engine.pool || null,
+      note: engine.reason || engine.note || null,
+    };
   }
 
   const foundReportLimit = fixedWindowRateLimit({
@@ -231,13 +813,14 @@ export default function registerReportRoutes(router, deps) {
     const record = report || found;
     if (!record) return res.status(404).end();
 
-    // Only a photo an officer has deliberately published as a public bulletin is
-    // readable without a token. Serving every verified missing case anonymously
-    // (which is what "status === missing" did) hands out a browsable gallery of
-    // children's faces to anyone who can guess a case id.
-    const isPublicBulletin = report?.bulletin?.published === true && !report.anonymizedAt;
+    // No photo is readable without a token: the public never sees the face of
+    // a missing person (isPublicAppeal). Serving every verified missing case
+    // anonymously (which is what "status === missing" once did) handed out a
+    // browsable gallery of children's faces to anyone who could guess a case
+    // id, and an officer-published bulletin is no longer an exception.
+    const isPublicPhoto = Boolean(report) && isPublicAppeal(report) && !report.anonymizedAt;
 
-    if (!isPublicBulletin) {
+    if (!isPublicPhoto) {
       if (!req.user) {
         return res.status(401).json({ error: 'Authentication required' });
       }
@@ -256,11 +839,17 @@ export default function registerReportRoutes(router, deps) {
 
   // ---- Missing-child reports / FIRs -----------------------------------------
 
+  /**
+   * The public appeal list. Always empty: no case is ever a public appeal
+   * (isPublicAppeal in shared/case-domain.js). The endpoint stays so that an
+   * installed app or a cached page asking for it gets an empty list rather
+   * than an error, and so that the one switch is the only thing that decides.
+   */
   router.get('/public/bulletins', publicBulletinLimit, (req, res) => {
     let rows = listReports().filter((r) =>
+      isPublicAppeal(r) &&
       r.status === 'missing' &&
       r.intakeStatus !== 'pending_verification' &&
-      r.bulletin?.published === true &&
       !r.anonymizedAt
     );
     const state = String(req.query.state || '').trim().toLowerCase();
@@ -275,26 +864,17 @@ export default function registerReportRoutes(router, deps) {
   });
 
   /**
-   * One published bulletin, by id — the record behind a shareable case page.
-   *
-   * The list endpoint existed and the single record did not, which meant a
-   * child could be browsed but never linked to: the thing a member of the
-   * public actually does with a missing-child appeal is send it to somebody
-   * else, and there was no address to send.
-   *
-   * Deliberately the same redaction as the list, through the same function, so
-   * a case page can never expose a field the list would have withheld. A case
-   * that is not a published bulletin — unverified intake, anonymised,
-   * recovered, or never published — answers 404 rather than confirming that
-   * the record exists.
+   * One public appeal, by id. Always 404, for any id: no case is a public
+   * appeal, and the answer must not differ between a case that exists and one
+   * that does not, or the endpoint would confirm that a person is missing.
    */
   router.get('/public/bulletins/:id', publicBulletinLimit, (req, res) => {
     const report = findReport(req.params.id);
     const visible =
       report &&
+      isPublicAppeal(report) &&
       report.status === 'missing' &&
       report.intakeStatus !== 'pending_verification' &&
-      report.bulletin?.published === true &&
       !report.anonymizedAt;
     if (!visible) return res.status(404).json({ error: 'No public bulletin for this case' });
     res.json({ bulletin: bulletinPayload(report) });
@@ -314,7 +894,7 @@ export default function registerReportRoutes(router, deps) {
     const rows = listReports().filter((r) => !r.anonymizedAt);
     const active = rows.filter((r) => r.status === 'missing' || r.status === 'under_review');
     const reunited = rows.filter((r) => r.status === 'found' || r.status === 'closed');
-    const published = rows.filter((r) => r.bulletin?.published === true && r.status === 'missing');
+    const published = rows.filter((r) => isPublicAppeal(r) && r.status === 'missing');
     const sightings = listFoundReports();
     const reviewed = sightings.filter((f) => !['pending_review', 'no_match'].includes(f.status));
 
@@ -332,19 +912,24 @@ export default function registerReportRoutes(router, deps) {
     });
   });
 
+  /**
+   * Public search. Always an empty result: it searches public appeals only,
+   * and there are none (isPublicAppeal). It used to also list recovered
+   * children with an age band, gender and district, so that typing a name
+   * answered whether that child was on Khozo and where from - a disclosure
+   * whatever the name field said. A family follows its own case by its Khozo
+   * case id (GET /public/status/:ref) or by logging in.
+   */
   router.get('/public/search', publicBulletinLimit, (req, res) => {
     let rows = listReports().filter((r) =>
+      isPublicAppeal(r) &&
       !r.anonymizedAt &&
-      (
-        (r.status === 'missing' && r.intakeStatus !== 'pending_verification' && r.bulletin?.published === true) ||
-        ['found', 'closed'].includes(r.status)
-      )
+      r.status === 'missing' &&
+      r.intakeStatus !== 'pending_verification'
     );
     // Free text over the fields a member of the public actually knows: the
-    // child's name, or the place. Filtering happens here rather than in the
-    // browser because the endpoint caps at 100 records — a client-side filter
-    // would quietly search only the newest hundred and tell nobody, which at
-    // pilot scale looks identical to searching everything.
+    // name on an appeal, or the place. Filtering happens here rather than in
+    // the browser because the endpoint caps at 100 records.
     const q = String(req.query.q || '').trim().toLowerCase();
     const state = String(req.query.state || '').trim().toLowerCase();
     const district = String(req.query.district || '').trim().toLowerCase();
@@ -376,25 +961,40 @@ export default function registerReportRoutes(router, deps) {
     res.json({ results: rows.map(publicSearchPayload) });
   });
 
+  /**
+   * A family's public case lookup, by the Khozo case id only.
+   *
+   * The case id is random and is given to the family when the case is
+   * registered. FIR numbers ("FIR/2026/1234") and external ids are sequential
+   * or printed on paperwork, so anyone could walk them; they no longer resolve
+   * here (404, the same answer as an id that does not exist). The payload is a
+   * status with no identity in it (publicCaseStatus).
+   *
+   * The id is matched exactly; a differently-cased entry is accepted only when
+   * it identifies exactly one case, so a typo can never land on someone else's.
+   *
+   * A police-only record (visibility 'police', shared/scope.js) never resolves:
+   * no family was handed its id, so the only way to hold one is to have seen it
+   * where it should not have been, and its status is police data.
+   */
   router.get('/public/status/:ref', publicCaseStatusLimit, (req, res) => {
     const ref = cleanText(req.params.ref, 140);
-    const report = listReports().find((r) =>
-      !r.anonymizedAt &&
-      (
-        norm(r.id) === norm(ref) ||
-        (r.firNo && norm(r.firNo) === norm(ref)) ||
-        (Array.isArray(r.externalIds) && r.externalIds.some((row) => norm(row.externalId) === norm(ref)))
-      )
-    );
+    const rows = listReports().filter((r) => !r.anonymizedAt && !isPoliceOnly(r));
+    let report = ref ? rows.find((r) => r.id === ref) : null;
+    if (!report && ref) {
+      const loose = rows.filter((r) => norm(r.id) === norm(ref));
+      if (loose.length === 1) report = loose[0];
+    }
     if (!report) return res.status(404).json({ error: 'Case reference not found' });
-    res.json({ status: publicCaseStatus(report, ref) });
+    res.json({ status: publicCaseStatus(report) });
   });
 
   // Scoped list for the logged-in stakeholder.
   router.get('/', protectedRoute, (req, res) => {
     let rows = scopeReports(req.user, listReports());
-    const { status, q } = req.query;
+    const { status, q, category } = req.query;
     if (status) rows = rows.filter((r) => r.status === status);
+    if (category) rows = rows.filter((r) => personCategoryOf(r) === category);
     if (q) {
       const needle = String(q).toLowerCase();
       rows = rows.filter((r) =>
@@ -422,12 +1022,25 @@ export default function registerReportRoutes(router, deps) {
         });
       }
     }
-    res.json({ reports: rows.map((r) => ({ ...r, pendingMatch: pendingByCase.get(r.id) || null })) });
+    // A parent or NGO sees what they registered and where it stands, never
+    // what the agencies added to it (citizenCaseView).
+    const citizen = isCitizenRole(req.user.role);
+    res.json({
+      reports: rows.map((r) => ({
+        ...(citizen ? citizenCaseView(r) : r),
+        // Records written before the field existed are children; say so
+        // explicitly so no client has to know the default.
+        personCategory: personCategoryOf(r),
+        pendingMatch: citizen ? null : pendingByCase.get(r.id) || null,
+      })),
+    });
   });
 
   // Register a missing child. Parents/NGOs file a report; police file a formal FIR.
   router.post('/', protectedRoute, requireRole(...REPORT_CREATE_ROLES), upload.single('photo'), async (req, res) => {
-    const b = req.body || {};
+    const read = readFields(req.body, REPORT_FIELDS);
+    if (read.error) return res.status(400).json({ error: read.error, errors: [read.error] });
+    const b = read.body;
     const validation = validateMissingReport(b, req.file);
     if (validation.errors) return res.status(400).json({ error: validation.errors[0], errors: validation.errors });
     if (req.file && !isTruthy(b.photoConsent)) {
@@ -435,20 +1048,47 @@ export default function registerReportRoutes(router, deps) {
     }
     const id = `r_${nanoid(8)}`;
     const isPolice = FORMAL_CASE_ROLES.includes(req.user.role);
+    const personCategory = validation.personCategory || 'child';
+    const adult = isAdultCategory(personCategory);
     const childProfile = buildChildProfile(b);
     const declaration = buildReportDeclaration(b, req.user);
+    // A missing woman defaults to Female rather than the form's historic Male.
+    const gender = b.gender || (personCategory === 'woman' ? 'Female' : 'Male');
+    // Where the contact number came from. A parent filing for their own child
+    // gives their own number, which is a family phone; an officer or NGO who
+    // leaves it blank gets their desk's number as the contact, which is not
+    // evidence of who the child is and must never make two cases look alike.
+    const parentPhone = b.parentPhone || req.user.phone;
+    const parentPhoneSource = b.parentPhone
+      ? 'provided'
+      : req.user.role === 'parent' ? 'reporter' : 'registering_officer';
+    // Optional restriction of the case to police desks. Only police roles may
+    // set it; from anyone else it is ignored rather than refused, so a parent
+    // or NGO client that sends it still files the report.
+    let visibility = null;
+    const requestedVisibility = (b.visibility || '').toLowerCase();
+    if (requestedVisibility && POLICE_VISIBILITY_ROLES.includes(req.user.role)) {
+      if (!REPORT_VISIBILITY_VALUES.includes(requestedVisibility)) {
+        return res.status(400).json({ error: `Visibility must be one of ${REPORT_VISIBILITY_VALUES.join(', ')}` });
+      }
+      visibility = requestedVisibility;
+    }
     const incoming = {
+      personCategory,
       childName: b.childName,
       childAadhar: b.childAadhar || null,
-      gender: b.gender || 'Male',
+      gender,
       age: validation.age,
-      parentPhone: b.parentPhone || req.user.phone,
+      parentPhone,
+      parentPhoneSource,
       state: b.state || req.user.jurisdiction?.state || null,
       district: b.district || req.user.jurisdiction?.district || null,
       identificationProfile: childProfile.identificationProfile,
       vulnerabilityProfile: childProfile.vulnerabilityProfile,
     };
-    const duplicateCandidates = findDuplicateCandidates(req.user, incoming, listReports(), scopeReports);
+    const duplicateCandidates = findDuplicateCandidates(req.user, incoming, listReports(), scopeReports, {
+      nonFamilyPhones: nonFamilyPhoneSet(listUsers()),
+    });
     const allowDuplicate = b.allowDuplicate === true || b.allowDuplicate === 'true';
     if (duplicateCandidates.length && !allowDuplicate) {
       addAudit({
@@ -468,10 +1108,12 @@ export default function registerReportRoutes(router, deps) {
     }
     const report = {
       id,
+      personCategory,
+      ...(visibility ? { visibility } : {}),
       firNo: b.firNo || (isPolice ? generatedFirNo() : null),
       childName: b.childName,
       childAadhar: b.childAadhar || null,
-      gender: b.gender || 'Male',
+      gender,
       age: validation.age,
       height: validation.height,
       weight: validation.weight,
@@ -483,7 +1125,7 @@ export default function registerReportRoutes(router, deps) {
       dateOfMissing: b.dateOfMissing || new Date().toISOString(),
       ...(await storePhoto(id, req.file)),
       photoConsent: req.file ? true : isTruthy(b.photoConsent),
-      dataPurpose: b.dataPurpose || 'missing_child_investigation',
+      dataPurpose: b.dataPurpose || (adult ? 'missing_person_investigation' : 'missing_child_investigation'),
       retentionUntil: retentionUntil(REPORT_PHOTO_RETENTION_DAYS),
       status: isPolice ? 'missing' : 'intake_pending',
       intakeStatus: isPolice ? 'verified' : 'pending_verification',
@@ -492,7 +1134,8 @@ export default function registerReportRoutes(router, deps) {
       verifiedById: isPolice ? req.user.id : null,
       verifiedByName: isPolice ? req.user.name : null,
       parentName: b.parentName || req.user.name,
-      parentPhone: b.parentPhone || req.user.phone,
+      parentPhone,
+      parentPhoneSource,
       parentEmail: b.parentEmail || null,
       address: b.address || null,
       state: b.state || req.user.jurisdiction?.state || null,
@@ -506,7 +1149,7 @@ export default function registerReportRoutes(router, deps) {
       createdAt: Date.now(),
     };
     addReport(report);
-    addActivity({ actor: req.user.name, action: isPolice ? 'Registered an FIR' : 'Submitted missing-child intake for verification', target: report.childName, icon: 'plus', actorId: req.user.id, scope: { state: report.state, district: report.district, reportId: report.id } });
+    addActivity({ actor: req.user.name, action: isPolice ? 'Registered an FIR' : adult ? 'Submitted missing-person intake for verification' : 'Submitted missing-child intake for verification', target: report.childName, icon: 'plus', actorId: req.user.id, scope: { state: report.state, district: report.district, reportId: report.id } });
     addAudit({
       actorId: req.user.id,
       actorName: req.user.name,
@@ -517,6 +1160,8 @@ export default function registerReportRoutes(router, deps) {
       summary: `${isPolice ? 'Registered FIR' : 'Submitted citizen/NGO intake'} for ${report.childName}`,
       scope: { state: report.state, district: report.district },
       metadata: {
+        personCategory,
+        visibility,
         photoConsent: report.photoConsent,
         dataPurpose: report.dataPurpose,
         retentionUntil: report.retentionUntil,
@@ -543,7 +1188,26 @@ export default function registerReportRoutes(router, deps) {
       metadata: { candidateIds: duplicateCandidates.map((c) => c.report.id), topScore: duplicateCandidates[0].score, retentionUntil: report.retentionUntil },
     });
     }
-    res.status(201).json({ report });
+    // Two-way matching: a case registered with a photo is compared with the
+    // sightings already stored, inside this request (see matchStoredSightings).
+    // Bulk imports arrive here one row at a time, so they are covered too.
+    //
+    // A citizen or NGO intake waits for an officer's verification first: each
+    // comparison is a paid provider call, the demo parent and NGO logins are
+    // public, and an unverified registration should not be able to spend the
+    // comparison budget. verify-intake runs the same search.
+    const reverse = report.photoFile && !isPendingCitizenIntake(report)
+      ? await matchStoredSightings(report, { trigger: 'registration', actor: req.user })
+      : { sightingMatches: 0 };
+    res.status(201).json({
+      report: isCitizenRole(req.user.role) ? citizenCaseView(report) : report,
+      // How many stored sightings were linked to this case for police review.
+      // Told to the officers who register formal cases. A parent or NGO
+      // registering a case gets null whatever was found: a family is not told
+      // that someone resembling their child was seen until an officer has
+      // confirmed it.
+      sightingMatches: FORMAL_CASE_ROLES.includes(req.user.role) ? reverse.sightingMatches : null,
+    });
   });
 
   // ---- Public "I spotted a child" uploads + face match ----------------------
@@ -555,8 +1219,12 @@ export default function registerReportRoutes(router, deps) {
   });
 
   // Public endpoint (no auth): citizen uploads a photo and gets a review-safe receipt.
-  router.post('/found', upload.single('photo'), foundReportLimit, async (req, res) => {
-    const b = req.body || {};
+  // optionalAuth only so that an officer filing a sighting from the console is
+  // shown the match result; a member of the public never is (see the response).
+  router.post('/found', optionalAuth, upload.single('photo'), foundReportLimit, async (req, res) => {
+    const read = readFields(req.body, FOUND_FIELDS);
+    if (read.error) return res.status(400).json({ error: read.error, errors: [read.error] });
+    const b = read.body;
     const validation = validateFoundReport(b, req.file);
     if (validation.errors) return res.status(400).json({ error: validation.errors[0], errors: validation.errors });
     if (req.file && !isTruthy(b.photoConsent)) {
@@ -566,6 +1234,11 @@ export default function registerReportRoutes(router, deps) {
       return res.status(400).json({ error: 'Add a photo or enough sighting details to help CWC/Childline review the report' });
     }
     const id = `f_${nanoid(8)}`;
+    // Who was seen. The comparison below still runs against every open case
+    // whatever the category: a reporter's guess at "child" or "woman" for a
+    // sixteen-year-old is exactly the judgement that should not narrow a search.
+    const personCategory = validation.personCategory || 'child';
+    const adultSighting = isAdultCategory(personCategory);
 
     // Screening decides who hears about this report: a public upload endpoint
     // receives whatever a phone camera happened to be pointed at, and alerting
@@ -575,36 +1248,28 @@ export default function registerReportRoutes(router, deps) {
     // It runs alongside the match rather than before it. Both call the same
     // provider, the citizen is waiting on the response, and the ordinary case
     // is a real photograph of a real child that needs both answers anyway.
+    //
+    // The location is resolved first because it decides which cases the photo
+    // is compared against: the comparison budget is spent on the sighting's own
+    // district and state before anywhere else (shared/match-pool.js).
+    const locationScope = await resolveSightingLocation({ ...b, lat: validation.lat, lng: validation.lng }, { fetchImpl });
     const [screening, matchResult] = await Promise.all([
       detectPerson(req.file?.buffer || null),
       rankMatches(req.file?.buffer || null, {
         gender: b.gender,
         ageApprox: validation.ageApprox,
+        state: locationScope.state,
+        district: locationScope.district,
       }),
     ]);
     const { candidates, engine: matchEngine } = matchResult;
     const canRunMatch = !!req.file;
     const best = candidates[0];
-    // Calibrated against real Aarakshak output: photographs of the same person
-    // score 0.48-0.86, different people score below 0.07. 0.6 sat inside the
-    // genuine-match range and routed real matches away from police review.
-    // This only decides whether an officer is shown the candidate - a human still
-    // confirms - so it is set to catch matches, not to be conservative.
-    // Photo quality is recorded for the reviewer but deliberately does NOT gate
-    // routing. Gating on it was tried and rejected: the provider raises
-    // `low_detector_confidence` on plenty of genuine matches too, so the filter
-    // dropped a real one. Surfacing an extra face for a human to reject costs an
-    // officer a minute; suppressing a real match costs a child.
-    const lowQualityPhoto = Boolean(best?.lowQuality || best?.warnings?.length);
-    // A candidate reaches an officer only when a biometric engine compared the
-    // faces. The non-biometric scorer produces no candidates now, and this
-    // guard makes that a property of the route rather than of one module.
-    const hasStrongMatch =
-      canRunMatch && best && Boolean(matchEngine.biometric) && best.score >= MATCH_REVIEW_THRESHOLD;
+    // The same rule the reverse search applies (isStrongMatch above).
+    const hasStrongMatch = canRunMatch && isStrongMatch(best, matchEngine);
     const matchedScope = hasStrongMatch ? { state: best.report.state || null, district: best.report.district || null } : {};
     // The phone's coordinates fill in the jurisdiction the reporter did not
     // type. What they did type always wins; a failed lookup changes nothing.
-    const locationScope = await resolveSightingLocation(b, { fetchImpl });
     const confidentialReporter = isTruthy(b.confidentialReporter);
     const reporterName = cleanText(b.reporterName, 120) || 'Anonymous citizen';
     const idProofType = SIGHTING_ID_PROOF_TYPES[b.idProofType] ? b.idProofType : null;
@@ -612,7 +1277,7 @@ export default function registerReportRoutes(router, deps) {
     const fr = {
       id,
       ...(await storePhoto(id, req.file)),
-      foundLocation: b.foundLocation || 'Unknown',
+      foundLocation: cleanText(b.foundLocation, 180) || 'Unknown',
       lat: validation.lat,
       lng: validation.lng,
       reporterName,
@@ -625,45 +1290,33 @@ export default function registerReportRoutes(router, deps) {
       idProofLabel: idProofType ? SIGHTING_ID_PROOF_TYPES[idProofType] : null,
       idProofNumberMasked,
       idProofVerified: Boolean(idProofType && idProofNumberMasked),
-      note: b.note || null,
+      note: cleanText(b.note, 500) || null,
+      personCategory,
       ageApprox: validation.ageApprox,
-      gender: ['Male', 'Female', 'Other'].includes(b.gender) ? b.gender : null,
+      gender: ['Male', 'Female', 'Other'].includes(b.gender)
+        ? b.gender
+        : personCategory === 'woman' ? 'Female' : null,
       state: matchedScope.state || locationScope.state,
       district: matchedScope.district || locationScope.district,
+      // Where the reporter was. `state`/`district` above become the matched
+      // case's on a strong match; this never does, so anything told to people
+      // who may not know about the match (the alert every desk gets, the
+      // reporter's receipt) is worded from it.
+      reportedLocation: { state: locationScope.state || null, district: locationScope.district || null },
       matchedReportId: hasStrongMatch ? best.report.id : null,
-      photoQualityWarnings: best?.warnings?.length ? best.warnings : null,
-      lowQualityPhoto: lowQualityPhoto || null,
-      matchScore: best ? best.score : 0,
-      // Both engines' numbers, kept rather than recomputed-and-dropped. The row
-      // deliberately shows the LOWER of the two, so an officer looking at 52%
-      // cannot tell from that number alone whether one engine was conservative
-      // or the two disagreed. These fields are what the compare view reads to
-      // answer that; without them it silently renders a single-engine story.
-      primaryScore: best?.primaryScore ?? null,
-      secondOpinionScore: best?.secondOpinionScore ?? null,
-      secondOpinionProvider: best?.secondOpinionProvider || null,
-      secondOpinion: best?.secondOpinion || null,
-      enginesDisagree: best?.enginesDisagree ?? null,
-      // Kept on the record, not just returned once. A reviewer deciding what a
-      // score means has to know whether it came from a face comparison or from
-      // the non-biometric fallback, and an auditor has to know months later.
-      matchEngine: {
-        provider: matchEngine.provider,
-        modelVersion: matchEngine.modelVersion || null,
-        biometric: Boolean(matchEngine.biometric),
-        // Survives even when every candidate was withheld, which is the case
-        // where the queue would otherwise read as "nothing was found" when what
-        // actually happened is "two engines looked and would not agree".
-        corroborated: Boolean(matchEngine.corroborated),
-        secondOpinion: matchEngine.secondOpinion || null,
-        comparedAgainst: matchEngine.comparedAgainst ?? null,
-      },
+      // Scores, both engines' numbers and the engine itself (matchEvidence).
+      ...matchEvidence(best, matchEngine),
       status: hasStrongMatch ? 'pending_review' : 'no_match',
       photoConsent: req.file ? true : isTruthy(b.photoConsent),
-      dataPurpose: req.file ? 'sighting_review_and_child_protection' : 'text_sighting_childline_intake',
+      dataPurpose: adultSighting
+        ? (req.file ? 'sighting_review_and_missing_person_tracing' : 'text_sighting_police_intake')
+        : (req.file ? 'sighting_review_and_child_protection' : 'text_sighting_childline_intake'),
       retentionUntil: retentionUntil(SIGHTING_PHOTO_RETENTION_DAYS),
-      referredTo1098: true,
-      referralStatus: hasStrongMatch ? 'Police review pending' : 'Childline/CWC intake queued',
+      // Childline 1098 is a child-protection line; an adult's sighting goes to police.
+      referredTo1098: !adultSighting,
+      referralStatus: hasStrongMatch
+        ? 'Police review pending'
+        : adultSighting ? 'Police intake queued' : 'Childline/CWC intake queued',
       // What the screen found, kept on the record so a reviewer can see why the
       // report was routed the way it was rather than guessing.
       screening: {
@@ -676,7 +1329,7 @@ export default function registerReportRoutes(router, deps) {
       createdAt: Date.now(),
     };
     addFoundReport(fr);
-    addActivity({ actor: publicReporterName(fr), action: 'Uploaded a spotted-child photo', target: fr.foundLocation, icon: 'upload', scope: { state: fr.state, district: fr.district, matchedReportId: fr.matchedReportId } });
+    addActivity({ actor: publicReporterName(fr), action: adultSighting ? 'Reported a sighting of a missing person' : 'Uploaded a spotted-child photo', target: fr.foundLocation, icon: 'upload', scope: { state: fr.state, district: fr.district, matchedReportId: fr.matchedReportId } });
     addAudit({
       actorName: publicReporterName(fr),
       actorRole: 'public',
@@ -685,29 +1338,28 @@ export default function registerReportRoutes(router, deps) {
       targetId: fr.id,
       summary: `Public sighting submitted at ${fr.foundLocation}`,
       scope: { matchedReportId: fr.matchedReportId, state: fr.state, district: fr.district },
-      metadata: { matchScore: fr.matchScore, status: fr.status, matchEngine, matchAttempted: canRunMatch, confidentialReporter, idProofType, idProofCaptured: fr.idProofVerified },
+      metadata: { personCategory, matchScore: fr.matchScore, status: fr.status, matchEngine, matchAttempted: canRunMatch, confidentialReporter, idProofType, idProofCaptured: fr.idProofVerified },
     });
-    const where = `${fr.foundLocation}${fr.state ? `, ${[fr.district, fr.state].filter(Boolean).join(', ')}` : ''}`;
-    // A confirmed biometric match overrides the screen. The screen is a cheap
-    // guard against uploads with no person in them; two engines agreeing on a
-    // face is a far stronger statement than one probe deciding it saw nobody,
-    // and letting the weaker signal suppress the stronger one means the alert
-    // that matters most is the one nobody receives.
-    if (fr.screening.raisesAlert || hasStrongMatch) {
-      notifyAuthorities({
-        kind: 'sighting_reported',
-        title: hasStrongMatch ? 'Possible match — child spotted' : 'Child spotted',
-        body: `A sighting was reported at ${where}.`,
-        priority: hasStrongMatch ? 'high' : 'normal',
-        // `matched` lets the alert open the page that actually contains the
-        // record: an unmatched sighting is not on the Matches queue, so routing
-        // there by default lands the officer on an empty page.
-        scope: { state: fr.state, district: fr.district, foundReportId: fr.id, matched: hasStrongMatch },
-      });
-    } else {
+    // A confirmed biometric match overrides the screen for the officers who own
+    // the matched case: the screen is a cheap guard against uploads with no
+    // person in them, two engines agreeing on a face is a far stronger
+    // statement than one probe deciding it saw nobody, and letting the weaker
+    // signal suppress the stronger one means the alert that matters most is the
+    // one nobody receives. Every other desk gets what an unmatched sighting with
+    // the same screening result would raise, so the match cannot be read from
+    // their inboxes (alertSighting).
+    const caseOfficerIds = new Set(
+      alertSighting(fr, {
+        matchedReport: hasStrongMatch ? best.report : null,
+        broadcast: fr.screening.raisesAlert,
+      }).map((u) => u.id)
+    );
+    if (!fr.screening.raisesAlert) {
       // Screened out, not discarded. One person still looks at it, because the
       // screen can be wrong and the cost of it being wrong is a real sighting
       // that nobody read.
+      const reported = reportedLocationOf(fr);
+      const where = placeText(fr.foundLocation, reported);
       notifyAuthorities({
         kind: 'sighting_screening',
         title: fr.screening.verdict === 'no_person' ? 'Upload with no person in it' : 'Unscreened upload',
@@ -717,10 +1369,21 @@ export default function registerReportRoutes(router, deps) {
             : `An upload at ${where} could not be screened — no detection provider answered. Queued for your review.`,
         priority: 'normal',
         roles: ['super_admin'],
-        scope: { state: fr.state, district: fr.district, foundReportId: fr.id },
+        exclude: caseOfficerIds,
+        scope: { state: reported.state || null, district: reported.district || null, foundReportId: fr.id },
       });
     }
-    if (!hasStrongMatch) {
+    if (!hasStrongMatch && adultSighting) {
+      addAudit({
+        actorName: 'Khozo intake',
+        actorRole: 'system',
+        action: 'sighting.police_queued',
+        targetType: 'foundReport',
+        targetId: fr.id,
+        summary: `Queued unmatched missing-person sighting for police follow-up at ${fr.foundLocation}`,
+        scope: { state: fr.state, district: fr.district },
+      });
+    } else if (!hasStrongMatch) {
       addActivity({ actor: 'Khozo intake', action: 'Queued report for 1098/CWC follow-up', target: fr.foundLocation, icon: 'referral', scope: { state: fr.state, district: fr.district } });
       addAudit({
         actorName: 'Khozo intake',
@@ -732,14 +1395,58 @@ export default function registerReportRoutes(router, deps) {
         scope: { state: fr.state, district: fr.district },
       });
     }
+    // What the person who submitted this is told.
+    //
+    // A member of the public learns nothing about whether the photograph
+    // resembled anyone: not a score, not a candidate's age band, not "possible
+    // match". A receipt that says "possible match" is itself a disclosure - it
+    // tells a stranger that the person they photographed is a missing child,
+    // or a woman someone is looking for - and anyone can point a camera and
+    // submit. So every public reporter gets the same receipt whatever the
+    // engines found. The full result stays on the record for officers.
+    //
+    // A police officer filing from the console sees the result, for the cases
+    // they may open. Everyone else gets the receipt: a parent or NGO account,
+    // and every non-police desk (CWC, DCPU, CCI, ...), because the comparison
+    // runs against police-only records too (shared/scope.js) and a desk that
+    // may not open such a record must not be able to test a face against it.
+    // So does an officer whose best match is a case outside their scope: the
+    // result would tell them where that case is held.
+    const officerView =
+      Boolean(req.user) &&
+      POLICE_ROLES.includes(req.user.role) &&
+      (!hasStrongMatch || canAccessReport(req.user, best.report));
+    if (!officerView) {
+      return res.status(201).json({
+        foundReport: {
+          id: fr.id,
+          status: 'received',
+          personCategory,
+          foundLocation: fr.foundLocation,
+          // Where the reporter was, not fr.state/district: on a strong match
+          // those are overwritten with the matched case's jurisdiction, which
+          // would tell the reporter where the person they saw is from.
+          state: locationScope.state,
+          district: locationScope.district,
+          referralStatus: 'Received for review',
+          retentionUntil: fr.retentionUntil,
+        },
+        review: 'Thank you. Your report has reached the police and child-protection desks for this area. Keep your receipt number to track it.',
+        candidates: [],
+      });
+    }
+    // Only cases this officer may open: an unscoped list would describe
+    // records in other districts, and police-only ones to nobody else.
+    const visibleCandidates = candidates.filter((c) => canAccessReport(req.user, c.report));
     res.status(201).json({
       foundReport: {
         id: fr.id,
         status: fr.status,
+        personCategory,
         foundLocation: fr.foundLocation,
         state: fr.state,
         district: fr.district,
-        matchScore: fr.matchScore,
+        matchScore: hasStrongMatch ? fr.matchScore : visibleCandidates[0]?.score ?? 0,
         referralStatus: fr.referralStatus,
         referredTo1098: fr.referredTo1098,
         retentionUntil: fr.retentionUntil,
@@ -752,14 +1459,20 @@ export default function registerReportRoutes(router, deps) {
       review: hasStrongMatch
         ? 'Possible match found. Police will review before any identity or family details are shared.'
         : req.file
-          ? 'No strong match yet. The report is saved and queued for Childline/CWC follow-up.'
-          : 'Your text sighting is saved and queued for Childline/CWC follow-up. No face-match search was run because no photo was uploaded.',
-      candidates: candidates.map((c, index) => ({
-        rank: index + 1,
-        score: c.score,
-        ageBand: c.report.age == null ? 'Unknown' : `${Math.max(0, c.report.age - 1)}-${c.report.age + 1}`,
-        gender: c.report.gender,
-      })),
+          ? (adultSighting
+            ? 'No strong match yet. The report is saved and queued for police follow-up.'
+            : 'No strong match yet. The report is saved and queued for Childline/CWC follow-up.')
+          : (adultSighting
+            ? 'Your text sighting is saved and queued for police follow-up. No face-match search was run because no photo was uploaded.'
+            : 'Your text sighting is saved and queued for Childline/CWC follow-up. No face-match search was run because no photo was uploaded.'),
+      candidates: visibleCandidates
+        .map((c, index) => ({
+          rank: index + 1,
+          score: c.score,
+          personCategory: personCategoryOf(c.report),
+          ageBand: c.report.age == null ? 'Unknown' : `${Math.max(0, c.report.age - 1)}-${c.report.age + 1}`,
+          gender: c.report.gender,
+        })),
     });
   });
 
@@ -771,11 +1484,13 @@ export default function registerReportRoutes(router, deps) {
         const matched = f.matchedReportId ? reportsById[f.matchedReportId] : null;
         return {
           ...f,
+          personCategory: personCategoryOf(f),
           reporterName: publicReporterName(f),
           reporterPhone: f.confidentialReporter ? null : f.reporterPhone || null,
           reporterPhoneVisible: f.confidentialReporter ? null : f.reporterPhone || null,
           matchedReport: matched ? {
             id: matched.id,
+            personCategory: personCategoryOf(matched),
             childName: matched.childName,
             age: matched.age,
             gender: matched.gender,
@@ -794,23 +1509,95 @@ export default function registerReportRoutes(router, deps) {
     });
   });
 
+  /**
+   * An officer's decision on a sighting: confirm the match, reject it, or refer
+   * the sighting to Childline/CWC.
+   *
+   * Confirming is for police and command roles only, and marks the case found.
+   *
+   * A link the reverse search made (a newly registered case matched a sighting
+   * already on file) is undone, not closed, when an officer rejects it or
+   * refers the sighting on: the sighting goes back to the district, status and
+   * referral it had before (`reverseMatch.previous`), so a CWC desk that was
+   * following it up gets it back, and the case is recorded in `rejectedLinks`
+   * so it is not proposed for that sighting again. A lookalike must not be able
+   * to take a child-protection referral out of the CWC queue for good.
+   *
+   * The reporter's receipt does not change whichever way it is decided: its
+   * stage depends only on time (publicSightingStatus).
+   */
   router.post('/found/:id/review', protectedRoute, requireRole(...REVIEW_ROLES), (req, res) => {
     const f = findFoundReport(req.params.id);
     if (!f) return res.status(404).json({ error: 'Found report not found' });
     const visible = scopeFoundReports(req.user, [f], listReports()).length === 1;
     if (!visible) return res.status(403).json({ error: 'Found report is outside your jurisdiction' });
 
-    const { decision } = req.body || {}; // 'matched' | 'rejected' | 'refer_cwc'
+    const read = readFields(req.body, { decision: ['text', 20], note: ['text', 500] });
+    if (read.error) return res.status(400).json({ error: read.error });
+    const { decision } = read.body; // 'matched' | 'rejected' | 'refer_cwc'
     if (!['matched', 'rejected', 'refer_cwc'].includes(decision)) {
       return res.status(400).json({ error: 'Review decision must be matched, rejected or refer_cwc' });
     }
     if (decision === 'matched' && !FORMAL_CASE_ROLES.includes(req.user.role)) {
       return res.status(403).json({ error: 'Only police or command roles can confirm reunification' });
     }
+    // Checked before anything is written, so a refused confirmation leaves the
+    // sighting exactly as it was.
+    const matchedCase = decision === 'matched' && f.matchedReportId ? findReport(f.matchedReportId) : null;
+    if (decision === 'matched' && f.matchedReportId && !canAccessReport(req.user, matchedCase)) {
+      return res.status(403).json({ error: 'Matched case is outside your jurisdiction' });
+    }
+    // Confirming says the person found is the person missing, and the record
+    // keeps how the officer knows: in person, by video, from documents; who
+    // checked, where, and what they saw.
+    const verification = decision === 'matched' ? parseVerification(req.body?.verification, req.user) : null;
+    if (decision === 'matched' && !verification) {
+      return res.status(400).json({ error: VERIFICATION_REQUIRED });
+    }
+    // The reviewer's own note (the mobile app has always sent one), kept with
+    // who decided and when, whichever way it was decided.
+    const reviewNote = read.body.note || null;
+    const reviewed = {
+      reviewDecision: decision,
+      reviewNote,
+      reviewedAt: new Date().toISOString(),
+      reviewedById: req.user.id,
+      reviewedByName: req.user.name,
+      reviewedByRole: req.user.role,
+    };
+
+    const undoReverseLink = decision !== 'matched' && isReverseLinked(f);
+    const restored = undoReverseLink
+      ? {
+          ...f.reverseMatch.previous,
+          matchedReportId: null,
+          reverseMatch: null,
+          rejectedLinks: [
+            ...(Array.isArray(f.rejectedLinks) ? f.rejectedLinks : []),
+            {
+              reportId: f.matchedReportId,
+              decision,
+              trigger: f.reverseMatch.trigger || null,
+              matchScore: f.matchScore ?? null,
+              linkedAt: f.reverseMatch.matchedAt || null,
+              decidedAt: new Date().toISOString(),
+              decidedById: req.user.id,
+              decidedByRole: req.user.role,
+            },
+          ],
+        }
+      : null;
 
     if (decision === 'refer_cwc') {
-      updateFoundReport(f.id, { status: 'referred_cwc', referredTo1098: true, referralStatus: 'Referred to Childline/CWC' });
-      addActivity({ actor: req.user.name, action: 'Referred sighting to 1098/CWC', target: f.foundLocation, icon: 'referral', actorId: req.user.id, scope: { state: f.state, district: f.district, matchedReportId: f.matchedReportId } });
+      updateFoundReport(f.id, {
+        ...(restored || {}),
+        ...reviewed,
+        status: 'referred_cwc',
+        referredTo1098: true,
+        referralStatus: 'Referred to Childline/CWC',
+      });
+      const after = findFoundReport(f.id);
+      addActivity({ actor: req.user.name, action: 'Referred sighting to 1098/CWC', target: f.foundLocation, icon: 'referral', actorId: req.user.id, scope: { state: after.state, district: after.district, matchedReportId: after.matchedReportId } });
       addAudit({
         actorId: req.user.id,
         actorName: req.user.name,
@@ -820,18 +1607,33 @@ export default function registerReportRoutes(router, deps) {
         targetId: f.id,
         summary: `Referred sighting at ${f.foundLocation} to 1098/CWC`,
         scope: { matchedReportId: f.matchedReportId },
+        metadata: {
+          ...(undoReverseLink ? { reverseLinkUndone: true, unlinkedReportId: f.matchedReportId } : {}),
+          noteLength: reviewNote ? reviewNote.length : 0,
+        },
       });
-      return res.json({ foundReport: findFoundReport(f.id) });
+      return res.json({ foundReport: after });
     }
 
-    updateFoundReport(f.id, {
-      status: decision === 'matched' ? 'matched' : 'rejected',
-      referralStatus: decision === 'matched' ? 'Police match confirmed' : 'Police rejected match',
-    });
-    if (decision === 'matched' && f.matchedReportId) {
-      const r = findReport(f.matchedReportId);
-      if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Matched case is outside your jurisdiction' });
-      updateReport(f.matchedReportId, { status: 'found', foundLocation: f.foundLocation, matchScore: f.matchScore });
+    if (restored) {
+      updateFoundReport(f.id, { ...restored, ...reviewed });
+    } else {
+      const reviewedStatus = decision === 'matched' ? 'matched' : 'rejected';
+      updateFoundReport(f.id, {
+        ...reviewed,
+        ...(verification ? { verification } : {}),
+        status: reviewedStatus,
+        referralStatus: decision === 'matched' ? 'Police match confirmed' : 'Police rejected match',
+      });
+    }
+    if (decision === 'matched' && matchedCase) {
+      const r = matchedCase;
+      updateReport(f.matchedReportId, matchConfirmedPatch(r, req.user, {
+        verification,
+        foundLocation: f.foundLocation,
+        matchScore: f.matchScore,
+        foundReportId: f.id,
+      }));
       addActivity({ actor: req.user.name, action: 'Confirmed sighting match', target: r.childName, icon: 'check', actorId: req.user.id, scope: { state: r.state, district: r.district, reportId: r.id } });
       addAudit({
         actorId: req.user.id,
@@ -840,11 +1642,25 @@ export default function registerReportRoutes(router, deps) {
         action: 'sighting.match_confirmed',
         targetType: 'foundReport',
         targetId: f.id,
-        summary: `Confirmed sighting match for ${r.childName}`,
+        // The summary names no one who verified: the verification itself is
+        // in the metadata.
+        summary: `Confirmed sighting match for ${r.childName} (${verification.methodLabel})`,
         scope: { state: r.state, district: r.district, reportId: r.id },
-        metadata: { matchScore: f.matchScore },
+        metadata: { matchScore: f.matchScore, verification, noteLength: reviewNote ? reviewNote.length : 0 },
       });
-    } else {
+    } else if (decision === 'matched') {
+      addAudit({
+        actorId: req.user.id,
+        actorName: req.user.name,
+        actorRole: req.user.role,
+        action: 'sighting.match_confirmed',
+        targetType: 'foundReport',
+        targetId: f.id,
+        summary: `Confirmed sighting at ${f.foundLocation} (${verification.methodLabel})`,
+        scope: { state: f.state, district: f.district },
+        metadata: { matchScore: f.matchScore, verification, noteLength: reviewNote ? reviewNote.length : 0 },
+      });
+    } else if (decision === 'rejected') {
       addAudit({
         actorId: req.user.id,
         actorName: req.user.name,
@@ -852,8 +1668,30 @@ export default function registerReportRoutes(router, deps) {
         action: 'sighting.rejected',
         targetType: 'foundReport',
         targetId: f.id,
-        summary: `Rejected sighting match at ${f.foundLocation}`,
+        summary: undoReverseLink
+          ? `Rejected the link between the sighting at ${f.foundLocation} and a newly registered case; the sighting is back where it was`
+          : `Rejected sighting match at ${f.foundLocation}`,
         scope: { matchedReportId: f.matchedReportId },
+        metadata: {
+          ...(undoReverseLink
+            ? { reverseLinkUndone: true, unlinkedReportId: f.matchedReportId, restoredStatus: restored.status }
+            : {}),
+          noteLength: reviewNote ? reviewNote.length : 0,
+        },
+      });
+    }
+    if (decision === 'matched' && matchedCase) {
+      // Confirming here sends nobody anything; the answer says so, as
+      // confirm-match does, with the number to call when the family may be told.
+      const adult = isAdultCase(matchedCase);
+      return res.json({
+        foundReport: findFoundReport(f.id),
+        report: findReport(matchedCase.id),
+        familyNotified: false,
+        familyPhone: adult ? null : familyPhoneOf(matchedCase),
+        familyReason: adult ? 'consent_required' : 'not_requested',
+        familyMessage: FAMILY_SMS_MESSAGES[adult ? 'consent_required' : 'not_requested'],
+        ...(adult ? { personConsentRequired: true } : {}),
       });
     }
     res.json({ foundReport: findFoundReport(f.id) });
@@ -868,7 +1706,9 @@ export default function registerReportRoutes(router, deps) {
       return res.status(409).json({ error: 'Only unmatched or CWC-referred sightings can receive CWC follow-up outcomes' });
     }
 
-    const { outcome, note } = req.body || {};
+    const read = readFields(req.body, { outcome: ['text', 40], note: ['text', 500] });
+    if (read.error) return res.status(400).json({ error: read.error });
+    const { outcome, note } = read.body;
     if (!CWC_FOLLOWUP_OUTCOMES[outcome]) {
       return res.status(400).json({ error: `Outcome must be one of ${Object.keys(CWC_FOLLOWUP_OUTCOMES).join(', ')}` });
     }
@@ -920,8 +1760,14 @@ export default function registerReportRoutes(router, deps) {
     if (['matched', 'rejected'].includes(f.status)) {
       return res.status(409).json({ error: 'Matched or rejected sightings cannot be converted to found-child intake' });
     }
+    const read = readFields(req.body, FORMAL_INTAKE_FIELDS);
+    if (read.error) return res.status(400).json({ error: read.error });
+    req.body = read.body;
 
-    const childName = cleanText(req.body?.childName, 80) || 'Unknown child';
+    // A formal intake inherits who the sighting was of, so an adult's record is
+    // not quietly filed as a child's.
+    const personCategory = personCategoryOf(f);
+    const childName = cleanText(req.body?.childName, 80) || (isAdultCategory(personCategory) ? 'Unknown person' : 'Unknown child');
     const guardianName = cleanText(req.body?.guardianName, 120) || 'Unknown guardian';
     const intakeAuthority = cleanText(req.body?.intakeAuthority, 140) || req.user.org || req.user.name;
     const note = cleanText(req.body?.note, 800);
@@ -943,7 +1789,7 @@ export default function registerReportRoutes(router, deps) {
       nextReviewDate = parsed.value;
     }
 
-    const age = optionalNumber(req.body?.ageApprox ?? f.ageApprox, 'Approximate age', { min: 0, max: 18, integer: true });
+    const age = categoryAge(req.body?.ageApprox ?? f.ageApprox, 'Approximate age', personCategory);
     if (age.error) return res.status(400).json({ error: age.error });
     const gender = ['Male', 'Female', 'Other'].includes(req.body?.gender) ? req.body.gender : f.gender || 'Other';
     const state = cleanText(req.body?.state, 80) || f.state || req.user.jurisdiction?.state || null;
@@ -993,6 +1839,7 @@ export default function registerReportRoutes(router, deps) {
     };
     const report = {
       id: reportId,
+      personCategory,
       firNo: null,
       childName,
       childAadhar: null,
@@ -1110,20 +1957,55 @@ export default function registerReportRoutes(router, deps) {
     res.status(201).json({ foundReport: findFoundReport(f.id), report: findReport(report.id), careRecord: intakeRecord });
   });
 
-  // Police confirm a match and (optionally) alert the parent by SMS.
-  router.post('/:id/confirm-match', protectedRoute, requireRole('police', 'sjpu', 'admin', 'super_admin'), (req, res) => {
+  /**
+   * Police confirm a match: the case is found, and the record keeps how the
+   * identity was verified (`verification`, required).
+   *
+   * With `sendSms`, Khozo texts the family through the gateway - and says so
+   * only when the gateway took the message. The answer always says whether the
+   * family was told (`familyNotified`) and, when it was not, the family's
+   * number and what to do instead, so the officer calls them and records the
+   * call (POST /:id/family-contacted).
+   *
+   * A woman or adult decides whether their family is told where they are. A
+   * woman who left a violent home is put back in danger by an automatic
+   * "found" message, so for a woman or adult nothing is sent, and no family
+   * number is offered, until the officer records that the person consented
+   * (`personConsent: true`).
+   */
+  router.post('/:id/confirm-match', protectedRoute, requireRole('police', 'sjpu', 'admin', 'super_admin'), async (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
     if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
     if (isPendingCitizenIntake(r)) return res.status(409).json({ error: 'Citizen/NGO intake must be verified before match confirmation' });
-    const { foundLocation, matchScore, sendSms } = req.body || {};
-    updateReport(r.id, {
-      status: 'found',
-      foundLocation: foundLocation || r.foundLocation || 'Reported location',
-      matchScore: matchScore != null ? Number(matchScore) : r.matchScore,
-      smsSent: !!sendSms,
+    const read = readFields(req.body, {
+      foundLocation: ['text', 180],
+      matchScore: 'number',
+      sendSms: 'flag',
+      personConsent: 'flag',
     });
-    addActivity({ actor: req.user.name, action: sendSms ? 'Confirmed match & alerted parent' : 'Confirmed match', target: r.childName, icon: 'check', actorId: req.user.id, scope: { state: r.state, district: r.district, reportId: r.id } });
+    if (read.error) return res.status(400).json({ error: read.error });
+    const verification = parseVerification(req.body?.verification, req.user);
+    if (!verification) return res.status(400).json({ error: VERIFICATION_REQUIRED });
+    const b = read.body;
+    const foundLocation = b.foundLocation || '';
+    const consent = req.body?.personConsent === true;
+    const adult = isAdultCase(r);
+    const familyMayBeTold = !adult || consent;
+    const wantsSms = isTruthy(b.sendSms);
+
+    updateReport(r.id, matchConfirmedPatch(r, req.user, {
+      verification,
+      foundLocation: foundLocation || r.foundLocation || 'Reported location',
+      matchScore: b.matchScore != null && b.matchScore !== '' ? Number(b.matchScore) : r.matchScore,
+    }));
+
+    let family;
+    if (!familyMayBeTold) family = { sent: false, reason: 'consent_required', phone: null };
+    else if (wantsSms) family = await smsFamily(findReport(r.id), req.user, 'confirm_match');
+    else family = { sent: false, reason: 'not_requested', phone: familyPhoneOf(r) };
+
+    addActivity({ actor: req.user.name, action: family.sent ? 'Confirmed match & alerted parent' : 'Confirmed match', target: r.childName, icon: 'check', actorId: req.user.id, scope: { state: r.state, district: r.district, reportId: r.id } });
     addAudit({
       actorId: req.user.id,
       actorName: req.user.name,
@@ -1131,9 +2013,10 @@ export default function registerReportRoutes(router, deps) {
       action: 'case.match_confirmed',
       targetType: 'report',
       targetId: r.id,
-      summary: `${sendSms ? 'Confirmed match and alerted parent' : 'Confirmed match'} for ${r.childName}`,
+      // Names no one who verified; the verification is in the metadata.
+      summary: `${family.sent ? 'Confirmed match and alerted parent' : 'Confirmed match'} for ${r.childName} (${verification.methodLabel})`,
       scope: { state: r.state, district: r.district },
-      metadata: { sendSms: !!sendSms },
+      metadata: { sendSms: wantsSms, smsSent: family.sent, familyNotified: family.sent, familyReason: family.reason, verification },
     });
     // A confirmed match is the moment a rescue starts, and until now it raised
     // no alert at all: the officer who pressed the button knew, and nobody
@@ -1152,11 +2035,18 @@ export default function registerReportRoutes(router, deps) {
     const rescueLocation =
       foundLocation || confirmedSighting?.foundLocation || r.foundLocation || 'location under review';
     const rescueWhere = `${rescueLocation}${rescueState ? `, ${[rescueDistrict, rescueState].filter(Boolean).join(', ')}` : ''}`;
+    // The alert goes to the police officers who can open this case and nobody
+    // else (caseOfficers). Sent to every desk, it told CWC, NGOs and the rest
+    // that a police-only record had been traced and where, and its scope gave
+    // them the case id; for a woman or an adult it put her location in front of
+    // people she had not agreed to be found by. Like every alert it says where,
+    // not who.
     notifyAuthorities({
       kind: 'match_confirmed',
       title: 'Match confirmed — rescue required',
-      body: `${r.childName} was confirmed at ${rescueWhere}. Proceed for rescue.`,
+      body: `A match was confirmed at ${rescueWhere}. Proceed for rescue.`,
       priority: 'high',
+      recipients: caseOfficers(findReport(r.id)),
       scope: {
         state: rescueState,
         district: rescueDistrict,
@@ -1164,27 +2054,197 @@ export default function registerReportRoutes(router, deps) {
         foundReportId: confirmedSighting?.id,
       },
     });
-    res.json({ report: findReport(r.id) });
+    res.json({
+      report: findReport(r.id),
+      familyNotified: family.sent,
+      familyPhone: family.phone,
+      ...(family.sent ? {} : { familyReason: family.reason, familyMessage: FAMILY_SMS_MESSAGES[family.reason] }),
+      ...(adult && !consent ? { personConsentRequired: true } : {}),
+    });
   });
 
-  router.post('/:id/send-sms', protectedRoute, requireRole('police', 'sjpu', 'admin', 'super_admin'), (req, res) => {
+  /**
+   * Reopens a case marked found or closed: the match was wrong, the child went
+   * missing again, or the case was closed in error.
+   *
+   * Police roles only, for a case they may open. The case goes back to
+   * `missing`, and so back into the pool every new sighting is compared with
+   * (shared/match-pool.js); what the found or closed state recorded - the
+   * closure, where the person was found, the verification, whether the family
+   * was told - is cleared from the live record and kept in `reopenHistory`,
+   * and the reason is a workflow event and an audit row.
+   */
+  router.post('/:id/reopen', protectedRoute, requireRole(...POLICE_ROLES), (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
     if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
-    if (isPendingCitizenIntake(r)) return res.status(409).json({ error: 'Citizen/NGO intake must be verified before parent SMS alerts' });
-    updateReport(r.id, { smsSent: true });
-    addActivity({ actor: req.user.name, action: `SMS alert sent to ${r.parentName || 'parent'}`, target: r.childName, icon: 'sms', actorId: req.user.id, scope: { state: r.state, district: r.district, reportId: r.id } });
+    const read = readFields(req.body, { reason: ['text', 500] });
+    if (read.error) return res.status(400).json({ error: read.error });
+    if (!['found', 'closed'].includes(r.status)) {
+      return res.status(409).json({ error: 'Only a found or closed case can be reopened' });
+    }
+    if (r.anonymizedAt) return res.status(409).json({ error: 'Anonymised cases cannot be reopened' });
+    const reason = read.body.reason || '';
+    if (reason.length < 10) {
+      return res.status(400).json({ error: 'Give a reason of at least 10 characters for reopening the case' });
+    }
+
+    const event = workflowEvent(req.user, 'reopened', 'Case reopened', reason, { previousStatus: r.status });
+    const reopening = {
+      at: new Date(event.ts).toISOString(),
+      byId: req.user.id,
+      byName: req.user.name,
+      byRole: req.user.role,
+      reason,
+      previousStatus: r.status,
+      closure: r.closure || null,
+      foundLocation: r.foundLocation || null,
+      foundAt: r.foundAt || null,
+      verification: r.verification || null,
+      smsSent: Boolean(r.smsSent),
+      familyInformedAt: r.familyInformedAt || null,
+    };
+    updateReport(r.id, {
+      status: 'missing',
+      closure: null,
+      foundLocation: null,
+      foundAt: null,
+      matchScore: 0,
+      verification: null,
+      smsSent: false,
+      smsSentAt: null,
+      familyInformedAt: null,
+      reopenedAt: reopening.at,
+      reopenHistory: [...(Array.isArray(r.reopenHistory) ? r.reopenHistory : []), reopening],
+      ...withWorkflowEvent(r, event),
+    });
+    addActivity({ actor: req.user.name, action: 'Reopened the case', target: r.childName, icon: 'referral', actorId: req.user.id, scope: { state: r.state, district: r.district, reportId: r.id } });
     addAudit({
       actorId: req.user.id,
       actorName: req.user.name,
       actorRole: req.user.role,
-      action: 'case.sms_sent',
+      action: 'case.reopened',
       targetType: 'report',
       targetId: r.id,
-      summary: `SMS alert sent for ${r.childName}`,
-      scope: { state: r.state, district: r.district },
+      summary: `Reopened case for ${r.childName} (was ${r.status})`,
+      scope: { state: r.state, district: r.district, reportId: r.id },
+      metadata: { previousStatus: r.status, reason, reasonLength: reason.length },
     });
-    res.json({ ok: true, message: `SMS sent to ${r.parentPhone || 'parent'}`, report: findReport(r.id) });
+    res.json({ report: findReport(r.id) });
+  });
+
+  /**
+   * Re-runs the reverse search for one case  /**
+   * Re-runs the reverse search for one case: its photo against the stored
+   * sightings, linking the ones the engines agree on (matchStoredSightings).
+   *
+   * For when registration could not compare - a provider was down, the photo
+   * was added later, or sightings have arrived through a path that missed this
+   * case - and for an officer who wants to look again. Police roles only, and
+   * only for a case in their scope. The people who sent those sightings are
+   * told nothing.
+   */
+  router.post('/:id/rematch', protectedRoute, requireRole(...POLICE_ROLES), async (req, res) => {
+    const r = findReport(req.params.id);
+    if (!r) return res.status(404).json({ error: 'Report not found' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
+    if (r.anonymizedAt) return res.status(409).json({ error: 'Anonymised cases are not compared with sightings' });
+    if (!r.photoFile) return res.status(409).json({ error: 'This case has no photo to compare with sightings' });
+    if (r.status === 'found') return res.status(409).json({ error: 'Found cases are not compared with sightings' });
+    if (r.status === 'closed') return res.status(409).json({ error: 'Closed cases are not compared with sightings' });
+    // The same rule registration follows: an unverified intake is a stranger's
+    // photograph until an officer verifies it, and verifying it runs this search.
+    if (isPendingCitizenIntake(r)) {
+      return res.status(409).json({ error: 'Citizen/NGO intake must be verified before it is compared with sightings' });
+    }
+
+    const reverse = await matchStoredSightings(r, { trigger: 'rematch', actor: req.user });
+    addAudit({
+      actorId: req.user.id,
+      actorName: req.user.name,
+      actorRole: req.user.role,
+      action: 'case.sightings_rematched',
+      targetType: 'report',
+      targetId: r.id,
+      summary: `Compared case ${r.id} with stored sightings: ${reverse.sightingMatches} linked for review`,
+      scope: { state: r.state, district: r.district, reportId: r.id },
+      metadata: {
+        sightingMatches: reverse.sightingMatches,
+        provider: reverse.engine?.provider || null,
+        comparedAgainst: reverse.engine?.comparedAgainst ?? 0,
+      },
+    });
+    res.json({ sightingMatches: reverse.sightingMatches, engine: reverse.engine });
+  });
+
+  /**
+   * Texts the family about their case, through the gateway.
+   *
+   * Answers `sent: true` only when the gateway took the message. With no
+   * gateway connected the answer is `sent: false, reason: 'no_gateway'` with
+   * the family's number and the instruction to call them, and nothing on the
+   * case changes: the officer records the call with POST /:id/family-contacted.
+   */
+  router.post('/:id/send-sms', protectedRoute, requireRole('police', 'sjpu', 'admin', 'super_admin'), async (req, res) => {
+    const r = findReport(req.params.id);
+    if (!r) return res.status(404).json({ error: 'Report not found' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
+    if (isPendingCitizenIntake(r)) return res.status(409).json({ error: 'Citizen/NGO intake must be verified before parent SMS alerts' });
+    if (isAdultCase(r) && req.body?.personConsent !== true) {
+      return res.status(409).json({ error: PERSON_CONSENT_REQUIRED, code: 'person_consent_required' });
+    }
+    const outcome = await smsFamily(r, req.user, 'send_sms');
+    res.json({
+      ok: outcome.sent,
+      sent: outcome.sent,
+      ...(outcome.sent ? {} : { reason: outcome.reason }),
+      phone: outcome.phone,
+      message: FAMILY_SMS_MESSAGES[outcome.reason],
+      report: findReport(r.id),
+    });
+  });
+
+  /**
+   * Records that an officer told the family: a call, a visit, or an SMS from
+   * their own phone. Police and CWC desks, for a case they may open.
+   *
+   * For a woman or adult the officer must record that the person agreed to her
+   * family being told (`personConsent: true`), as for an SMS.
+   */
+  router.post('/:id/family-contacted', protectedRoute, requireRole(...POLICE_ROLES, 'cwc'), (req, res) => {
+    const r = findReport(req.params.id);
+    if (!r) return res.status(404).json({ error: 'Report not found' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
+    const read = readFields(req.body, { method: ['text', 20], note: ['text', 500], personConsent: 'flag' });
+    if (read.error) return res.status(400).json({ error: read.error });
+    const { method } = read.body;
+    if (!FAMILY_CONTACT_METHODS[method]) {
+      return res.status(400).json({ error: 'Contact method must be call, visit or sms' });
+    }
+    if (isAdultCase(r) && req.body?.personConsent !== true) {
+      return res.status(409).json({ error: PERSON_CONSENT_REQUIRED, code: 'person_consent_required' });
+    }
+    const note = read.body.note || null;
+    const contact = familyContact(req.user, method, note);
+    const event = workflowEvent(req.user, 'family_contacted', 'Family contacted', note, { method });
+    updateReport(r.id, {
+      familyContacts: [...(Array.isArray(r.familyContacts) ? r.familyContacts : []), contact],
+      familyInformedAt: contact.at,
+      ...withWorkflowEvent(r, event),
+    });
+    addActivity({ actor: req.user.name, action: `Recorded family contact: ${FAMILY_CONTACT_METHODS[method]}`, target: r.childName, icon: 'sms', actorId: req.user.id, scope: { state: r.state, district: r.district, reportId: r.id } });
+    addAudit({
+      actorId: req.user.id,
+      actorName: req.user.name,
+      actorRole: req.user.role,
+      action: 'case.family_contacted',
+      targetType: 'report',
+      targetId: r.id,
+      summary: `Recorded family contact for ${r.childName}: ${FAMILY_CONTACT_METHODS[method]}`,
+      scope: { state: r.state, district: r.district, reportId: r.id },
+      metadata: { method, noteLength: note ? note.length : 0, personConsent: req.body?.personConsent === true },
+    });
+    res.json({ report: findReport(r.id) });
   });
 
   router.post('/:id/case-workflow', protectedRoute, requireRole(...CASE_WORKFLOW_ROLES), (req, res) => {
@@ -1193,7 +2253,9 @@ export default function registerReportRoutes(router, deps) {
     if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
     if (isPendingCitizenIntake(r)) return res.status(409).json({ error: 'Citizen/NGO intake must be verified before institutional handoff' });
 
-    const { action, note } = req.body || {};
+    const read = readFields(req.body, { action: ['text', 40], note: ['text', 500] });
+    if (read.error) return res.status(400).json({ error: read.error });
+    const { action, note } = read.body;
     const config = CASE_WORKFLOW_ACTIONS[action];
     if (!config) {
       return res.status(400).json({ error: `Action must be one of ${Object.keys(CASE_WORKFLOW_ACTIONS).join(', ')}` });
@@ -1433,7 +2495,9 @@ export default function registerReportRoutes(router, deps) {
     if (isPendingCitizenIntake(r)) return res.status(409).json({ error: 'Citizen/NGO intake must be verified before case closure' });
     if (r.status === 'closed') return res.status(409).json({ error: 'Case is already closed' });
 
-    const { reason, note, foundLocation } = req.body || {};
+    const read = readFields(req.body, { reason: ['text', 40], note: ['text', 500], foundLocation: ['text', 180] });
+    if (read.error) return res.status(400).json({ error: read.error });
+    const { reason, note, foundLocation } = read.body;
     if (!CASE_CLOSE_REASONS[reason]) {
       return res.status(400).json({ error: `Closure reason must be one of ${Object.keys(CASE_CLOSE_REASONS).join(', ')}` });
     }
@@ -2729,7 +3793,7 @@ export default function registerReportRoutes(router, deps) {
     res.json({ report: findReport(r.id) });
   });
 
-  router.post('/:id/verify-intake', protectedRoute, requireRole(...INTAKE_VERIFY_ROLES), (req, res) => {
+  router.post('/:id/verify-intake', protectedRoute, requireRole(...INTAKE_VERIFY_ROLES), async (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
     if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
@@ -2773,39 +3837,45 @@ export default function registerReportRoutes(router, deps) {
       scope: { state: r.state, district: r.district, reportId: r.id },
       metadata: { firNo: patch.firNo, noteLength: event.note ? event.note.length : 0 },
     });
-    res.json({ report: findReport(r.id) });
+    // Registration skipped the search for this intake (it was unverified then);
+    // now that an officer has verified it, compare it with stored sightings.
+    const verified = findReport(r.id);
+    const reverse = verified.photoFile
+      ? await matchStoredSightings(verified, { trigger: 'intake_verified', actor: req.user })
+      : { sightingMatches: 0 };
+    res.json({ report: findReport(r.id), sightingMatches: reverse.sightingMatches });
   });
 
+  /**
+   * Publishing a public appeal is refused: names and photos of missing persons
+   * are never shown to the public (isPublicAppeal). The request is refused
+   * before the case is even looked up, so the answer is the same for every id.
+   *
+   * Unpublishing still works, so that a case published before the rule can be
+   * cleaned up: it clears the flag, which no public read consults any more.
+   */
   router.post('/:id/bulletin', protectedRoute, requireRole(...BULLETIN_ROLES), (req, res) => {
+    const publish = req.body?.publish !== false;
+    if (publish) return res.status(403).json({ error: PUBLIC_APPEALS_DISABLED, code: 'public_appeals_disabled' });
+
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
     if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
-    if (isPendingCitizenIntake(r)) return res.status(409).json({ error: 'Citizen/NGO intake must be verified before public bulletin publishing' });
-    if (['found', 'closed'].includes(r.status)) return res.status(409).json({ error: 'Found or closed cases cannot be published as active public bulletins' });
 
-    const publish = req.body?.publish !== false;
     const now = Date.now();
-    const bulletin = publish
-      ? {
-          published: true,
-          publishedAt: r.bulletin?.publishedAt || new Date(now).toISOString(),
-          publishedById: req.user.id,
-          publishedByName: req.user.name,
-          agency: req.user.org || req.user.name,
-        }
-      : {
-          ...(r.bulletin || {}),
-          published: false,
-          unpublishedAt: new Date(now).toISOString(),
-          unpublishedById: req.user.id,
-          unpublishedByName: req.user.name,
-        };
+    const bulletin = {
+      ...(r.bulletin || {}),
+      published: false,
+      unpublishedAt: new Date(now).toISOString(),
+      unpublishedById: req.user.id,
+      unpublishedByName: req.user.name,
+    };
     updateReport(r.id, { bulletin });
     addActivity({
       actor: req.user.name,
-      action: publish ? 'Published public bulletin' : 'Unpublished public bulletin',
+      action: 'Unpublished public bulletin',
       target: r.childName,
-      icon: publish ? 'broadcast' : 'eye',
+      icon: 'eye',
       actorId: req.user.id,
       scope: { state: r.state, district: r.district, reportId: r.id },
     });
@@ -2813,14 +3883,14 @@ export default function registerReportRoutes(router, deps) {
       actorId: req.user.id,
       actorName: req.user.name,
       actorRole: req.user.role,
-      action: publish ? 'case.bulletin_published' : 'case.bulletin_unpublished',
+      action: 'case.bulletin_unpublished',
       targetType: 'report',
       targetId: r.id,
-      summary: `${publish ? 'Published' : 'Unpublished'} public bulletin for ${r.childName}`,
+      summary: `Unpublished public bulletin for ${r.childName}`,
       scope: { state: r.state, district: r.district, reportId: r.id },
-      metadata: { published: publish },
+      metadata: { published: false },
     });
-    res.json({ report: findReport(r.id), bulletin: publish ? bulletinPayload(findReport(r.id)) : null });
+    res.json({ report: findReport(r.id), bulletin: null });
   });
 
   router.get('/:id/handoff-export', protectedRoute, requireRole(...CASE_HANDOFF_EXPORT_ROLES), (req, res) => {
@@ -2857,7 +3927,8 @@ export default function registerReportRoutes(router, deps) {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
     if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
-    res.json({ report: r });
+    const view = isCitizenRole(req.user.role) ? citizenCaseView(r) : r;
+    res.json({ report: { ...view, personCategory: personCategoryOf(r) } });
   });
 
 

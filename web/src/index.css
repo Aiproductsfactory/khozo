@@ -5,7 +5,7 @@
   --color-khozo-dark: #4e8019;
   --color-khozo-light: #eaf4dd;
   --color-ink: #1c2530;
-  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-sans: 'Inter', 'Noto Sans Gujarati', 'Noto Sans Devanagari', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'Nirmala UI', Roboto, sans-serif;
 }
 
 html {
@@ -102,3 +102,237 @@ body {
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: #cbd5cb; border-radius: 999px; }
+
+/* The button classes above are unlayered, so they would beat Tailwind's
+   display utilities: a `btn-primary hidden sm:inline-flex` link stayed visible
+   on a phone. These restore the utilities for the button classes. */
+:is(.btn, .btn-primary, .btn-ghost, .btn-dark).hidden { display: none; }
+@media (min-width: 640px) {
+  :is(.btn, .btn-primary, .btn-ghost, .btn-dark).sm\:inline-flex { display: inline-flex; }
+  :is(.btn, .btn-primary, .btn-ghost, .btn-dark).sm\:hidden { display: none; }
+}
+
+/* ======================================================================
+ * Phones.
+ *
+ * The web app is the app: citizens, parents and officers use it on phones
+ * instead of installing anything. These rules only apply below the `sm`
+ * breakpoint (or on a touch screen, for tap sizes), so desktop layouts are
+ * exactly as they were.
+ *
+ * Plain (unlayered) CSS wins over Tailwind's utility layer, which is what lets
+ * one rule here lift every `text-xs` or `min-w-[900px]` on a phone without
+ * touching each component.
+ * ==================================================================== */
+
+/* Nothing on a phone is set smaller than 14 px. Gujarati and Devanagari are
+   read at 16 px: their glyphs sit smaller than Latin at the same size. */
+@media (max-width: 639px) {
+  :root {
+    --text-xs: 0.875rem;
+  }
+  html:lang(gu), html:lang(hi), html:lang(mr) {
+    --text-xs: 1rem;
+    --text-sm: 1rem;
+  }
+  .text-\[9px\], .text-\[10px\], .text-\[11px\], .text-\[12px\], .text-\[13px\] {
+    font-size: 0.875rem;
+  }
+  html:lang(gu) :is(.text-\[9px\], .text-\[10px\], .text-\[11px\], .text-\[12px\], .text-\[13px\]),
+  html:lang(hi) :is(.text-\[9px\], .text-\[10px\], .text-\[11px\], .text-\[12px\], .text-\[13px\]),
+  html:lang(mr) :is(.text-\[9px\], .text-\[10px\], .text-\[11px\], .text-\[12px\], .text-\[13px\]) {
+    font-size: 0.9375rem;
+  }
+  /* …and a sentence in those scripts is read at 16 px however small it was set. */
+  html:lang(gu) p:is(.text-\[9px\], .text-\[10px\], .text-\[11px\], .text-\[12px\], .text-\[13px\]),
+  html:lang(hi) p:is(.text-\[9px\], .text-\[10px\], .text-\[11px\], .text-\[12px\], .text-\[13px\]),
+  html:lang(mr) p:is(.text-\[9px\], .text-\[10px\], .text-\[11px\], .text-\[12px\], .text-\[13px\]),
+  html:lang(gu) :is(.text-\[9px\], .text-\[10px\], .text-\[11px\], .text-\[12px\], .text-\[13px\]) p,
+  html:lang(hi) :is(.text-\[9px\], .text-\[10px\], .text-\[11px\], .text-\[12px\], .text-\[13px\]) p,
+  html:lang(mr) :is(.text-\[9px\], .text-\[10px\], .text-\[11px\], .text-\[12px\], .text-\[13px\]) p {
+    font-size: 1rem;
+  }
+  /* Button labels in Gujarati and Devanagari: 15 px. */
+  html:lang(gu) :is(.btn, .btn-primary, .btn-ghost, .btn-dark),
+  html:lang(hi) :is(.btn, .btn-primary, .btn-ghost, .btn-dark),
+  html:lang(mr) :is(.btn, .btn-primary, .btn-ghost, .btn-dark) {
+    font-size: 0.9375rem;
+  }
+  /* 16 px in a focused field also stops iOS Safari zooming the page. */
+  .field {
+    font-size: 1rem;
+  }
+  .label {
+    font-size: 0.9375rem;
+  }
+  html:lang(gu) .label, html:lang(hi) .label, html:lang(mr) .label {
+    font-size: 1rem;
+  }
+}
+
+/* Every tap target is at least 44 px on a phone or any touch screen. */
+@media (max-width: 639px), (pointer: coarse) {
+  .btn, .btn-primary, .btn-ghost, .btn-dark {
+    min-height: 2.75rem;
+  }
+  .field {
+    min-height: 2.75rem;
+  }
+  button, select, summary, [role='button'], [role='tab'], [role='radio'] {
+    min-height: 2.75rem;
+  }
+  button {
+    min-width: 2.75rem;
+  }
+  input[type='checkbox'], input[type='radio'] {
+    width: 1.25rem;
+    height: 1.25rem;
+    flex: none;
+  }
+  /* A checkbox is tapped through its label, so the label is the target. */
+  label:has(> input[type='checkbox']), label:has(> input[type='radio']) {
+    min-height: 2.75rem;
+  }
+  /* A button that sits inside a sentence ("… remove it and type the place")
+     is exempt, as WCAG exempts inline links. */
+  .tap-inline {
+    min-height: 0;
+    min-width: 0;
+  }
+}
+
+/* A small control that still needs a full-size tap area on touch screens:
+   the box grows, the look does not. */
+.tap-target {
+  position: relative;
+}
+@media (pointer: coarse) {
+  .tap-target::after {
+    content: '';
+    position: absolute;
+    inset: 50% auto auto 50%;
+    width: max(100%, 2.75rem);
+    height: max(100%, 2.75rem);
+    transform: translate(-50%, -50%);
+  }
+}
+
+/*
+ * Wide tables become stacked cards on a phone instead of scrolling sideways.
+ * Add `stack-table` to the <table> and a `data-label` (the translated column
+ * heading) to each <td>; the label is shown above the value. `stack-full`
+ * spans a cell across the card (the record's title, or its actions), and
+ * `stack-hide` drops a cell that only makes sense in the wide table.
+ */
+@media (max-width: 639px) {
+  table.stack-table {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+  .stack-table thead {
+    display: none;
+  }
+  .stack-table tbody, .stack-table tfoot {
+    display: block;
+  }
+  .stack-table tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.625rem 1rem;
+    padding: 0.875rem 1rem;
+    border-bottom: 1px solid rgb(0 0 0 / 0.06);
+  }
+  .stack-table tr:last-child {
+    border-bottom: 0;
+  }
+  .stack-table td, .stack-table th {
+    display: block;
+    min-width: 0;
+    max-width: none;
+    padding: 0;
+    border: 0;
+    text-align: left;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .stack-table td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 0.125rem;
+    color: #6b7280;
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1.25;
+  }
+  html:lang(gu) .stack-table td[data-label]::before,
+  html:lang(hi) .stack-table td[data-label]::before,
+  html:lang(mr) .stack-table td[data-label]::before {
+    font-size: 0.9375rem;
+  }
+  .stack-table td[data-label='']::before {
+    content: none;
+  }
+  .stack-table .stack-full {
+    grid-column: 1 / -1;
+  }
+  .stack-table .stack-hide {
+    display: none;
+  }
+  /* A table that already fits needs no sideways scroller around it. */
+  .stack-scroll {
+    overflow-x: visible;
+  }
+}
+
+/* The page itself never scrolls sideways on a phone. Anything still too wide
+   is caught by scripts/web-mobile-smoke.mjs rather than left to scroll. */
+@media (max-width: 639px) {
+  body {
+    overflow-x: clip;
+  }
+}
+
+/* Content that must clear the console's bottom navigation and the phone's
+   home indicator. */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+@keyframes khozo-sheet-in {
+  from { transform: translateY(1.5rem); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+@keyframes khozo-drawer-in {
+  from { transform: translateX(-100%); }
+  to { transform: none; }
+}
+.animate-sheet-in { animation: khozo-sheet-in 0.18s ease-out; }
+.animate-drawer-in { animation: khozo-drawer-in 0.2s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .animate-sheet-in, .animate-drawer-in { animation: none; }
+}
+
+.scrollbar-hide { scrollbar-width: none; }
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+
+/* Letter-spacing pulls Gujarati and Devanagari conjuncts and vowel signs
+   apart (a kicker set in tracking-widest read "ગ ુ મ"), and capitals do not
+   exist in either script: spaced, upper-cased labels read normally there. */
+html:lang(gu), html:lang(hi), html:lang(mr) {
+  --tracking-tighter: 0em;
+  --tracking-tight: 0em;
+  --tracking-wide: 0em;
+  --tracking-wider: 0em;
+  --tracking-widest: 0em;
+}
+
+/* Chart labels follow the same 14 px floor on a phone. */
+@media (max-width: 639px) {
+  .recharts-cartesian-axis-tick-value, .recharts-legend-item-text, .recharts-text {
+    font-size: 14px;
+  }
+}
+html:lang(gu) [class*='tracking-['], html:lang(hi) [class*='tracking-['], html:lang(mr) [class*='tracking-['] {
+  letter-spacing: 0;
+}

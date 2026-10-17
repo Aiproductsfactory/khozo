@@ -28,10 +28,11 @@
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
     // The Worker must see these before the asset layer does. /api/* is the
-    // API itself; /child/* is served by the Worker so it can rewrite the
-    // document's <head> with that child's own Open Graph and JSON-LD metadata
-    // before it reaches a crawler. Without this the request never reaches the
-    // Worker at all and every case link previews as a bare grey rectangle.
+    // API itself; /child/* is served by the Worker as the plain SPA document
+    // with the default share card (worker/index.js childCaseDocument). No
+    // case's name or photo is ever put in a preview: the public never sees
+    // them. The Worker answers it only so an old case link lands on the app
+    // rather than on the asset server's /index.html redirect.
     "run_worker_first": [
       "/api/*",
       "/child/*"

@@ -6,7 +6,8 @@
 // dashboard surfaces that value, so it must never claim biometric matching that
 // did not happen.
 
-import { listReports, readPhoto } from './store.js';
+import { listReports, listFoundReports, readPhoto } from './store.js';
+import { selectMatchCandidates, selectSightingCandidates } from '../../shared/match-pool.js';
 import { RekognitionClient, CompareFacesCommand } from '@aws-sdk/client-rekognition';
 
 // Credentials come from the environment only. A key committed to the repo ends up
@@ -32,6 +33,11 @@ const AARAKSHAK_THRESHOLD = process.env.AARAKSHAK_THRESHOLD || '0.35';
 // How many still-missing cases a single sighting is compared against. Each
 // comparison is a network call, so this bounds both latency and spend.
 const MAX_CANDIDATES = Number(process.env.KHOZO_MATCH_CANDIDATES || 25);
+
+// How many stored sightings a newly registered case is compared against (the
+// reverse search). Larger than the forward budget because it runs once per
+// registration rather than once per public upload.
+const REVERSE_MAX_CANDIDATES = Number(process.env.KHOZO_REVERSE_MATCH_CANDIDATES || 50);
 
 // Comparisons run concurrently: a single call takes ~1.8s, so 25 sequential
 // calls would leave a field reporter staring at a spinner for 45 seconds.
@@ -380,12 +386,26 @@ export async function probeMatchProviders(photoBuf) {
 // ---- Orchestration ---------------------------------------------------------
 
 /**
+ * Which photo is the source and which the target of a comparison.
+ *
+ * The sighting photo is always the source and the case photo the target,
+ * whichever of the two records arrived first. A pair therefore scores the same
+ * whether a sighting found the case or a newly registered case found the
+ * sighting, and the forward and reverse searches share one set of thresholds.
+ */
+function orient(direction, probeBuf, storedBuf) {
+  return direction === 'reverse' ? [storedBuf, probeBuf] : [probeBuf, storedBuf];
+}
+
+/**
  * Runs one tier across every candidate.
  *
  * A tier counts as working only if it answered for at least one candidate;
- * otherwise the caller falls through to the next tier.
+ * otherwise the caller falls through to the next tier. Returns the top five
+ * and how many comparisons answered (`answeredCount`), which is what the
+ * engine reports as `comparedAgainst`: a call that failed compared nothing.
  */
-async function rankWithProvider(compare, photoBuf, candidates) {
+async function rankWithProvider(compare, photoBuf, candidates, direction = 'forward') {
   // Photo reads hit the database, so fetch them concurrently rather than
   // serialising a round trip per candidate.
   const loaded = await mapLimit(candidates, MATCH_CONCURRENCY, async (report) => ({
@@ -396,7 +416,7 @@ async function rankWithProvider(compare, photoBuf, candidates) {
   if (!comparable.length) return null;
 
   const compared = await mapLimit(comparable, MATCH_CONCURRENCY, async ({ report, targetBuf }) => {
-    const result = await compare(photoBuf, targetBuf);
+    const result = await compare(...orient(direction, photoBuf, targetBuf));
     return result === null ? null : { report, ...result };
   });
 
@@ -405,7 +425,9 @@ async function rankWithProvider(compare, photoBuf, candidates) {
   // it has failed, and the next tier should get a turn.
   if (!answered.length) return null;
 
-  return answered.sort((a, b) => b.score - a.score).slice(0, 5);
+  const ranked = answered.sort((a, b) => b.score - a.score).slice(0, 5);
+  ranked.answeredCount = answered.length;
+  return ranked;
 }
 
 /**
@@ -416,7 +438,7 @@ async function rankWithProvider(compare, photoBuf, candidates) {
  * the candidate is flagged rather than silently averaged, because "one engine is
  * confident and the other is not" is exactly the situation a human should look at.
  */
-async function addSecondOpinion(photoBuf, ranked) {
+async function addSecondOpinion(photoBuf, ranked, direction = 'forward') {
   if (!rekognitionClient || SECOND_OPINION_TOP_N <= 0 || !ranked.length) {
     return { candidates: ranked, applied: false, checked: 0 };
   }
@@ -427,7 +449,7 @@ async function addSecondOpinion(photoBuf, ranked) {
   const reviewed = await mapLimit(shortlist, MATCH_CONCURRENCY, async (candidate) => {
     const targetBuf = await readPhoto(candidate.report.photoFile);
     if (!targetBuf) return { ...candidate, confirmed: false, secondOpinion: 'photo_unavailable' };
-    const second = await compareFacesAWS(photoBuf, targetBuf);
+    const second = await compareFacesAWS(...orient(direction, photoBuf, targetBuf));
     if (!second) return { ...candidate, confirmed: false, secondOpinion: 'no_answer' };
     checked += 1;
     const primary = candidate.score;
@@ -453,25 +475,21 @@ async function addSecondOpinion(photoBuf, ranked) {
 }
 
 /**
- * Ranks still-missing children against an uploaded sighting photo.
+ * Compares one photo with a set of stored records, through the provider tiers.
  *
- * @param {Buffer} photoBuf
- * @param {{gender?:string, ageApprox?:number}} hints
- * @returns {Promise<{candidates:{report:any, score:number}[], engine:object}>}
+ * The one comparison pipeline both searches run: Aarakshak proposes, and when
+ * Rekognition is configured it must confirm; with Aarakshak silent, Rekognition
+ * alone is held to its confirmation bar; with neither, nothing is offered.
+ * `direction` only decides which photo is the source (see `orient`), and
+ * `noun` only words the engine's notes. Each candidate carries the stored
+ * record under `report`, whichever kind of record it is.
  */
-export async function rankMatches(photoBuf, hints = {}) {
-  if (!photoBuf?.length) {
-    return { candidates: [], engine: { ...ENGINES.none } };
-  }
-
-  const openCases = listReports().filter((r) => r.status !== 'found' && !r.anonymizedAt);
-  const withPhotos = openCases.filter((r) => r.photoFile).slice(0, MAX_CANDIDATES);
-
-  if (withPhotos.length) {
+async function rankStored(photoBuf, stored, { direction = 'forward', pool, noun = 'open case' } = {}) {
+  if (stored.length) {
     const started = Date.now();
-    const viaAarakshak = await rankWithProvider(compareFacesAarakshak, photoBuf, withPhotos);
+    const viaAarakshak = await rankWithProvider(compareFacesAarakshak, photoBuf, stored, direction);
     if (viaAarakshak?.length) {
-      const second = await addSecondOpinion(photoBuf, viaAarakshak);
+      const second = await addSecondOpinion(photoBuf, viaAarakshak, direction);
       // When Rekognition is available it has to agree before a candidate is put
       // in front of an officer. One engine proposing a face is a lead; two
       // engines agreeing is a candidate. Anything Rekognition rejects is
@@ -482,7 +500,10 @@ export async function rankMatches(photoBuf, hints = {}) {
         candidates,
         engine: {
           ...ENGINES.aarakshak,
-          comparedAgainst: withPhotos.length,
+          // The comparisons that answered, not the ones attempted (see
+          // worker/src/match.js, which reports the same).
+          comparedAgainst: viaAarakshak.answeredCount,
+          pool,
           threshold: Number(AARAKSHAK_THRESHOLD),
           elapsedMs: Date.now() - started,
           secondOpinion: second.applied
@@ -512,22 +533,24 @@ export async function rankMatches(photoBuf, hints = {}) {
     // Rekognition having looked and found nothing is a different answer from
     // nothing having looked, so this returns even when no candidate survives —
     // falling through would report a completed comparison as an absent one.
-    const viaRekognition = await rankWithProvider(compareFacesAWS, photoBuf, withPhotos);
+    const viaRekognition = await rankWithProvider(compareFacesAWS, photoBuf, stored, direction);
     if (viaRekognition?.length) {
       const confirmed = viaRekognition
         .filter((c) => c.score >= REKOGNITION_CONFIRM_THRESHOLD)
         .map((c) => ({ ...c, confirmed: true, secondOpinion: 'sole_engine' }));
+      const answeredCount = viaRekognition.answeredCount;
       return {
         candidates: confirmed,
         engine: {
           ...ENGINES.rekognition,
-          comparedAgainst: viaRekognition.length,
+          comparedAgainst: answeredCount,
+          pool,
           elapsedMs: Date.now() - started,
           threshold: REKOGNITION_CONFIRM_THRESHOLD,
           corroborated: false,
           note: confirmed.length
             ? ENGINES.rekognition.note
-            : `Compared against ${viaRekognition.length} open case${viaRekognition.length === 1 ? '' : 's'}; none reached the confirmation threshold.`,
+            : `Compared against ${answeredCount} ${noun}${answeredCount === 1 ? '' : 's'}; none reached the confirmation threshold.`,
         },
       };
     }
@@ -541,9 +564,52 @@ export async function rankMatches(photoBuf, hints = {}) {
     engine: {
       ...ENGINES.heuristic,
       comparedAgainst: 0,
-      reason: withPhotos.length
+      reason: stored.length
         ? 'No biometric provider answered, so no face comparison was made and no candidate is offered.'
-        : 'No stored case photos to compare against, so no face comparison was possible.',
+        : `No stored ${noun === 'open case' ? 'case' : 'sighting'} photos to compare against, so no face comparison was possible.`,
     },
+  };
+}
+
+/**
+ * Ranks still-missing children against an uploaded sighting photo.
+ *
+ * @param {Buffer} photoBuf
+ * @param {{gender?:string, ageApprox?:number}} hints
+ * @returns {Promise<{candidates:{report:any, score:number}[], engine:object}>}
+ */
+export async function rankMatches(photoBuf, hints = {}) {
+  if (!photoBuf?.length) {
+    return { candidates: [], engine: { ...ENGINES.none } };
+  }
+
+  const { reports: withPhotos, pool } = selectMatchCandidates(listReports(), hints, MAX_CANDIDATES);
+  return rankStored(photoBuf, withPhotos, { direction: 'forward', pool, noun: 'open case' });
+}
+
+/**
+ * Ranks stored sightings against a newly registered case's photo: the reverse
+ * of rankMatches, for the person photographed before anyone reported them
+ * missing. See worker/src/match.js for the Worker build of the same search.
+ *
+ * Same engines, same order of the two photos in each comparison, same
+ * confirmation rule and thresholds as the forward search; only the pool
+ * differs (shared/match-pool.js selectSightingCandidates, budget
+ * KHOZO_REVERSE_MATCH_CANDIDATES).
+ *
+ * @param {Buffer} casePhotoBuf
+ * @param {{state?:string, district?:string}} hints  the case's jurisdiction
+ * @returns {Promise<{candidates:{sighting:any, score:number}[], engine:object}>}
+ */
+export async function rankSightingMatches(casePhotoBuf, hints = {}) {
+  if (!casePhotoBuf?.length) {
+    return { candidates: [], engine: { ...ENGINES.none } };
+  }
+
+  const { sightings, pool } = selectSightingCandidates(listFoundReports(), hints, REVERSE_MAX_CANDIDATES);
+  const ranked = await rankStored(casePhotoBuf, sightings, { direction: 'reverse', pool, noun: 'stored sighting' });
+  return {
+    candidates: ranked.candidates.map(({ report, ...rest }) => ({ ...rest, sighting: report })),
+    engine: ranked.engine,
   };
 }

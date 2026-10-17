@@ -1,0 +1,31 @@
+# Runs the full check suite on every push and pull request. No deploy step:
+# deploying needs Cloudflare credentials, which are not stored in this public
+# repository's CI.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TZ: UTC
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: API, scoping, matching, audit and import checks
+        run: npm run test:all
+      - name: Every interface string translated
+        run: npm run i18n:check -- --strict
+      - name: Web app builds
+        run: npm run build

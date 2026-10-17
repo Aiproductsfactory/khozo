@@ -135,10 +135,13 @@ console.log('Khozo intake screening and routing\n');
   check('it raises the general alert', sightings[0]?.screening?.raisesAlert === true);
   check(
     'every authority is alerted',
-    rolesOf(notifications).join(',') === 'admin,cwc,ngo,police,super_admin',
+    rolesOf(notifications).join(',') === 'admin,cwc,police,super_admin',
     rolesOf(notifications).join(',')
   );
   check('the parent account is not alerted', !rolesOf(notifications).includes('parent'));
+  // Anyone can register an NGO account with a phone number; an inbox of
+  // sightings would tell the person who sent one what became of it.
+  check('the NGO account is not alerted', !rolesOf(notifications).includes('ngo'));
 }
 
 // --- a photo with no person in it ------------------------------------------
@@ -177,7 +180,7 @@ console.log('Khozo intake screening and routing\n');
   check('a text-only report alerts on its own terms', sightings[0]?.screening?.raisesAlert === true);
   check(
     'so every authority is alerted',
-    rolesOf(notifications).join(',') === 'admin,cwc,ngo,police,super_admin',
+    rolesOf(notifications).join(',') === 'admin,cwc,police,super_admin',
     rolesOf(notifications).join(',')
   );
 }
@@ -204,17 +207,37 @@ console.log('Khozo intake screening and routing\n');
 }
 
 {
-  const { handler, sightings } = harness({
+  const { handler, sightings, notifications } = harness({
     verdict: 'person',
     matchResult: {
       candidates: [{ report: { id: 'r_1', childName: 'Some Child', state: 'Assam', district: 'Kamrup Metropolitan' }, score: 0.83, confirmed: true }],
       engine: { provider: 'aarakshak-live-v1', modelVersion: 'v1.82', biometric: true },
     },
   });
-  await submit(handler, { body: { ...baseBody }, file: photo });
+  const res = await submit(handler, { body: { ...baseBody, state: 'Meghalaya', district: 'East Khasi Hills' }, file: photo });
   check('a biometric score above the threshold does become a match', sightings[0]?.matchedReportId === 'r_1');
   check('and routes to police review', sightings[0]?.status === 'pending_review', `got ${sightings[0]?.status}`);
   check('recording that the comparison was biometric', sightings[0]?.matchEngine?.biometric === true);
+  check('the reporter gets the neutral receipt, with their own place', res.payload?.foundReport?.status === 'received' && res.payload.foundReport.district === 'East Khasi Hills', JSON.stringify(res.payload?.foundReport));
+
+  // Only the police officers who can open the matched case are told it may
+  // match. Every other desk gets the alert an unmatched sighting raises, worded
+  // from where the reporter was; parent and NGO accounts get nothing.
+  const byRole = (role) => notifications.filter((n) => AUTHORITIES.find((u) => u.id === n.userId)?.role === role);
+  const matchedRoles = [...new Set(notifications.filter((n) => n.scope?.matched === true).map((n) => AUTHORITIES.find((u) => u.id === n.userId)?.role))].sort();
+  check("the possible match goes to the case's police officers only", matchedRoles.join(',') === 'admin,police,super_admin', matchedRoles.join(','));
+  const cwcAlert = byRole('cwc')[0];
+  check(
+    'the CWC desk gets the ordinary alert, not the match',
+    byRole('cwc').length === 1 && cwcAlert.scope.matched === false && cwcAlert.priority === 'normal' && cwcAlert.title === 'Child spotted',
+    JSON.stringify(cwcAlert)
+  );
+  check(
+    "worded from where the reporter was, not the case's district",
+    /East Khasi Hills/.test(cwcAlert?.body || '') && !/Kamrup/.test(JSON.stringify(cwcAlert)),
+    cwcAlert?.body
+  );
+  check('no parent or NGO account is alerted', !byRole('ngo').length && !byRole('parent').length);
 }
 
 // --- jurisdiction from the phone's coordinates ------------------------------

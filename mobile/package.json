@@ -1,6 +1,7 @@
 {
   "name": "khozo-mobile",
   "version": "1.0.0",
+  "license": "Apache-2.0",
   "description": "Khozo field app - sighting intake, public bulletins, case tracking and officer review for the Khozo child-reunification platform.",
   "main": "index.js",
   "private": true,

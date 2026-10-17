@@ -19,12 +19,9 @@ Confirmed local ports:
 
 ## Demo Login
 
-Use any seeded account with password `khozo123`.
-
-Recommended first login:
-
-- Email: `superadmin@khozo.org`
-- Password: `khozo123`
+Locally (JSON store, no `DATABASE_URL`) use any seeded account with password `khozo123`,
+e.g. `superadmin@khozo.org`. On a real deployment official accounts have their own
+passwords (see README → Accounts); only parent@ and ngo@ keep the demo password.
 
 Other useful roles:
 

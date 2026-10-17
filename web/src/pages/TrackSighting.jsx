@@ -1,105 +1,210 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api.js';
 import { Logo } from '../components.jsx';
-import { fmtDate } from '../lib.jsx';
+import { categoryLabel, fmtDate } from '../lib.jsx';
+import { LanguageSwitcher, msg, useT } from '../i18n.jsx';
+import { forgetReceipt, listReceipts } from '../myReports.js';
+import ReceiptActions from '../ReceiptActions.jsx';
+import InstallPrompt from '../InstallPrompt.jsx';
 
-const STAGE_LABELS = {
-  police_review_pending: 'Police review pending',
-  cwc_intake_queued: 'CWC intake queued',
-  childline_cwc_referred: 'Referred to Childline/CWC',
-  cwc_followup_complete: 'CWC follow-up complete',
-  formal_case_created: 'Formal found-child intake opened',
-  review_complete: 'Reviewed',
-  review_closed: 'Closed after review',
-};
+/*
+ * The only three stages a sighting reporter is ever shown. The server
+ * (shared/case-domain.js publicSightingStatus) collapses every internal state
+ * into these so that a sighting that matched someone and one still waiting for
+ * review read exactly the same: telling a stranger "matched" tells them the
+ * person they photographed is being looked for. Nothing here may depend on the
+ * outcome; the sentence under the stages comes from the server as it is.
+ */
+const STAGES = [
+  { id: 'received', label: msg('Received') },
+  { id: 'under_review', label: msg('Under review') },
+  { id: 'closed', label: msg('Closed') },
+];
+
+function StageTrack({ stage }) {
+  const t = useT();
+  const at = Math.max(0, STAGES.findIndex((s) => s.id === stage));
+  return (
+    <ol className="grid grid-cols-3 gap-2" aria-label={t('Progress')}>
+      {STAGES.map((s, i) => (
+        <li key={s.id} aria-current={i === at ? 'step' : undefined}>
+          <div className={`h-1.5 rounded-full ${i <= at ? 'bg-khozo' : 'bg-gray-200'}`} />
+          <p className={`mt-2 text-xs font-semibold ${i === at ? 'text-ink' : i < at ? 'text-gray-500' : 'text-gray-400'}`}>
+            {t(s.label)}
+          </p>
+        </li>
+      ))}
+    </ol>
+  );
+}
 
 export default function TrackSighting() {
-  const [receipt, setReceipt] = useState('');
+  const t = useT();
+  const [search] = useSearchParams();
+  const [receipt, setReceipt] = useState(() => search.get('receipt') || '');
   const [status, setStatus] = useState(null);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  // Receipts saved on this phone when the reports were sent (myReports.js).
+  const [mine, setMine] = useState(() => listReceipts());
+  const resultRef = useRef(null);
 
-  const lookup = async (e) => {
+  const lookup = (e) => {
     e.preventDefault();
-    const id = receipt.trim();
+    check(receipt);
+  };
+
+  // A shared link or the receipt screen opens this page with the number in it.
+  useEffect(() => {
+    const fromLink = search.get('receipt');
+    if (fromLink) check(fromLink);
+    // Only on arrival.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const check = async (raw) => {
+    const id = String(raw || '').trim();
     if (!id) return;
+    setReceipt(id);
     setBusy(true);
     setErr('');
     setStatus(null);
     try {
       const data = await api.get(`/reports/found/status/${encodeURIComponent(id)}`);
-      setStatus(data.status);
+      setStatus(data.status || null);
+      setTimeout(() => resultRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }), 50);
     } catch (e2) {
-      setErr(e2.message);
+      setErr(e2.status === 404
+        ? msg('No report was found with this receipt number. Check it against the receipt you were given.')
+        : e2.message);
     } finally {
       setBusy(false);
     }
   };
 
+  const stage = STAGES.find((s) => s.id === status?.stage) || STAGES[0];
+
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="border-b border-black/5 bg-white">
-        <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-between gap-3 px-6 py-5">
+        <div className="mx-auto flex max-w-3xl items-center justify-between gap-2 px-4 py-3 sm:gap-3 sm:px-6 sm:py-4">
           <Logo />
-          <div className="flex gap-2">
-            <Link to="/report" className="btn-primary">Submit sighting</Link>
-            <Link to="/" className="btn-ghost">Home</Link>
+          <div className="flex items-center gap-1 sm:gap-2">
+            <LanguageSwitcher />
+            <Link to="/report" className="btn-primary hidden sm:inline-flex">{t('Submit sighting')}</Link>
+            <Link to="/" className="btn-ghost">{t('Home')}</Link>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-4xl px-6 py-10">
+      <main className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-10">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-khozo">Receipt lookup</p>
-          <h1 className="mt-1 text-3xl font-bold text-ink">Track a sighting report</h1>
+          <p className="text-xs font-semibold uppercase tracking-wide text-khozo">{t('Receipt lookup')}</p>
+          <h1 className="mt-1 text-3xl font-bold text-ink">{t('Track a report I made')}</h1>
           <p className="mt-2 max-w-2xl text-sm text-gray-500">
-            Enter the receipt id shown after submitting a public sighting. This page only shows safe progress information and never reveals child identity, guardian contacts, or matched case details.
+            {t('Enter the receipt number you were given after sending a sighting. Khozo shows only whether your report has been received, is under review, or is closed — never who anyone is, or whether your photo matched anyone.')}
           </p>
         </div>
 
-        <form onSubmit={lookup} className="mt-6 flex flex-col gap-3 rounded-xl bg-white p-4 ring-1 ring-black/5 sm:flex-row">
-          <input className="field flex-1" value={receipt} onChange={(e) => setReceipt(e.target.value)} placeholder="Example: f_abc12345" />
-          <button className="btn-primary" disabled={busy}>{busy ? 'Checking...' : 'Check status'}</button>
+        <form onSubmit={lookup} className="mt-6 rounded-xl bg-white p-4 ring-1 ring-black/5">
+          <label htmlFor="receipt-id" className="label">{t('Receipt number')}</label>
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <input
+              id="receipt-id"
+              className="field flex-1 font-mono"
+              value={receipt}
+              onChange={(e) => setReceipt(e.target.value)}
+              placeholder={t('Example: f_abc12345')}
+              autoComplete="off"
+              autoCapitalize="off"
+              autoCorrect="off"
+              enterKeyHint="search"
+              spellCheck={false}
+            />
+            <button className="btn-primary" disabled={busy}>{busy ? t('Checking...') : t('Check status')}</button>
+          </div>
         </form>
 
-        {err && <div className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{err}</div>}
+        {err && <div className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{t(err)}</div>}
 
         {status && (
-          <section className="mt-6 rounded-xl bg-white p-5 ring-1 ring-black/5">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold text-gray-500">Receipt {status.id}</p>
-                <h2 className="mt-1 text-xl font-bold text-ink">{STAGE_LABELS[status.reviewStage] || status.status}</h2>
-              </div>
-              <span className="rounded-full bg-khozo-light px-3 py-1 text-xs font-semibold text-khozo">
-                {status.status.replaceAll('_', ' ')}
-              </span>
+          <section ref={resultRef} className="mt-6 scroll-mt-4 rounded-xl bg-white p-5 ring-1 ring-black/5">
+            <p className="text-sm font-semibold text-gray-500">{t('Receipt {id}', { id: status.id })}</p>
+            <h2 className="mt-1 text-xl font-bold text-ink">{t(stage.label)}</h2>
+
+            <div className="mt-4">
+              <StageTrack stage={stage.id} />
             </div>
+
             <dl className="mt-5 grid gap-4 text-sm sm:grid-cols-2">
               <div>
-                <dt className="text-xs uppercase tracking-wide text-gray-400">Submitted</dt>
+                <dt className="text-xs uppercase tracking-wide text-gray-400">{t('Submitted')}</dt>
                 <dd className="mt-1 font-medium">{fmtDate(status.submittedAt)}</dd>
               </div>
-              <div>
-                <dt className="text-xs uppercase tracking-wide text-gray-400">Location</dt>
-                <dd className="mt-1 font-medium">{[status.foundLocation, status.district, status.state].filter(Boolean).join(', ')}</dd>
-              </div>
-              <div>
-                <dt className="text-xs uppercase tracking-wide text-gray-400">Referral</dt>
-                <dd className="mt-1 font-medium">{status.referralStatus || '-'}</dd>
-              </div>
-              <div>
-                <dt className="text-xs uppercase tracking-wide text-gray-400">1098/CWC</dt>
-                <dd className="mt-1 font-medium">{status.referredTo1098 ? 'Queued / referred' : 'Not referred'}</dd>
-              </div>
+              {status.foundLocation && (
+                <div>
+                  <dt className="text-xs uppercase tracking-wide text-gray-400">{t('Location you gave')}</dt>
+                  {/* The reporter's own words, shown back as typed. */}
+                  <dd className="mt-1 font-medium">{status.foundLocation}</dd>
+                </div>
+              )}
             </dl>
-            <div className="mt-5 rounded-xl bg-gray-50 p-4 text-sm text-gray-600">
-              <p className="font-semibold text-ink">{status.message}</p>
-              <p className="mt-1">{status.nextStep}</p>
-            </div>
+
+            {(status.message || status.nextStep) && (
+              <div className="mt-5 rounded-xl bg-gray-50 p-4 text-sm text-gray-600">
+                {status.message && <p className="font-semibold text-ink">{t(status.message)}</p>}
+                {status.nextStep && <p className="mt-1">{t(status.nextStep)}</p>}
+              </div>
+            )}
           </section>
         )}
+
+        {/*
+          Reports sent from this phone, kept on the phone only (the receipt
+          number, the date and who was seen), so nobody has to have written the
+          number down.
+        */}
+        {mine.length > 0 && (
+          <section className="mt-6 rounded-xl bg-white p-4 ring-1 ring-black/5 sm:p-5">
+            <h2 className="text-base font-semibold text-ink">{t('Reports sent from this phone')}</h2>
+            <p className="mt-1 text-sm text-gray-500">{t('Only the receipt numbers are kept, on this phone alone.')}</p>
+            <ul className="mt-3 divide-y divide-black/5">
+              {mine.map((r) => (
+                <li key={r.id} className="py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate font-mono text-sm font-semibold text-ink">{r.id}</p>
+                      <p className="text-sm text-gray-500">
+                        {t('Sent {date}', { date: fmtDate(r.at) })} · {categoryLabel(r.personCategory)}
+                      </p>
+                    </div>
+                    <button type="button" className="btn-primary shrink-0" disabled={busy} onClick={() => check(r.id)}>
+                      {t('Check status')}
+                    </button>
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                    <ReceiptActions id={r.id} align="start" />
+                    <button
+                      type="button"
+                      className="px-2 text-sm font-semibold text-gray-500 hover:text-red-600"
+                      onClick={() => setMine(forgetReceipt(r.id))}
+                    >
+                      {t('Remove')}
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
+        <InstallPrompt className="mt-6" />
+
+        <p className="mt-8 text-sm text-gray-500">
+          {t('Registered a missing person?')}{' '}
+          <Link to="/track-case" className="font-semibold text-khozo hover:underline">{t('Track my case')}</Link>
+        </p>
       </main>
     </div>
   );

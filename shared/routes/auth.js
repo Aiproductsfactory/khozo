@@ -9,6 +9,9 @@ import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { nanoid } from 'nanoid';
 
+import { readFields } from '../case-domain.js';
+import { sendSms, smsGatewayConfigured } from '../sms.js';
+
 /**
  * Pending phone-verification challenges, keyed by phone number.
  *
@@ -74,31 +77,43 @@ export default function registerAuthRoutes(router, deps) {
    * that a caller might otherwise be able to guess.
    */
   async function deliverOtp(phone, code) {
-    const gateway = settings.smsGatewayUrl;
-    const apiKey = settings.smsApiKey;
-  
-    if (!gateway || !apiKey) {
+    if (!smsGatewayConfigured(settings)) {
       if (settings.nodeEnv === 'production') {
         throw Object.assign(new Error('SMS gateway is not configured'), { statusCode: 503 });
       }
       console.warn(`[auth] no SMS gateway configured; OTP for ...${phone.slice(-4)} is ${code}`);
       return { delivered: false, channel: 'console' };
     }
-  
-    const res = await fetch(gateway, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        to: phone,
-        message: `${code} is your Khozo verification code. It expires in 10 minutes. Never share it.`,
-      }),
-    });
-    if (!res.ok) throw Object.assign(new Error(`SMS gateway returned ${res.status}`), { statusCode: 502 });
+
+    const result = await sendSms(
+      { to: phone, message: `${code} is your Khozo verification code. It expires in 10 minutes. Never share it.` },
+      { settings }
+    );
+    if (!result.sent) {
+      throw Object.assign(new Error(`SMS gateway returned ${result.status ?? 'no answer'}`), { statusCode: 502 });
+    }
     return { delivered: true, channel: 'sms' };
   }
-  
+
+  // The fields each public write takes, and what each must be (readFields in
+  // shared/case-domain.js). A field sent as an object is refused, not stored.
+  const REGISTER_FIELDS = {
+    name: ['text', 120],
+    email: ['text', 160],
+    password: 'secret',
+    role: ['text', 40],
+    phone: ['text', 20],
+    otp: ['text', 12],
+    org: ['text', 120],
+    state: ['text', 80],
+    district: ['text', 80],
+    station: ['text', 120],
+  };
+
   router.post('/otp/start', registerLimit, async (req, res) => {
-    const phone = otpKey(req.body?.phone);
+    const read = readFields(req.body, { phone: ['text', 20] });
+    if (read.error) return res.status(400).json({ error: read.error });
+    const phone = otpKey(read.body.phone);
     if (!/^\d{7,15}$/.test(phone)) return res.status(400).json({ error: 'Mobile number must be 7 to 15 digits' });
   
     const code = generateOtp();
@@ -139,7 +154,10 @@ export default function registerAuthRoutes(router, deps) {
   });
   
   router.post('/register', registerLimit, async (req, res) => {
-    const { name, email, password, role = 'parent', phone, otp, org, state, district, station } = req.body || {};
+    const read = readFields(req.body, REGISTER_FIELDS);
+    if (read.error) return res.status(400).json({ error: read.error });
+    const { name, email, password, phone, otp, org, state, district, station } = read.body;
+    const role = read.body.role || 'parent';
     if (!name || !email || !password)
       return res.status(400).json({ error: 'Name, email and password are required' });
     if (!PUBLIC_ROLES.includes(role)) {
@@ -216,7 +234,9 @@ export default function registerAuthRoutes(router, deps) {
   });
   
   router.post('/login', loginLimit, async (req, res) => {
-    const { email, password } = req.body || {};
+    const read = readFields(req.body, { email: ['text', 160], password: 'secret' });
+    if (read.error) return res.status(400).json({ error: read.error });
+    const { email, password } = read.body;
     const user = findUserByEmail(email || '');
     if (!user || !bcrypt.compareSync(password || '', user.passwordHash))
       return res.status(401).json({ error: 'Invalid email or password' });
@@ -234,6 +254,8 @@ export default function registerAuthRoutes(router, deps) {
   // and a console that announces "National Command Centre" to a State
   // Department is a name nobody could change without a database session.
   router.post('/me/profile', authRequired, (req, res) => {
+    const read = readFields(req.body, { name: ['text', 400], org: ['text', 400] });
+    if (read.error) return res.status(400).json({ error: read.error });
     const tidy = (value, max) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
     const patch = {};
     if (req.body?.name !== undefined) {
@@ -261,7 +283,9 @@ export default function registerAuthRoutes(router, deps) {
   });
   
   router.post('/change-password', authRequired, (req, res) => {
-    const { currentPassword, newPassword } = req.body || {};
+    const read = readFields(req.body, { currentPassword: 'secret', newPassword: 'secret' });
+    if (read.error) return res.status(400).json({ error: read.error });
+    const { currentPassword, newPassword } = read.body;
     const nextPassword = String(newPassword || '');
     if (!bcrypt.compareSync(currentPassword || '', req.user.passwordHash)) {
       return res.status(401).json({ error: 'Current password is incorrect' });

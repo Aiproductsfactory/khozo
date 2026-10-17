@@ -2,12 +2,27 @@ import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { fmtDate, timeAgo } from '../lib.jsx';
 import { StatCard } from '../components.jsx';
+import { useT, msg, t, currentLocale } from '../i18n.jsx';
 
 const ACTION_LABELS = {
-  'security.public_rate_limited': 'Rate limit exceeded',
-  'auth.otp_failed': 'OTP failure',
-  'auth.privileged_registration_blocked': 'Privileged signup blocked',
+  'security.public_rate_limited': msg('Rate limit exceeded'),
+  'auth.otp_failed': msg('OTP failure'),
+  'auth.privileged_registration_blocked': msg('Privileged signup blocked'),
 };
+
+// Display names for the enum values the API returns; the values stay English.
+const SEVERITY_LABELS = { high: msg('High'), medium: msg('Medium'), low: msg('Low') };
+const SLA_LABELS = { open: msg('Open'), due_soon: msg('Due soon'), breached: msg('Breached'), closed: msg('Closed') };
+const DISPOSITION_LABELS = {
+  open: msg('Open'),
+  reviewed: msg('Reviewed'),
+  escalated: msg('Escalated'),
+  dismissed: msg('Dismissed'),
+};
+
+function labelFor(map, value) {
+  return map[value] ? t(map[value]) : value;
+}
 
 function signalDetail(row) {
   if (row.action === 'security.public_rate_limited') {
@@ -20,14 +35,17 @@ function signalDetail(row) {
   }
   if (row.action === 'auth.otp_failed') {
     return [
-      row.signal?.phoneSuffix ? `phone ending ${row.signal.phoneSuffix}` : null,
-      row.signal?.attempts ? `${row.signal.attempts} attempts` : null,
+      row.signal?.phoneSuffix ? t('phone ending {suffix}', { suffix: row.signal.phoneSuffix }) : null,
+      row.signal?.attempts == 1 ? t('1 attempt') : row.signal?.attempts ? t('{n} attempts', { n: row.signal.attempts }) : null,
     ].filter(Boolean).join(' / ');
   }
-  return row.signal?.requestedRole ? `requested ${row.signal.requestedRole}` : 'Blocked official-role request';
+  return row.signal?.requestedRole
+    ? t('requested {role}', { role: row.signal.requestedRole })
+    : t('Blocked official-role request');
 }
 
 export default function FraudQueue() {
+  const t = useT();
   const [data, setData] = useState({ totals: {}, signals: [], byLimiter: [] });
   const [forms, setForms] = useState({});
   const [busyId, setBusyId] = useState('');
@@ -69,38 +87,38 @@ export default function FraudQueue() {
     <div className="space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-bold">Public abuse queue</h2>
-          <p className="text-sm text-gray-500">Redacted public intake, OTP, and rate-limit signals for command review.</p>
+          <h2 className="text-2xl font-bold">{t('Public abuse queue')}</h2>
+          <p className="text-sm text-gray-500">{t('Redacted public intake, OTP, and rate-limit signals for command review.')}</p>
         </div>
-        <button className="btn-ghost" onClick={exportReport}>Export report</button>
+        <button className="btn-ghost" onClick={exportReport}>{t('Export report')}</button>
       </div>
 
       {exportData && (
         <div className="card p-4 text-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="font-semibold">Public abuse report generated</p>
-              <p className="text-gray-500">{new Date(exportData.generatedAt).toLocaleString('en-IN')} / {exportData.scope}</p>
+              <p className="font-semibold">{t('Public abuse report generated')}</p>
+              <p className="text-gray-500">{new Date(exportData.generatedAt).toLocaleString(currentLocale())} / {exportData.scope}</p>
             </div>
             <div className="flex flex-wrap gap-2 text-xs">
-              <span className="rounded-full bg-gray-100 px-2 py-1">{exportData.totals?.signals || 0} signals</span>
-              <span className="rounded-full bg-gray-100 px-2 py-1">{exportData.totals?.slaBreached || 0} SLA breached</span>
-              <span className="rounded-full bg-gray-100 px-2 py-1">digest {exportData.signature?.digest?.slice(0, 12)}...</span>
+              <span className="rounded-full bg-gray-100 px-2 py-1">{t('{n} signals', { n: exportData.totals?.signals || 0 })}</span>
+              <span className="rounded-full bg-gray-100 px-2 py-1">{t('{n} SLA breached', { n: exportData.totals?.slaBreached || 0 })}</span>
+              <span className="rounded-full bg-gray-100 px-2 py-1">{t('digest {hash}', { hash: exportData.signature?.digest?.slice(0, 12) })}...</span>
             </div>
           </div>
         </div>
       )}
 
-      <div className="grid gap-4 md:grid-cols-4">
-        <StatCard label="Signals" value={data.totals?.signals || 0} sub={data.scope} accent="blue" icon="!" />
-        <StatCard label="SLA breached" value={data.totals?.slaBreached || 0} sub="Open overdue signals" accent="red" icon="!" />
-        <StatCard label="Open" value={data.totals?.open || 0} sub="Awaiting disposition" accent="amber" icon="!" />
-        <StatCard label="Escalated" value={data.totals?.escalated || 0} sub="Command follow-up" accent="khozo" icon="!" />
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-1 sm:gap-4 md:grid-cols-4">
+        <StatCard label={t('Signals')} value={data.totals?.signals || 0} sub={data.scope} accent="blue" icon="!" />
+        <StatCard label={t('SLA breached')} value={data.totals?.slaBreached || 0} sub={t('Open overdue signals')} accent="red" icon="!" />
+        <StatCard label={t('Open')} value={data.totals?.open || 0} sub={t('Awaiting disposition')} accent="amber" icon="!" />
+        <StatCard label={t('Escalated')} value={data.totals?.escalated || 0} sub={t('Command follow-up')} accent="khozo" icon="!" />
       </div>
 
       {data.byLimiter?.length > 0 && (
         <div className="card p-4">
-          <p className="text-sm font-semibold">Top signal sources</p>
+          <p className="text-sm font-semibold">{t('Top signal sources')}</p>
           <div className="mt-3 flex flex-wrap gap-2">
             {data.byLimiter.slice(0, 8).map((item) => (
               <span key={item.name} className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">
@@ -112,18 +130,18 @@ export default function FraudQueue() {
       )}
 
       <div className="card overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px] text-sm">
+        <div className="stack-scroll overflow-x-auto">
+          <table className="stack-table w-full min-w-[900px] text-sm">
             <thead>
               <tr className="border-b border-black/5 bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
-                <th className="px-4 py-3">Time</th>
-                <th className="px-4 py-3">Priority</th>
-                <th className="px-4 py-3">Signal</th>
-                <th className="px-4 py-3">Detail</th>
-                <th className="px-4 py-3">Public identity</th>
-                <th className="px-4 py-3">Scope</th>
-                <th className="px-4 py-3">SLA</th>
-                <th className="px-4 py-3">Disposition</th>
+                <th className="px-4 py-3">{t('Time')}</th>
+                <th className="px-4 py-3">{t('Priority')}</th>
+                <th className="px-4 py-3">{t('Signal')}</th>
+                <th className="px-4 py-3">{t('Detail')}</th>
+                <th className="px-4 py-3">{t('Public identity')}</th>
+                <th className="px-4 py-3">{t('Scope')}</th>
+                <th className="px-4 py-3">{t('SLA')}</th>
+                <th className="px-4 py-3">{t('Disposition')}</th>
               </tr>
             </thead>
             <tbody>
@@ -131,38 +149,39 @@ export default function FraudQueue() {
                 const form = forms[row.id] || { disposition: 'reviewed', note: '' };
                 return (
                   <tr key={row.id} className="border-b border-black/5 last:border-0">
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3" data-label={t('Time')}>
                       <p className="font-medium">{timeAgo(row.ts)}</p>
                       <p className="text-xs text-gray-400">{fmtDate(row.ts)}</p>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3" data-label={t('Priority')}>
                       <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${row.severity === 'high' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'}`}>
-                        {row.severity}
+                        {labelFor(SEVERITY_LABELS, row.severity)}
                       </span>
                     </td>
-                    <td className="px-4 py-3 font-medium">{ACTION_LABELS[row.action] || row.action}</td>
-                    <td className="px-4 py-3 text-gray-600">{signalDetail(row) || row.summary || '-'}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-gray-500">{row.signal?.identityHash || 'redacted'}</td>
-                    <td className="px-4 py-3 text-gray-500">
-                      {[row.scope?.district, row.scope?.state].filter(Boolean).join(', ') || 'Public'}
+                    <td className="stack-full px-4 py-3 font-medium max-sm:order-first">{ACTION_LABELS[row.action] ? t(ACTION_LABELS[row.action]) : row.action}</td>
+                    <td className="px-4 py-3 text-gray-600" data-label={t('Detail')}>{signalDetail(row) || row.summary || '-'}</td>
+                    <td className="px-4 py-3 text-xs text-gray-500" data-label={t('Public identity')}><span className="font-mono">{row.signal?.identityHash || t('redacted')}</span></td>
+                    <td className="px-4 py-3 text-gray-500" data-label={t('Scope')}>
+                      {[row.scope?.district, row.scope?.state].filter(Boolean).join(', ') || t('Public')}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3" data-label={t('SLA')}>
                       <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${row.sla?.state === 'breached' ? 'bg-rose-50 text-rose-700' : row.sla?.state === 'due_soon' ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
-                        {(row.sla?.state || 'open').replaceAll('_', ' ')}
+                        {labelFor(SLA_LABELS, row.sla?.state || 'open').replaceAll('_', ' ')}
                       </span>
                       <p className="mt-1 text-xs text-gray-400">
                         {row.sla?.state === 'breached'
-                          ? `${row.sla.overdueMinutes || 0} min overdue`
+                          ? t('{n} min overdue', { n: row.sla.overdueMinutes || 0 })
                           : row.sla?.state === 'closed'
-                            ? 'closed'
-                            : `${row.sla?.hours || 24}h target`}
+                            ? t('closed')
+                            : t('{n}h target', { n: row.sla?.hours || 24 })}
                       </p>
                     </td>
-                    <td className="px-4 py-3">
-                      <div className="min-w-64 space-y-2">
+                    <td className="stack-full px-4 py-3" data-label={t('Disposition')}>
+                      {/* On a phone the note comes before Save, so Save is the last thing tapped. */}
+                      <div className="space-y-2 max-sm:flex max-sm:flex-col max-sm:gap-2 max-sm:space-y-0 sm:min-w-64">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600">
-                            {row.disposition?.status || 'open'}
+                            {labelFor(DISPOSITION_LABELS, row.disposition?.status || 'open')}
                           </span>
                           {row.disposition?.actorName && (
                             <span className="text-xs text-gray-400">
@@ -170,17 +189,17 @@ export default function FraudQueue() {
                             </span>
                           )}
                         </div>
-                        <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                        <div className="grid gap-2 max-sm:contents sm:grid-cols-[1fr_auto]">
                           <select className="field py-2 text-xs" value={form.disposition} onChange={setForm(row.id, 'disposition')}>
-                            <option value="reviewed">Reviewed</option>
-                            <option value="escalated">Escalated</option>
-                            <option value="dismissed">Dismissed</option>
+                            <option value="reviewed">{t('Reviewed')}</option>
+                            <option value="escalated">{t('Escalated')}</option>
+                            <option value="dismissed">{t('Dismissed')}</option>
                           </select>
-                          <button className="btn-primary px-3 py-2 text-xs" disabled={busyId === row.id} onClick={() => saveDisposition(row)}>
-                            {busyId === row.id ? 'Saving...' : 'Save'}
+                          <button className="btn-primary px-3 py-2 text-xs max-sm:order-last" disabled={busyId === row.id} onClick={() => saveDisposition(row)}>
+                            {busyId === row.id ? t('Saving...') : t('Save')}
                           </button>
                         </div>
-                        <input className="field py-2 text-xs" maxLength={280} value={form.note} onChange={setForm(row.id, 'note')} placeholder="Disposition note" />
+                        <input className="field py-2 text-xs" maxLength={280} value={form.note} onChange={setForm(row.id, 'note')} placeholder={t('Disposition note')} />
                       </div>
                     </td>
                   </tr>
@@ -188,7 +207,7 @@ export default function FraudQueue() {
               })}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-gray-400">No public abuse signals yet.</td>
+                  <td colSpan={8} className="stack-full px-4 py-10 text-center text-gray-400">{t('No public abuse signals yet.')}</td>
                 </tr>
               )}
             </tbody>

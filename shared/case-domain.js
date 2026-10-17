@@ -351,6 +351,93 @@ const HANDOFF_TARGET_SYSTEMS = {
   generic: 'Generic child-protection handoff',
 };
 
+/**
+ * Who a case (or a sighting) is about.
+ *
+ * Khozo began as a missing-children register, so every record written before
+ * this field existed is about a child, and a record or client that does not
+ * send it still means a child. `personCategoryOf` is the one place that default
+ * lives; nothing else should read `personCategory` raw.
+ *
+ * Adults are not children. The child-protection machinery (CWC, JJB, CCI,
+ * adoption, Childline 1098) has no jurisdiction over them, and an adult who
+ * left of their own accord — or a woman leaving a violent home — can be put in
+ * danger by a public appeal or by a "found" message that reaches the family.
+ * That is why the console never offers "alert the family" as the next step for
+ * an adult, why a family SMS for an adult needs the person's recorded consent,
+ * and why the wording a citizen sees follows the category.
+ */
+/**
+ * Roles that may mark a case `visibility: 'police'` when registering it. From
+ * anyone else the field is ignored, not rejected, so an ordinary client that
+ * happens to send it still files its report. The access rule that the value
+ * drives lives in shared/scope.js.
+ */
+const POLICE_VISIBILITY_ROLES = ['super_admin', 'admin', 'crime_bureau', 'police', 'sjpu', 'ahtu', 'dcrb'];
+const REPORT_VISIBILITY_VALUES = ['police'];
+
+const PERSON_CATEGORIES = {
+  child: 'Child',
+  woman: 'Woman',
+  adult: 'Adult person',
+};
+const PERSON_CATEGORY_AGE_LIMITS = {
+  child: { min: 0, max: 18 },
+  woman: { min: 18, max: 110 },
+  adult: { min: 18, max: 110 },
+};
+function personCategoryOf(record) {
+  const value = record?.personCategory;
+  return PERSON_CATEGORIES[value] ? value : 'child';
+}
+
+function isAdultCategory(category) {
+  return category === 'woman' || category === 'adult';
+}
+
+function isAdultCase(record) {
+  return isAdultCategory(personCategoryOf(record));
+}
+
+/** Absent means child. Anything else that is not a known category is an error. */
+function parsePersonCategory(value) {
+  const text = cleanText(value, 20).toLowerCase();
+  if (!text) return { value: 'child' };
+  if (!PERSON_CATEGORIES[text]) return { error: 'Person category must be child, woman, or adult' };
+  return { value: text };
+}
+
+/** Age bounds for a category, checked the same way for a case and a sighting. */
+function categoryAge(value, label, category) {
+  const limits = PERSON_CATEGORY_AGE_LIMITS[category] || PERSON_CATEGORY_AGE_LIMITS.child;
+  if (isAdultCategory(category)) {
+    if (value === undefined || value === null || value === '') return { value: null };
+    const n = Number(value);
+    if (Number.isFinite(n) && n < limits.min) {
+      return { error: `${label} must be at least 18 for a woman or adult person; register anyone under 18 as a child` };
+    }
+  }
+  return optionalNumber(value, label, { ...limits, integer: true });
+}
+
+/** The emergency line a member of the public is pointed to, by category. */
+function publicHelplineText(category, kind) {
+  if (kind === 'bulletin') {
+    if (category === 'woman') return 'If you have information, submit a sighting through Khozo or contact 112 / local police. Women Helpline: 181.';
+    if (category === 'adult') return 'If you have information, submit a sighting through Khozo or contact 112 / local police.';
+    return 'If you have information, submit a sighting through Khozo or contact 1098 / local police.';
+  }
+  if (kind === 'danger') {
+    if (category === 'woman') return 'If she appears to be in immediate danger, call 112. The Women Helpline 181 and the One Stop Centre (Sakhi) can also help.';
+    if (category === 'adult') return 'If the person appears to be in immediate danger, call 112.';
+    return 'If the child appears to be in immediate danger, call 1098 or 112.';
+  }
+  // kind === 'case'
+  if (category === 'woman') return 'If you have information, submit a sighting or contact 112 / Women Helpline 181.';
+  if (category === 'adult') return 'If you have information, submit a sighting or contact 112.';
+  return 'If you have information, submit a sighting or contact 1098 / 112.';
+}
+
 function isPendingCitizenIntake(report) {
   return report?.status === 'intake_pending' || report?.intakeStatus === 'pending_verification';
 }
@@ -395,10 +482,40 @@ function assignableUsersForReport(actor, report, allUsers = []) {
     );
 }
 
+/**
+ * Whether a case may be shown to the public: its name, its photo, its page.
+ *
+ * Never, by the owner's decision of 16 October 2026. The public never sees the
+ * name or the photograph of any missing person, child, woman or adult. There
+ * are no public bulletins or appeals: citizens can only send sightings, and
+ * Khozo never tells them who anyone is or whether their photo matched anyone.
+ * A family sees its own case by logging in (shared/scope.js: a parent sees the
+ * cases they registered), and tracks it publicly only by the Khozo case id it
+ * was given, which returns a status and no identity.
+ *
+ * This is the one switch every public read goes through: the bulletin list
+ * and page, public search, the anonymous photo route, the public summary and
+ * the /child/:id share preview. It used to be `report.bulletin?.published ===
+ * true`, an officer's per-case choice; records that still carry that flag stay
+ * invisible without a data migration, because nothing reads the flag to decide
+ * public visibility any more. Officers can still clear it (unpublish), and can
+ * no longer set it (POST /api/reports/:id/bulletin answers 403).
+ */
+// eslint-disable-next-line no-unused-vars
+function isPublicAppeal(report) {
+  return false;
+}
+
+/** The message a refused publish request answers with. */
+const PUBLIC_APPEALS_DISABLED =
+  'Public appeals are disabled on Khozo: names and photos of missing persons are never shown to the public.';
+
 function bulletinPayload(report) {
   const publishedAt = report.bulletin?.publishedAt || new Date(report.createdAt || Date.now()).toISOString();
+  const personCategory = personCategoryOf(report);
   return {
     id: report.id,
+    personCategory,
     childName: report.childName,
     age: report.age ?? null,
     gender: report.gender || null,
@@ -408,7 +525,7 @@ function bulletinPayload(report) {
     dateOfMissing: report.dateOfMissing || null,
     publishedAt,
     agency: report.bulletin?.agency || 'Khozo public bulletin desk',
-    instructions: 'If you have information, submit a sighting through Khozo or contact 1098 / local police.',
+    instructions: publicHelplineText(personCategory, 'bulletin'),
     photoUrl: report.photoUrl || (report.photoFile ? `/api/reports/photo/${report.id}` : null),
     // Only an active missing case is ever published as a bulletin, but the
     // status still has to be stated: the public list renders it, and decides
@@ -419,10 +536,12 @@ function bulletinPayload(report) {
 }
 
 function publicSearchPayload(report) {
-  const published = report.bulletin?.published === true && report.status === 'missing';
+  const published = isPublicAppeal(report) && report.status === 'missing';
   const recovered = ['found', 'closed'].includes(report.status);
+  const personCategory = personCategoryOf(report);
   return {
     id: report.id,
+    personCategory,
     resultType: published ? 'active_bulletin' : recovered ? 'recovered_status' : 'case_status',
     publicName: published ? report.childName : 'Identity restricted',
     ageBand: report.age == null ? null : `${Math.max(0, Number(report.age) - 1)}-${Number(report.age) + 1}`,
@@ -436,63 +555,112 @@ function publicSearchPayload(report) {
     publishedAt: published ? report.bulletin?.publishedAt || null : null,
     agency: published ? report.bulletin?.agency || 'Khozo public bulletin desk' : null,
     instructions: published
-      ? 'If you have information, submit a sighting through Khozo or contact 1098 / local police.'
+      ? publicHelplineText(personCategory, 'bulletin')
       : 'For exact case status, use the case/FIR/external-ID lookup or contact the responsible agency.',
   };
 }
 
-function publicSightingStatus(foundReport) {
+/**
+ * Where a sighting stands, as its reporter may know it.
+ *
+ * Three stages, and none of them says whether the photograph matched anyone,
+ * because the stage is a function of time alone: `received` for the first day
+ * after the report was sent, `under_review` until the review window has passed,
+ * then `closed`. Nothing an officer or a face engine does to the record moves
+ * it, and nothing about the record but its submission time is read.
+ *
+ * It used to follow the officers' decisions, which leaked the outcome: only a
+ * sighting the engines linked to a case raised a high-priority alert and sat in
+ * the Matches queue, so only those were reliably confirmed or rejected, and a
+ * receipt that read `closed` within a day meant "your photograph matched a
+ * missing person". For a woman or an adult it was close to certain, because an
+ * unmatched adult sighting had no web action that closed it at all. A stage
+ * that depends on time cannot say anything about the match.
+ *
+ * Records written while the stage followed decisions still carry a
+ * `publicStage` field; it is ignored.
+ */
+const SIGHTING_STAGES = ['received', 'under_review', 'closed'];
+/** How long a sighting reads `received`. */
+const SIGHTING_RECEIVED_WINDOW_MS = DAY;
+/** How long after submission a sighting reads `under_review` before `closed`. */
+const SIGHTING_REVIEW_WINDOW_MS = 30 * DAY;
+
+/** A stored timestamp (epoch ms, numeric string or ISO date) as epoch ms, or 0. */
+function timestampOf(value) {
+  if (value == null || value === '') return 0;
+  const n = Number(value);
+  const t = Number.isFinite(n) ? n : Date.parse(value);
+  return Number.isFinite(t) ? t : 0;
+}
+
+function sightingPublicStage(foundReport, now = Date.now()) {
+  const submitted = timestampOf(foundReport?.createdAt);
+  if (!submitted) return 'received';
+  const elapsed = now - submitted;
+  if (elapsed < SIGHTING_RECEIVED_WINDOW_MS) return 'received';
+  if (elapsed < SIGHTING_REVIEW_WINDOW_MS) return 'under_review';
+  return 'closed';
+}
+
+const SIGHTING_STAGE_MESSAGES = {
+  received: 'Your report has been received and is waiting for review by the responsible officers.',
+  under_review: 'Your report is being reviewed by the responsible officers.',
+  closed: 'The review period for this report has ended. Thank you for reporting.',
+};
+
+/**
+ * The public receipt lookup for a sighting.
+ *
+ * Only what the reporter already knows (their receipt id, when they sent it,
+ * the place they typed) plus a stage that does not depend on the match
+ * outcome. Deliberately absent: the status, the referral wording, the
+ * jurisdiction (on a strong match that is overwritten with the matched case's,
+ * so it would tell the reporter where the person they saw is from), and the
+ * category's own wording beyond the emergency line for the category the
+ * reporter themselves chose.
+ */
+function publicSightingStatus(foundReport, now = Date.now()) {
+  const stage = sightingPublicStage(foundReport, now);
   return {
     id: foundReport.id,
-    status: foundReport.status,
-    foundLocation: foundReport.foundLocation || 'Location under review',
-    state: foundReport.state || null,
-    district: foundReport.district || null,
+    stage,
     submittedAt: foundReport.createdAt || null,
-    referralStatus: foundReport.referralStatus || null,
-    referredTo1098: Boolean(foundReport.referredTo1098),
-    reviewStage: foundReport.status === 'matched'
-      ? 'review_complete'
-      : foundReport.status === 'rejected'
-        ? 'review_closed'
-        : foundReport.status === 'formalized_case'
-          ? 'formal_case_created'
-        : foundReport.status === 'referred_cwc'
-          ? 'childline_cwc_referred'
-          : foundReport.status === 'cwc_followup_complete'
-            ? 'cwc_followup_complete'
-          : foundReport.status === 'pending_review'
-            ? 'police_review_pending'
-            : 'cwc_intake_queued',
-    message: foundReport.status === 'matched'
-      ? 'The sighting has been reviewed by an authorized officer.'
-      : foundReport.status === 'rejected'
-        ? 'The sighting was reviewed and closed by the responsible team.'
-        : foundReport.status === 'formalized_case'
-          ? 'The child-protection team has opened a formal found-child intake record.'
-        : foundReport.status === 'referred_cwc'
-          ? 'The sighting has been referred to Childline/CWC for follow-up.'
-          : foundReport.status === 'cwc_followup_complete'
-            ? 'CWC/DCPU follow-up has been recorded for this sighting.'
-          : foundReport.status === 'pending_review'
-            ? 'The sighting is queued for police review.'
-            : 'The sighting is saved and queued for Childline/CWC intake.',
-    nextStep: 'If the child appears to be in immediate danger, call 1098 or 112.',
+    foundLocation: foundReport.foundLocation || null,
+    message: SIGHTING_STAGE_MESSAGES[stage],
+    nextStep: publicHelplineText(personCategoryOf(foundReport), 'danger'),
   };
 }
 
-function publicCaseStatus(report, lookupRef = '') {
-  const externalIds = Array.isArray(report.externalIds) ? report.externalIds : [];
-  const matchedExternal = externalIds.find((row) => norm(row.externalId) === norm(lookupRef));
-  const latestWorkflow = Array.isArray(report.workflow) && report.workflow.length
-    ? report.workflow.slice().sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0))[0]
-    : null;
-  const published = report.bulletin?.published === true;
+/** Latest moment a case's public status could have changed, as epoch ms. */
+function caseStatusUpdatedAt(report) {
+  const times = [
+    report.createdAt,
+    report.verifiedAt,
+    report.lastWorkflowAt,
+    report.closure?.closedAt,
+  ]
+    .map((value) => (typeof value === 'number' ? value : Date.parse(value || '')))
+    .filter((value) => Number.isFinite(value));
+  return times.length ? Math.max(...times) : report.createdAt || null;
+}
+
+/**
+ * The public case lookup, for a family holding its Khozo case id.
+ *
+ * A status and nothing that identifies anyone: no name, age or age band,
+ * gender, district or state, FIR or external id, photo, or workflow labels.
+ * It is reached only by the case id (see GET /api/reports/public/status/:ref),
+ * which is random and given to the family at registration; FIR numbers and
+ * external ids are guessable and no longer resolve publicly.
+ */
+function publicCaseStatus(report) {
   const active = ['missing', 'under_review', 'intake_pending'].includes(report.status);
+  const personCategory = personCategoryOf(report);
+  const adult = isAdultCategory(personCategory);
   return {
     id: report.id,
     status: report.status,
-    intakeStatus: report.intakeStatus || null,
     statusLabel: report.status === 'intake_pending'
       ? 'Citizen/NGO intake pending verification'
       : report.status === 'missing'
@@ -504,34 +672,76 @@ function publicCaseStatus(report, lookupRef = '') {
             : report.status === 'closed'
               ? 'Case closed'
               : 'Status under review',
-    publicName: published ? report.childName : 'Identity restricted',
-    ageBand: report.age == null ? null : `${Math.max(0, Number(report.age) - 1)}-${Number(report.age) + 1}`,
-    gender: report.gender || null,
-    district: report.district || null,
-    state: report.state || null,
-    firNo: report.firNo || null,
-    externalId: matchedExternal ? {
-      idType: matchedExternal.idType,
-      label: matchedExternal.label,
-      issuingSystem: matchedExternal.issuingSystem,
-      externalId: matchedExternal.externalId,
-    } : null,
-    registeredAt: report.createdAt || null,
-    dateOfMissing: report.dateOfMissing || null,
-    publicBulletin: published,
-    workflowStage: latestWorkflow ? latestWorkflow.label || latestWorkflow.action : null,
-    closureReason: report.closure?.reasonLabel || null,
     message: active
       ? 'The case is active with the responsible agency.'
       : report.status === 'found'
-        ? 'The child has been marked found or traced by an authorized agency.'
+        // A traced adult decides who is told where they are. Saying more than
+        // "traced" to whoever holds the case number can lead an abuser to them.
+        ? (adult
+          ? 'The person has been traced by an authorized agency. Any contact is arranged only with their consent.'
+          : 'The child has been marked found or traced by an authorized agency.')
         : report.status === 'closed'
           ? 'The case has been closed by an authorized agency.'
           : 'The case is saved for official review.',
     nextStep: active
-      ? 'If you have information, submit a sighting or contact 1098 / 112.'
+      ? publicHelplineText(personCategory, 'case')
       : 'For urgent concerns, contact the responsible police/CWC desk or emergency helplines.',
+    registeredAt: report.createdAt || null,
+    updatedAt: caseStatusUpdatedAt(report),
+    // Who the case is about (child / woman / adult) decides the helpline the
+    // page offers. It is the family's own case, and it names nobody.
+    personCategory,
   };
+}
+
+/**
+ * Accounts anyone can create for themselves (a phone and an OTP is enough):
+ * a parent or relative, and an NGO. They see only the cases they registered
+ * (shared/scope.js), and only through citizenCaseView.
+ */
+const CITIZEN_ROLES = ['parent', 'ngo'];
+
+function isCitizenRole(role) {
+  return CITIZEN_ROLES.includes(role);
+}
+
+/**
+ * What the person who registered a case is shown of it, when they are a
+ * parent, a relative or an NGO rather than an officer.
+ *
+ * An allow-list: what they told Khozo, and where the case stands. Everything
+ * the agencies added is left out - where the person was found or seen, officer
+ * notes, shelter and care records, restoration plans, production and court
+ * records, workflow notes, match scores. A family is told about a trace by an
+ * officer, never by a field appearing on a page, and for a woman or an adult
+ * that is a matter of safety: the relative who registered her may be the
+ * person she left, and she decides whether they learn where she is (an
+ * officer records her consent before the family is contacted).
+ *
+ * The case's district is the one it was registered in. Officers may move a
+ * case to the district it is being worked from, which for a traced person is
+ * where they are now.
+ */
+const CITIZEN_CASE_FIELDS = [
+  'id', 'personCategory', 'firNo', 'childName', 'childAadhar', 'gender', 'age', 'height', 'weight',
+  'identificationProfile', 'vulnerabilityProfile', 'declaration', 'hasIdentificationProfile', 'hasVulnerabilityProfile',
+  'dateOfMissing', 'photoUrl', 'photoConsent', 'dataPurpose', 'retentionUntil',
+  'status', 'intakeStatus', 'intakeSource', 'verifiedAt',
+  'parentName', 'parentPhone', 'parentPhoneSource', 'parentEmail', 'address', 'zip',
+  'smsSent', 'registeredByRole', 'registeredById', 'createdAt', 'anonymizedAt',
+];
+
+function citizenCaseView(report) {
+  if (!report) return report;
+  const view = {};
+  for (const key of CITIZEN_CASE_FIELDS) {
+    if (key in report) view[key] = report[key];
+  }
+  const registered = Array.isArray(report.transfers) && report.transfers[0]?.from ? report.transfers[0].from : report;
+  view.state = registered.state || null;
+  view.district = registered.district || null;
+  view.personCategory = personCategoryOf(report);
+  return view;
 }
 
 function stable(value) {
@@ -623,6 +833,7 @@ function caseHandoffPayload(report, actor, { targetSystem, purpose, includeOpera
       intakeStatus: report.intakeStatus || null,
       intakeSource: report.intakeSource || null,
       caseOrigin: report.caseOrigin || 'missing_child_report',
+      personCategory: personCategoryOf(report),
       child: {
         name: report.childName || 'Identity restricted',
         age: report.age ?? null,
@@ -639,7 +850,7 @@ function caseHandoffPayload(report, actor, { targetSystem, purpose, includeOpera
         verifiedAt: report.verifiedAt || null,
         lastWorkflowAt: report.lastWorkflowAt || null,
       },
-      publicBulletin: Boolean(report.bulletin?.published),
+      publicBulletin: isPublicAppeal(report),
       sourceFoundReportId: report.sourceFoundReportId || null,
       externalIds: (Array.isArray(report.externalIds) ? report.externalIds : []).map((row) => ({
         idType: row.idType,
@@ -714,10 +925,52 @@ function nameOverlap(a, b) {
   return hit / Math.max(aa.size, bb.size);
 }
 
-function duplicateScore(candidate, incoming) {
+/** A phone number reduced to its last ten digits, for set membership. */
+function phoneKey(value) {
+  const d = digits(value);
+  return d.length >= 7 ? d.slice(-10) : '';
+}
+
+/**
+ * Phones that belong to an agency rather than a family: every account that is
+ * not a parent (police stations, SJPU, CWC, NGOs...). Built by the caller from
+ * its user list, because this module does not read storage.
+ */
+function nonFamilyPhoneSet(users = []) {
+  const set = new Set();
+  for (const user of users) {
+    if (!user || user.role === 'parent') continue;
+    const key = phoneKey(user.phone);
+    if (key) set.add(key);
+  }
+  return set;
+}
+
+/**
+ * The guardian phone on a record, or null when it is not evidence of family.
+ *
+ * When an officer registers a case without a guardian number, the route fills
+ * in the officer's own phone so the case has a contact. That number is the
+ * same on every case the officer registers, so treating it as a family phone
+ * made two unrelated children registered by one desk look like the same child
+ * (+0.28, enough with a shared district to cross the 0.58 threshold) and
+ * blocked bulk imports of official registers. A number that is recorded as the
+ * registering officer's fallback, or that belongs to any agency account, says
+ * nothing about who the child is, so it does not count.
+ */
+function familyPhone(record, nonFamilyPhones) {
+  if (!record?.parentPhone) return null;
+  if (record.parentPhoneSource === 'registering_officer') return null;
+  if (nonFamilyPhones?.size && nonFamilyPhones.has(phoneKey(record.parentPhone))) return null;
+  return String(record.parentPhone).trim() || null;
+}
+
+function duplicateScore(candidate, incoming, { nonFamilyPhones = null } = {}) {
   let score = 0;
   score += nameOverlap(candidate.childName, incoming.childName) * 0.32;
-  if (candidate.parentPhone && incoming.parentPhone && candidate.parentPhone === incoming.parentPhone) score += 0.28;
+  const candidatePhone = familyPhone(candidate, nonFamilyPhones);
+  const incomingPhone = familyPhone(incoming, nonFamilyPhones);
+  if (candidatePhone && incomingPhone && candidatePhone === incomingPhone) score += 0.28;
   if (candidate.childAadhar && incoming.childAadhar && candidate.childAadhar === incoming.childAadhar) score += 0.45;
   if (candidate.gender && incoming.gender && candidate.gender === incoming.gender) score += 0.08;
   if (candidate.age != null && incoming.age != null) {
@@ -729,9 +982,9 @@ function duplicateScore(candidate, incoming) {
   return Math.min(0.99, Number(score.toFixed(2)));
 }
 
-function findDuplicateCandidates(user, incoming, allReports = [], scopeReports = (_u, rows) => rows) {
+function findDuplicateCandidates(user, incoming, allReports = [], scopeReports = (_u, rows) => rows, { nonFamilyPhones = null } = {}) {
   return scopeReports(user, allReports)
-    .map((report) => ({ report, score: duplicateScore(report, incoming) }))
+    .map((report) => ({ report, score: duplicateScore(report, incoming, { nonFamilyPhones }) }))
     .filter((c) => c.score >= 0.58)
     .sort((a, b) => b.score - a.score)
     .slice(0, 5);
@@ -740,6 +993,7 @@ function findDuplicateCandidates(user, incoming, allReports = [], scopeReports =
 function duplicatePayload(user, candidate) {
   const base = {
     reportId: candidate.report.id,
+    personCategory: personCategoryOf(candidate.report),
     childName: candidate.report.childName,
     age: candidate.report.age,
     gender: candidate.report.gender,
@@ -767,6 +1021,187 @@ function retentionUntil(days) {
 function cleanText(v, max = 140) {
   const text = String(v || '').trim();
   return text.length <= max ? text : text.slice(0, max);
+}
+
+// ---- Strict request bodies -------------------------------------------------
+//
+// A route used to copy what it was sent straight onto the record:
+// `foundLocation: b.foundLocation || 'Unknown'`. A JSON body of
+// {"foundLocation": {"x": 1}} was then stored as an object, and every desk
+// whose screen rendered that sighting crashed, because React cannot render an
+// object as text. cleanText() alone does not catch it either: it turns the
+// object into the string "[object Object]" and stores that.
+//
+// So a write route names the fields it reads and what each must be, and any
+// field that is present with the wrong shape is refused with
+// `Invalid value for <field>` before anything is written. Text is trimmed and
+// cut to a length here; fields a validator later checks for "too long" are read
+// with a generous limit so that check still runs.
+
+/** The refusal for a field sent with the wrong shape. */
+function invalidValue(field) {
+  return `Invalid value for ${field}`;
+}
+
+function isNumericValue(value) {
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (typeof value !== 'string') return false;
+  const text = value.trim();
+  return text === '' || Number.isFinite(Number(text));
+}
+
+/**
+ * Reads `body` against `spec`, a map of field name to rule:
+ *
+ *   'text' | ['text', max]   a string, trimmed and cut to `max` (default 140)
+ *   'secret'                 a string, kept exactly as sent (passwords)
+ *   'number'                 a number, or a string holding one (or empty)
+ *   'flag'                   a boolean, string or number (isTruthy reads it)
+ *   'list' | ['list', max]   a string or an array of strings, each cleaned
+ *
+ * Absent, undefined and null fields are skipped. Returns `{ error, field }` for
+ * the first field with the wrong shape, else `{ body }`: the original body
+ * with the named fields replaced by their cleaned values. Fields the spec does
+ * not name pass through unchanged, so a route must name every field it stores.
+ */
+function readFields(body, spec) {
+  const source = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+  const cleaned = {};
+  for (const [field, rule] of Object.entries(spec)) {
+    if (!Object.prototype.hasOwnProperty.call(source, field)) continue;
+    const value = source[field];
+    if (value === undefined || value === null) continue;
+    const [kind, limit] = Array.isArray(rule) ? rule : [rule];
+    const refuse = { error: invalidValue(field), field };
+    if (kind === 'text') {
+      if (typeof value !== 'string') return refuse;
+      cleaned[field] = cleanText(value, limit ?? 140);
+    } else if (kind === 'secret') {
+      if (typeof value !== 'string') return refuse;
+    } else if (kind === 'number') {
+      if (!isNumericValue(value)) return refuse;
+      cleaned[field] = typeof value === 'string' ? value.trim() : value;
+    } else if (kind === 'flag') {
+      if (!['boolean', 'string', 'number'].includes(typeof value)) return refuse;
+      if (typeof value === 'string') cleaned[field] = cleanText(value, 10);
+    } else if (kind === 'list') {
+      if (Array.isArray(value)) {
+        if (value.some((item) => typeof item !== 'string')) return refuse;
+        cleaned[field] = value.slice(0, 50).map((item) => cleanText(item, limit ?? 60));
+      } else if (typeof value === 'string') {
+        cleaned[field] = cleanText(value, 1000);
+      } else {
+        return refuse;
+      }
+    }
+  }
+  return { body: { ...source, ...cleaned } };
+}
+
+/**
+ * The first top-level field holding something no write route stores as sent:
+ * an object, or an array with anything but strings and numbers in it. `allow`
+ * names the fields that are objects by design (a match confirmation's
+ * `verification`). Returns the field name, or null.
+ */
+function nestedValueField(body, allow = []) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  for (const [field, value] of Object.entries(body)) {
+    if (value === null || value === undefined || allow.includes(field)) continue;
+    if (Array.isArray(value)) {
+      if (value.some((item) => item !== null && !['string', 'number'].includes(typeof item))) return field;
+    } else if (typeof value === 'object') {
+      return field;
+    }
+  }
+  return null;
+}
+
+// ---- Confirming an identity --------------------------------------------------
+//
+// A confirmed match tells a family their child is found and starts a rescue,
+// and until now the record kept only that somebody pressed the button. An
+// officer now records how they satisfied themselves that the person found is
+// the person missing: how (in person, by video, from documents), who checked,
+// where, and what they saw. A confirmation without it is refused.
+
+const VERIFICATION_METHODS = {
+  in_person: 'In person',
+  video_call: 'Video call',
+  documents: 'Documents',
+  other: 'Other',
+};
+
+const VERIFICATION_REQUIRED = 'Record how the identity was verified before confirming';
+
+/**
+ * `body.verification` as stored, or null when it is missing or incomplete.
+ * Accepts the object itself or its JSON text (a form post).
+ */
+function parseVerification(value, user = null) {
+  let input = value;
+  if (typeof input === 'string') {
+    try {
+      input = JSON.parse(input);
+    } catch {
+      return null;
+    }
+  }
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const { method, verifiedBy, place, note } = input;
+  if (typeof method !== 'string' || !VERIFICATION_METHODS[method]) return null;
+  if ([verifiedBy, place, note].some((field) => typeof field !== 'string')) return null;
+  const by = cleanText(verifiedBy, 120);
+  const where = cleanText(place, 180);
+  const how = cleanText(note, 1000);
+  if (by.length < 2 || where.length < 2 || how.length < 10) return null;
+  return {
+    method,
+    methodLabel: VERIFICATION_METHODS[method],
+    verifiedBy: by,
+    place: where,
+    note: how,
+    recordedAt: new Date().toISOString(),
+    recordedById: user?.id || null,
+    recordedByName: user?.name || null,
+    recordedByRole: user?.role || null,
+  };
+}
+
+// ---- Telling the family --------------------------------------------------------
+
+/** How an officer reached a family, recorded by POST /api/reports/:id/family-contacted. */
+const FAMILY_CONTACT_METHODS = {
+  call: 'Phone call',
+  visit: 'Visit',
+  sms: 'SMS',
+};
+
+/** The refusal when a woman or adult has not agreed to her family being told. */
+const PERSON_CONSENT_REQUIRED =
+  'Verify with the person first; share their location with the family only with their consent';
+
+/**
+ * What an officer is told when Khozo did not send the family an SMS. Fixed
+ * sentences, so the console can translate them (web/src/serverMessages.js).
+ */
+const FAMILY_SMS_MESSAGES = {
+  sent: 'SMS sent to the family.',
+  no_gateway: 'No SMS gateway is connected. Call the family directly and record the call.',
+  gateway_failed: 'The SMS gateway did not accept the message. Call the family directly and record the call.',
+  no_family_phone: 'No family phone number is recorded on this case. Record how the family was contacted.',
+  not_requested: 'The family has not been told yet. Call them and record the call.',
+  consent_required: PERSON_CONSENT_REQUIRED,
+};
+
+/**
+ * The text Khozo sends a family. It says there is news and who to call, never
+ * where the person is: a message can be read by whoever holds the phone.
+ */
+function familySmsText(report, officer) {
+  const desk = cleanText(officer?.org || officer?.name, 80) || 'the police desk handling it';
+  const phone = cleanText(officer?.phone, 20);
+  return `Khozo: there is news about the case you registered (${report.id}). Please contact ${desk}${phone ? ` on ${phone}` : ''}.`;
 }
 
 function parseDateInput(value, label) {
@@ -915,13 +1350,18 @@ function validateImageFile(file, label = 'Photo') {
 
 function validateMissingReport(body, file) {
   const errors = [];
-  if (!cleanText(body.childName, 80)) errors.push('Child name is required');
-  const imageError = validateImageFile(file, 'Child photo');
+  const category = parsePersonCategory(body.personCategory);
+  if (category.error) errors.push(category.error);
+  const personCategory = category.value || 'child';
+  const adult = isAdultCategory(personCategory);
+  if (!cleanText(body.childName, 80)) errors.push(adult ? 'Name of the missing person is required' : 'Child name is required');
+  const imageError = validateImageFile(file, adult ? 'Photo' : 'Child photo');
   if (imageError) errors.push(imageError);
-  const age = optionalNumber(body.age, 'Age', { min: 0, max: 18, integer: true });
+  const age = categoryAge(body.age, 'Age', personCategory);
   const height = optionalNumber(body.height, 'Height', { min: 20, max: 220 });
-  const weight = optionalNumber(body.weight, 'Weight', { min: 1, max: 150 });
+  const weight = optionalNumber(body.weight, 'Weight', { min: 1, max: adult ? 250 : 150 });
   for (const check of [age, height, weight]) if (check.error) errors.push(check.error);
+  if (personCategory === 'woman' && body.gender === 'Male') errors.push('Gender for a missing woman must be Female or Other');
   if (body.childAadhar && !/^\d{12}$/.test(digits(body.childAadhar))) errors.push('Child Aadhar must be 12 digits');
   if (body.parentPhone && !/^\d{7,15}$/.test(digits(body.parentPhone))) errors.push('Guardian mobile number must be 7 to 15 digits');
   if (body.gender && !['Male', 'Female', 'Other'].includes(body.gender)) errors.push('Gender must be Male, Female, or Other');
@@ -948,14 +1388,19 @@ function validateMissingReport(body, file) {
     else if (missingAt > Date.now() + DAY) errors.push('Date of missing cannot be in the future');
   }
   if (errors.length) return { errors };
-  return { age: age.value, height: height.value, weight: weight.value };
+  return { age: age.value, height: height.value, weight: weight.value, personCategory };
 }
 
 function validateFoundReport(body, file) {
   const errors = [];
+  // Who was seen. Absent means a child, so the existing public form and any
+  // queued offline report keep working unchanged.
+  const category = parsePersonCategory(body.personCategory);
+  if (category.error) errors.push(category.error);
+  const personCategory = category.value || 'child';
   const imageError = validateImageFile(file, 'Sighting photo');
   if (imageError) errors.push(imageError);
-  const ageApprox = optionalNumber(body.ageApprox, 'Approximate age', { min: 0, max: 18, integer: true });
+  const ageApprox = categoryAge(body.ageApprox, 'Approximate age', personCategory);
   const lat = optionalNumber(body.lat, 'Latitude', { min: -90, max: 90 });
   const lng = optionalNumber(body.lng, 'Longitude', { min: -180, max: 180 });
   for (const check of [ageApprox, lat, lng]) if (check.error) errors.push(check.error);
@@ -966,7 +1411,7 @@ function validateFoundReport(body, file) {
   if (cleanText(body.foundLocation, 180).length < String(body.foundLocation || '').trim().length) errors.push('Found location is too long');
   if (cleanText(body.note, 500).length < String(body.note || '').trim().length) errors.push('Sighting note is too long');
   if (errors.length) return { errors };
-  return { ageApprox: ageApprox.value, lat: lat.value, lng: lng.value };
+  return { ageApprox: ageApprox.value, lat: lat.value, lng: lng.value, personCategory };
 }
 
 /**
@@ -1059,15 +1504,37 @@ export {
   PRODUCTION_TYPES,
   PRODUCTION_OUTCOMES,
   HANDOFF_TARGET_SYSTEMS,
+  POLICE_VISIBILITY_ROLES,
+  REPORT_VISIBILITY_VALUES,
+  PERSON_CATEGORIES,
+  PERSON_CATEGORY_AGE_LIMITS,
+  personCategoryOf,
+  isAdultCategory,
+  isAdultCase,
+  parsePersonCategory,
+  categoryAge,
+  publicHelplineText,
+  phoneKey,
+  nonFamilyPhoneSet,
+  familyPhone,
   isPendingCitizenIntake,
   generatedFirNo,
   canTransferToJurisdiction,
   canAssignUserToReport,
   assignableUsersForReport,
+  isPublicAppeal,
+  PUBLIC_APPEALS_DISABLED,
   bulletinPayload,
   publicSearchPayload,
+  SIGHTING_STAGES,
+  SIGHTING_RECEIVED_WINDOW_MS,
+  SIGHTING_REVIEW_WINDOW_MS,
+  sightingPublicStage,
   publicSightingStatus,
   publicCaseStatus,
+  CITIZEN_ROLES,
+  isCitizenRole,
+  citizenCaseView,
   stable,
   signedCaseExport,
   latestRecord,
@@ -1082,6 +1549,16 @@ export {
   isTruthy,
   retentionUntil,
   cleanText,
+  invalidValue,
+  readFields,
+  nestedValueField,
+  VERIFICATION_METHODS,
+  VERIFICATION_REQUIRED,
+  parseVerification,
+  FAMILY_CONTACT_METHODS,
+  PERSON_CONSENT_REQUIRED,
+  FAMILY_SMS_MESSAGES,
+  familySmsText,
   parseDateInput,
   parseDateTimeInput,
   optionalDateInput,

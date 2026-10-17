@@ -7,6 +7,8 @@
 
 import { nanoid } from 'nanoid';
 
+import { readFields } from '../case-domain.js';
+
 export default function registerGrievanceRoutes(router, deps) {
   const {
     addActivity, addAudit, addGrievance, findGrievance, listGrievances, updateGrievance,
@@ -87,23 +89,45 @@ export default function registerGrievanceRoutes(router, deps) {
     };
   }
   
+  // A grievance with no place reaches every desk, so an unrouted complaint is
+  // never in nobody's queue. A desk with no jurisdiction of its own - a state
+  // desk with no state, a district desk with no district - sees none: an
+  // account provisioned without one used to see every state's grievances.
   function scopedGrievances(user) {
     const rows = listGrievances();
     if (user.role === 'super_admin') return rows;
     const userState = user.jurisdiction?.state || null;
     const userDistrict = user.jurisdiction?.district || null;
     if (['admin', 'state_nodal', 'sara', 'crime_bureau'].includes(user.role)) {
-      return rows.filter((g) => !userState || g.state === userState || !g.state);
+      if (!userState) return [];
+      return rows.filter((g) => g.state === userState || !g.state);
     }
     if (['police', 'sjpu', 'ahtu', 'dcrb', 'dlsa', 'cwc', 'dcpu', 'rpf', 'cci', 'saa', 'jjb'].includes(user.role)) {
+      if (!userState || !userDistrict) return [];
       return rows.filter((g) => {
-        if (userState && g.state && g.state !== userState) return false;
-        if (userDistrict && g.district && g.district !== userDistrict) return false;
+        if (g.state && g.state !== userState) return false;
+        if (g.district && g.district !== userDistrict) return false;
         return true;
       });
     }
     return [];
   }
+
+  // Every field a grievance stores, and what each must be (readFields in
+  // shared/case-domain.js). A field sent as an object is refused, not stored.
+  const GRIEVANCE_FIELDS = {
+    grievanceType: ['text', 60],
+    reportToLevel: ['text', 40],
+    name: ['text', 120],
+    phone: ['text', 20],
+    email: ['text', 120],
+    state: ['text', 80],
+    district: ['text', 80],
+    linkedReceiptId: ['text', 80],
+    subject: ['text', 160],
+    description: ['text', 2000],
+    attachmentName: ['text', 180],
+  };
   
   router.get('/status/:id', grievanceStatusLimit, (req, res) => {
     const grievance = findGrievance(req.params.id);
@@ -112,7 +136,9 @@ export default function registerGrievanceRoutes(router, deps) {
   });
   
   router.post('/', grievanceSubmitLimit, (req, res) => {
-    const body = req.body || {};
+    const read = readFields(req.body, GRIEVANCE_FIELDS);
+    if (read.error) return res.status(400).json({ error: read.error });
+    const body = read.body;
     const grievanceType = cleanText(body.grievanceType, 60) || 'other';
     const reportToLevel = cleanText(body.reportToLevel, 40) || 'dcpu';
     if (!GRIEVANCE_TYPES[grievanceType]) {
@@ -210,6 +236,8 @@ export default function registerGrievanceRoutes(router, deps) {
     if (!scopedGrievances(req.user).some((row) => row.id === grievance.id)) {
       return res.status(403).json({ error: 'Grievance is outside your jurisdiction' });
     }
+    const read = readFields(req.body, { status: ['text', 40], note: ['text', 1000], publicMessage: ['text', 500] });
+    if (read.error) return res.status(400).json({ error: read.error });
     const status = cleanText(req.body?.status, 40);
     if (!GRIEVANCE_STATUSES[status]) {
       return res.status(400).json({ error: `Status must be one of ${Object.keys(GRIEVANCE_STATUSES).join(', ')}` });

@@ -133,19 +133,25 @@ npx wrangler hyperdrive get <id>                      # caching.disabled must be
 npx wrangler hyperdrive update <id> --caching-disabled
 ```
 
-### Demo logins (seeded)
+### Accounts
 
-| Role        | Email                   | Password   |
-|-------------|-------------------------|------------|
-| Super Admin | superadmin@khozo.org    | khozo123   |
-| Admin       | admin@khozo.org         | khozo123   |
-| Police User | police@khozo.org        | khozo123   |
-| Parent      | parent@khozo.org        | khozo123   |
-| NGO         | ngo@khozo.org           | khozo123   |
+**Local development** (no `DATABASE_URL`): the JSON store seeds one account per
+role on the password `khozo123` — superadmin@, admin@, police@, sjpu@, ahtu@,
+dcrb@, dlsa@, cwc@, dcpu@, rpf@, cci@, saa@, jjb@, nodal@, sara@, crimebureau@,
+parent@ and ngo@khozo.org. The login page offers them all in dev builds.
 
-Thirteen further official roles (SJPU, AHTU, DCRB, DLSA, CWC, DCPU, RPF, CCI,
-SAA, JJB, state nodal, SARA, crime bureau) are seeded on the same password —
-`npm run test:accounts` lists them all.
+**Any real deployment**: official accounts have individual passwords, held by the
+administrators and never committed. A shared password on an official account
+lets anyone who has read this repository sign in as super admin and read every
+missing person's file. Only the low-privilege demo parent and NGO accounts
+(which see nothing but what they filed) keep a shared password and appear on the
+production login page. To retire a shared password on a deployment:
+
+```bash
+KHOZO_OLD_PASSWORD=... node scripts/rotate-account-passwords.mjs --api https://khozo.org   --out <path outside the repo>/khozo-accounts.csv --keep parent@khozo.org,ngo@khozo.org
+```
+
+`scripts/reset-passwords.mjs` refuses any database that is not local.
 
 ## Structure
 
@@ -162,3 +168,7 @@ khozo/
   scripts/          tests, seeding, migrations, deck tooling
   test-assets/      local-only test fixtures
 ```
+
+## Licence and contributing
+
+Khozo is open source under the [Apache License 2.0](LICENSE). See [CONTRIBUTING.md](CONTRIBUTING.md) for how to run the checks and the rules every change follows, and [SECURITY.md](SECURITY.md) to report a vulnerability privately. Governance drafts for departments adopting Khozo (privacy notice, impact assessment, data-sharing agreement, officer SOP) are in [docs/governance/](docs/governance/).

@@ -35,7 +35,7 @@ import {
 
 import * as store from '../server/src/store.js';
 import { isPostgres } from '../server/src/db.js';
-import { detectPerson, matchEngineInfo, probeMatchProviders, rankMatches } from '../server/src/match.js';
+import { detectPerson, matchEngineInfo, probeMatchProviders, rankMatches, rankSightingMatches } from '../server/src/match.js';
 
 const PORT = Number(process.env.PORT || 4500);
 
@@ -92,6 +92,7 @@ function buildDeps(env) {
     fixedWindowRateLimit,
 
     rankMatches,
+    rankSightingMatches,
     detectPerson,
     matchEngineInfo,
     probeMatchProviders,

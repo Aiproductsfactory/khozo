@@ -10,7 +10,17 @@ import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { nanoid } from 'nanoid';
 
-import { scopeActivity, scopeAudit, scopeFoundReports, scopeReports, scopeLabel } from '../scope.js';
+import { sameDistrict, sameState, scopeActivity, scopeAudit, scopeFoundReports, scopeReports, scopeLabel } from '../scope.js';
+import {
+  cleanText,
+  readFields,
+  PERSON_CATEGORIES,
+  personCategoryOf,
+  isPublicAppeal,
+  publicReporterName,
+  isCitizenRole,
+  citizenCaseView,
+} from '../case-domain.js';
 
 export default function registerDashboardRoutes(router, deps) {
   const {
@@ -21,6 +31,7 @@ export default function registerDashboardRoutes(router, deps) {
     readPhoto, probeMatchProviders,
     isPostgres,
     authRequired, passwordChangeRequired, publicUser, requireRole,
+    auditPublicRateLimit, clientIp, fixedWindowRateLimit,
     matchEngineInfo,
     settings = {},
   } = deps;
@@ -61,6 +72,9 @@ export default function registerDashboardRoutes(router, deps) {
     { label: 'Childline', phone: '1098' },
     { label: 'Police emergency', phone: '112' },
     { label: 'Railway helpline', phone: '139' },
+    // For a missing or endangered woman. The One Stop Centre (Sakhi) in each
+    // district is reached through it.
+    { label: 'Women Helpline', phone: '181' },
   ];
   const PUBLIC_INCIDENT_ROUTES = {
     missing_child: {
@@ -93,17 +107,50 @@ export default function registerDashboardRoutes(router, deps) {
     },
   };
   
-  function redactedPublicContact(u) {
+  /**
+   * A response desk, as the public directory lists it: the office and its
+   * jurisdiction, never the officer. One entry per role, organisation, state
+   * and district however many accounts staff it.
+   *
+   * This used to be each account: its id, the officer's own name and personal
+   * phone, for every police, SJPU, AHTU, CWC and adoption desk in the country,
+   * to anyone who asked, with no rate limit. A list of the named officers
+   * working trafficking and missing-children cases is not a public directory.
+   * The public numbers are the helplines, which are listed alongside.
+   */
+  function publicDesk(u) {
     return {
-      id: u.id,
-      name: u.name,
       role: u.role,
-      org: u.org || null,
-      phone: u.phone || null,
-      jurisdiction: u.jurisdiction,
+      roleLabel: NETWORK_ROLE_LABELS[u.role] || u.role,
+      org: cleanText(u.org, 120) || null,
+      state: cleanText(u.jurisdiction?.state, 80) || null,
+      district: cleanText(u.jurisdiction?.district, 80) || null,
     };
   }
-  
+
+  function deskKey(desk) {
+    return [desk.role, desk.org, desk.state, desk.district].map((v) => String(v || '').toLowerCase().trim()).join('|');
+  }
+
+  function publicDesks(users) {
+    const byKey = new Map();
+    for (const user of users) {
+      const desk = publicDesk(user);
+      const key = deskKey(desk);
+      if (!byKey.has(key)) byKey.set(key, desk);
+    }
+    return [...byKey.values()];
+  }
+
+  const directoryLimit = fixedWindowRateLimit({
+    name: 'public_directory',
+    limit: 60,
+    windowMs: 60 * 1000,
+    envLimit: settings.directoryLimit,
+    key: (req) => clientIp(req),
+    onLimit: auditPublicRateLimit,
+  });
+
   function emergencyByPhone(phone) {
     return PUBLIC_EMERGENCY_CONTACTS.find((item) => item.phone === phone) || null;
   }
@@ -115,7 +162,7 @@ export default function registerDashboardRoutes(router, deps) {
     const localContacts = contacts
       .filter((contact) => roles.has(contact.role))
       .sort((a, b) => route.localRoles.indexOf(a.role) - route.localRoles.indexOf(b.role)
-        || String(a.org || a.name).localeCompare(String(b.org || b.name)));
+        || String(a.org || '').localeCompare(String(b.org || '')));
     return {
       incidentType: key,
       label: route.label,
@@ -127,29 +174,31 @@ export default function registerDashboardRoutes(router, deps) {
     };
   }
   
-  router.get('/public/directory', (req, res) => {
-    const state = String(req.query.state || '').trim().toLowerCase();
-    const district = String(req.query.district || '').trim().toLowerCase();
-    const role = String(req.query.role || '').trim();
-    const incidentType = String(req.query.incidentType || '').trim();
-    const scopedUsers = listUsers()
-      .filter((u) => PUBLIC_DIRECTORY_ROLES.includes(u.role))
-      .filter((u) => !state || String(u.jurisdiction?.state || '').toLowerCase() === state)
-      .filter((u) => !district || String(u.jurisdiction?.district || '').toLowerCase() === district);
-    const publicContacts = scopedUsers.map(redactedPublicContact);
-    const users = publicContacts
-      .filter((u) => !role || u.role === role)
+  router.get('/public/directory', directoryLimit, (req, res) => {
+    const queryText = (value, max) => cleanText(typeof value === 'string' ? value : '', max);
+    const state = queryText(req.query.state, 80);
+    const district = queryText(req.query.district, 80);
+    const role = queryText(req.query.role, 40);
+    const incidentType = queryText(req.query.incidentType, 40);
+    const scopedDesks = publicDesks(
+      listUsers()
+        .filter((u) => PUBLIC_DIRECTORY_ROLES.includes(u.role))
+        .filter((u) => !state || sameState(u.jurisdiction?.state, state))
+        .filter((u) => !district || sameDistrict(u.jurisdiction?.district, district))
+    );
+    const directory = scopedDesks
+      .filter((desk) => !role || desk.role === role)
       .sort((a, b) =>
-        [a.jurisdiction?.state || '', a.jurisdiction?.district || '', a.role, a.name].join('|')
-          .localeCompare([b.jurisdiction?.state || '', b.jurisdiction?.district || '', b.role, b.name].join('|'))
+        [a.state || '', a.district || '', a.role, a.org || ''].join('|')
+          .localeCompare([b.state || '', b.district || '', b.role, b.org || ''].join('|'))
       );
     res.json({
-      directory: users,
+      directory,
       emergency: PUBLIC_EMERGENCY_CONTACTS,
-      emergencyPlan: publicEmergencyPlan(incidentType, publicContacts),
+      emergencyPlan: publicEmergencyPlan(incidentType, scopedDesks),
     });
   });
-  
+
   router.use(authRequired, passwordChangeRequired);
   
   const OPERATIONAL_ROLES = ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'dcrb', 'dlsa', 'cwc', 'dcpu', 'rpf', 'cci', 'saa', 'jjb', 'state_nodal', 'sara', 'crime_bureau'];
@@ -194,45 +243,67 @@ export default function registerDashboardRoutes(router, deps) {
     ngo: 'citizen',
   };
   
+  // Who may create which accounts. Police accounts (police, SJPU, AHTU, DCRB)
+  // are created only by the super admin, a state admin or the crime records
+  // bureau; the state nodal officer and SARA create welfare, legal-aid,
+  // adoption and NGO desks, never a police login.
+  const POLICE_PROVISION_ROLES = ['police', 'sjpu', 'ahtu', 'dcrb'];
+  const DISTRICT_LEVEL_ROLES = ['police', 'sjpu', 'ahtu', 'dcrb', 'dlsa', 'cwc', 'dcpu', 'rpf', 'cci', 'saa', 'jjb'];
+  const STATE_LEVEL_ROLES = ['admin', 'state_nodal', 'sara', 'crime_bureau'];
+  const PROVISION_ROLES_BY_ACTOR = {
+    admin: ['police', 'sjpu', 'ahtu', 'dcrb', 'dlsa', 'cwc', 'dcpu', 'rpf', 'cci', 'saa', 'jjb', 'sara', 'crime_bureau', 'ngo'],
+    crime_bureau: ['police', 'sjpu', 'ahtu', 'dcrb', 'rpf'],
+    state_nodal: ['cwc', 'dcpu', 'cci', 'saa', 'jjb', 'dlsa', 'ngo'],
+    sara: ['cwc', 'dcpu', 'cci', 'saa', 'jjb', 'dlsa', 'ngo'],
+  };
+
   function canProvisionRole(actor, role) {
     if (actor.role === 'super_admin') return PROVISIONABLE_ROLES.includes(role);
-    if (['admin', 'state_nodal', 'sara'].includes(actor.role)) {
-      return ['police', 'sjpu', 'ahtu', 'dcrb', 'dlsa', 'cwc', 'dcpu', 'rpf', 'cci', 'saa', 'jjb', 'sara', 'crime_bureau', 'ngo'].includes(role);
-    }
-    if (actor.role === 'crime_bureau') return ['police', 'sjpu', 'ahtu', 'dcrb', 'rpf'].includes(role);
-    return false;
+    if (POLICE_PROVISION_ROLES.includes(role) && !['admin', 'crime_bureau'].includes(actor.role)) return false;
+    return (PROVISION_ROLES_BY_ACTOR[actor.role] || []).includes(role);
   }
-  
-  function scopedJurisdiction(actor, role, requested = {}) {
+
+  /**
+   * The jurisdiction a new account gets, or why it cannot have one.
+   *
+   * Fails closed. A district desk is created with a district and a state, a
+   * state desk with a state: an account without one used to be scoped to
+   * nothing, which shared/scope.js read as everything. Nobody but the super
+   * admin provisions outside their own state, and a state desk with no state of
+   * its own provisions nothing.
+   */
+  function provisionJurisdiction(actor, role, requested = {}) {
+    const outside = { status: 403, error: 'Requested jurisdiction is outside your provisioning scope' };
     const level = LEVEL_BY_ROLE[role];
-    if (!level) return null;
+    if (!level) return outside;
     const actorState = actor.jurisdiction?.state || null;
-    const actorDistrict = actor.jurisdiction?.district || null;
-    const state = requested.state || actorState;
-    const district = requested.district || (level === 'state' ? null : actorDistrict);
-    const station = ['station'].includes(level) ? requested.station || null : null;
-  
     if (actor.role !== 'super_admin') {
-      if (actorState && state !== actorState) return null;
-      if (actor.role === 'crime_bureau' && actorState && state !== actorState) return null;
+      if (!actorState) return outside;
+      if (requested.state && !sameState(requested.state, actorState)) return outside;
     }
-    if (['police', 'sjpu', 'ahtu', 'dcrb', 'dlsa', 'cwc', 'dcpu', 'rpf', 'cci', 'saa', 'jjb'].includes(actor.role)) return null;
-    return { level, state: state || null, district: district || null, station };
+    const state = actor.role === 'super_admin' ? requested.state || null : actorState;
+    const district = STATE_LEVEL_ROLES.includes(role) ? null : requested.district || null;
+    if (DISTRICT_LEVEL_ROLES.includes(role) && !district) {
+      return { status: 400, error: 'A district is required for this role' };
+    }
+    if ((DISTRICT_LEVEL_ROLES.includes(role) || STATE_LEVEL_ROLES.includes(role)) && !state) {
+      return { status: 400, error: 'A state is required for this role' };
+    }
+    const station = level === 'station' ? requested.station || null : null;
+    return { jurisdiction: { level, state, district, station } };
   }
-  
+
   function scopeNetworkUsers(actor, users) {
     if (actor.role === 'super_admin') return users;
     const actorState = actor.jurisdiction?.state || null;
     if (['admin', 'state_nodal', 'sara', 'crime_bureau'].includes(actor.role)) {
-      return users.filter((u) => {
-        if (u.role === 'super_admin') return true;
-        if (!actorState) return true;
-        return u.jurisdiction?.state === actorState;
-      });
+      // A state desk with no state of its own sees no roster (shared/scope.js).
+      if (!actorState) return [];
+      return users.filter((u) => u.role === 'super_admin' || sameState(u.jurisdiction?.state, actorState));
     }
     return [];
   }
-  
+
   function jurisdictionKey(state, district = '') {
     return [state || 'Unassigned', district || ''].join('|');
   }
@@ -514,7 +585,29 @@ export default function registerDashboardRoutes(router, deps) {
     if (n <= 5) return '0-5';
     if (n <= 10) return '6-10';
     if (n <= 14) return '11-14';
-    return '15-18';
+    if (n <= 18) return '15-18';
+    // Adults (women and adult persons) have their own bands rather than
+    // being counted as 15-18.
+    if (n <= 30) return '19-30';
+    if (n <= 59) return '31-59';
+    return '60+';
+  }
+
+  /**
+   * Caseload by who is missing: child, woman, adult person. Records written
+   * before the category existed count as children (personCategoryOf).
+   */
+  function categorySplit(rows) {
+    return Object.entries(PERSON_CATEGORIES).map(([category, name]) => {
+      const inCategory = rows.filter((r) => personCategoryOf(r) === category);
+      return {
+        category,
+        name,
+        total: inCategory.length,
+        active: inCategory.filter((r) => ['missing', 'under_review', 'intake_pending'].includes(r.status)).length,
+        found: inCategory.filter((r) => r.status === 'found' || r.status === 'closed').length,
+      };
+    });
   }
   
   function registeredSource(report) {
@@ -661,7 +754,16 @@ export default function registerDashboardRoutes(router, deps) {
         id: 'audit_integrity',
         label: 'Audit integrity',
         status: auditIntegrity.ok ? 'pass' : 'fail',
-        detail: auditIntegrity.ok ? `${auditIntegrity.checked} audit events hash-verified` : `Audit chain failed at ${auditIntegrity.failedId || 'unknown event'}`,
+        detail: auditIntegrity.ok
+          ? [
+              `${auditIntegrity.checked} audit events hash-verified`,
+              auditIntegrity.acknowledgedGaps ? `${auditIntegrity.acknowledgedGaps} acknowledged gap(s)` : null,
+            ].filter(Boolean).join('; ')
+          : auditIntegrity.reason === 'content_changed'
+            ? `${auditIntegrity.contentChanged} audit event(s) altered, first ${auditIntegrity.failedId}`
+            : auditIntegrity.reason === 'predecessor_missing'
+              ? `${auditIntegrity.missingPredecessors} audit event(s) point to entries not in the log (first ${auditIntegrity.failedId}); ${auditIntegrity.contentChanged || 0} altered`
+              : `Audit chain failed at ${auditIntegrity.failedId || 'unknown event'}`,
       },
       {
         id: 'export_signing',
@@ -673,13 +775,15 @@ export default function registerDashboardRoutes(router, deps) {
         id: 'otp',
         label: 'OTP delivery',
         // Codes are random, so an unconfigured gateway is a delivery problem
-        // rather than a guessable-code problem — but public registration is
-        // still unusable without it, hence 'fail' in production.
-        status: smsConfigured ? 'pass' : isProduction ? 'fail' : 'warning',
+        // rather than a guessable-code problem. It is a warning, not a fail:
+        // nothing an officer does is affected, and a red FAIL read as "the
+        // platform is broken" to the stations using it. What does not work is
+        // said plainly instead.
+        status: smsConfigured ? 'pass' : 'warning',
         detail: smsConfigured
           ? 'SMS gateway configured; verification codes are randomly generated and delivered out of band.'
           : isProduction
-            ? 'No SMS gateway configured — public registration will be refused. Set KHOZO_SMS_GATEWAY_URL and KHOZO_SMS_API_KEY.'
+            ? 'SMS gateway not yet connected: parents and NGOs cannot self-register until it is; officers can register cases for them. Set KHOZO_SMS_GATEWAY_URL and KHOZO_SMS_API_KEY.'
             : 'No SMS gateway configured; codes are logged to the server console for local testing only.',
       },
       {
@@ -796,7 +900,11 @@ export default function registerDashboardRoutes(router, deps) {
   
   // Headline stats + chart series, scoped to the caller's jurisdiction.
   router.get('/stats', (req, res) => {
-    const all = scopeReports(req.user, listReports());
+    // A parent or NGO is counted by the jurisdiction their cases were
+    // registered in, not one an officer has since moved a case to
+    // (citizenCaseView).
+    const scoped = scopeReports(req.user, listReports());
+    const all = isCitizenRole(req.user.role) ? scoped.map(citizenCaseView) : scoped;
     const scopedFound = scopeFoundReports(req.user, listFoundReports(), listReports());
     const found = all.filter((r) => r.status === 'found');
     const missing = all.filter((r) => r.status === 'missing');
@@ -845,6 +953,7 @@ export default function registerDashboardRoutes(router, deps) {
         reunificationRate: totalMissing + totalFound ? Math.round((totalFound / (totalMissing + totalFound)) * 100) : 0,
       },
       byState: Object.values(byState).sort((a, b) => b.missing + b.found - (a.missing + a.found)),
+      categorySplit: categorySplit(all),
       trend: months,
       statusSplit: [
         { name: 'Missing', value: missing.length },
@@ -920,7 +1029,10 @@ export default function registerDashboardRoutes(router, deps) {
     });
   });
 
-  router.get('/readiness', requireRole(...OPERATIONAL_ROLES), (req, res) => {
+  // The pilot-readiness panel describes the deployment itself - storage, the
+  // audit chain, the match providers, abuse monitoring - so it is the national
+  // operator's alone.
+  router.get('/readiness', requireRole('super_admin'), (req, res) => {
     const checks = readinessChecks(req.user);
     res.json({
       generatedAt: new Date().toISOString(),
@@ -1190,15 +1302,29 @@ export default function registerDashboardRoutes(router, deps) {
     res.json({ users, coverage: networkCoverage(req.user) });
   });
   
+  const NETWORK_USER_FIELDS = {
+    name: ['text', 120],
+    email: ['text', 160],
+    role: ['text', 40],
+    phone: ['text', 20],
+    org: ['text', 120],
+    state: ['text', 80],
+    district: ['text', 80],
+    station: ['text', 120],
+  };
+
   router.post('/network/users', requireRole('super_admin', 'admin', 'state_nodal', 'sara', 'crime_bureau'), (req, res) => {
-    const { name, email, role, phone, org, state, district, station } = req.body || {};
+    const read = readFields(req.body, NETWORK_USER_FIELDS);
+    if (read.error) return res.status(400).json({ error: read.error });
+    const { name, email, role, phone, org, state, district, station } = read.body;
     if (!name || !email || !role) return res.status(400).json({ error: 'Name, email, and role are required' });
     if (!canProvisionRole(req.user, role)) return res.status(403).json({ error: 'You cannot provision this role' });
     if (findUserByEmail(email)) return res.status(409).json({ error: 'An account with this email already exists' });
-  
-    const jurisdiction = scopedJurisdiction(req.user, role, { state, district, station });
-    if (!jurisdiction) return res.status(403).json({ error: 'Requested jurisdiction is outside your provisioning scope' });
-  
+
+    const placed = provisionJurisdiction(req.user, role, { state, district, station });
+    if (placed.error) return res.status(placed.status).json({ error: placed.error });
+    const { jurisdiction } = placed;
+
     const initialPassword = temporaryPassword();
     const user = addUser({
       id: `u_${nanoid(8)}`,
@@ -1228,7 +1354,13 @@ export default function registerDashboardRoutes(router, deps) {
   });
   
   router.post('/network/alerts', requireRole(...NETWORK_ALERT_ROLES), (req, res) => {
-    const { audience = 'all_operational', state, district, subject, message, caseRef } = req.body || {};
+    const read = readFields(req.body, {
+      audience: ['text', 40], state: ['text', 80], district: ['text', 80],
+      subject: ['text', 400], message: ['text', 2000], caseRef: ['text', 200],
+    });
+    if (read.error) return res.status(400).json({ error: read.error });
+    const { state, district, subject, message, caseRef } = read.body;
+    const audience = read.body.audience || 'all_operational';
     if (!NETWORK_ALERT_AUDIENCES[audience]) {
       return res.status(400).json({ error: `Audience must be one of ${Object.keys(NETWORK_ALERT_AUDIENCES).join(', ')}` });
     }
@@ -1240,8 +1372,9 @@ export default function registerDashboardRoutes(router, deps) {
     if (cleanSubject.length < 4) return res.status(400).json({ error: 'Alert subject must be at least 4 characters' });
     if (cleanMessage.length < 10) return res.status(400).json({ error: 'Alert message must be at least 10 characters' });
     if (req.user.role !== 'super_admin') {
+      // A state desk with no state of its own alerts nobody (shared/scope.js).
       const actorState = req.user.jurisdiction?.state || null;
-      if (actorState && cleanState && cleanState !== actorState) {
+      if (!actorState || (cleanState && cleanState !== actorState)) {
         return res.status(403).json({ error: 'Network alert state is outside your scope' });
       }
     }
@@ -1319,6 +1452,40 @@ export default function registerDashboardRoutes(router, deps) {
     res.json({ audit: rows, integrity: verifyAuditChain() });
   });
   
+  /**
+   * Records that known gaps in the audit log are accepted, with the reason.
+   * Only predecessors the verifier currently reports as missing can be named,
+   * so this cannot pre-approve a future deletion; the acknowledgement is itself
+   * an audit entry, hash-checked like every other (shared/audit-chain.js).
+   */
+  router.post('/audit/acknowledge-gaps', requireRole('super_admin'), (req, res) => {
+    const reason = String(req.body?.reason || '').trim().slice(0, 500);
+    if (reason.length < 10) return res.status(400).json({ error: 'Give the reason for accepting these gaps (at least 10 characters)' });
+    const before = verifyAuditChain();
+    const missing = Array.isArray(before.missing) ? before.missing : [];
+    if (!missing.length) return res.status(409).json({ error: 'There are no unacknowledged gaps in the audit log', integrity: before });
+    const requested = Array.isArray(req.body?.missingPrevHashes) ? req.body.missingPrevHashes.map(String) : missing.map((m) => m.prevHash);
+    const missingSet = new Set(missing.map((m) => m.prevHash));
+    const unknown = requested.filter((h) => !missingSet.has(h));
+    if (unknown.length) return res.status(400).json({ error: 'Only gaps the verifier currently reports can be acknowledged', unknown });
+    const named = [...new Set(requested)];
+    addAudit({
+      actorId: req.user.id,
+      actorName: req.user.name,
+      actorRole: req.user.role,
+      action: 'audit.gap_acknowledged',
+      targetType: 'auditLog',
+      summary: `Acknowledged ${named.length} gap(s) in the audit log`,
+      scope: {},
+      metadata: {
+        missingPrevHashes: named,
+        rowIds: missing.filter((m) => named.includes(m.prevHash)).map((m) => m.id),
+        reason,
+      },
+    });
+    res.json({ acknowledged: named.length, integrity: verifyAuditChain() });
+  });
+
   router.get('/audit/export', requireRole(...OPERATIONAL_ROLES), (req, res) => {
     const rows = scopeAudit(req.user, listAudit(), listReports())
       .slice()
@@ -1406,7 +1573,9 @@ export default function registerDashboardRoutes(router, deps) {
     const openReports = reports.filter((r) => ['missing', 'under_review', 'intake_pending'].includes(r.status));
     const verifiedReports = reports.filter((r) => r.intakeStatus === 'verified' || ['police', 'sjpu', 'ahtu', 'dcrb', 'saa'].includes(r.registeredByRole));
     const pendingIntake = reports.filter((r) => r.status === 'intake_pending' || r.intakeStatus === 'pending_verification');
-    const publishedBulletins = reports.filter((r) => r.bulletin?.published);
+    // Public appeals no longer exist (isPublicAppeal), so a case still carrying
+    // an old published flag is not counted as one.
+    const publishedBulletins = reports.filter((r) => isPublicAppeal(r));
     const pendingSightings = foundReports.filter((f) => f.status === 'pending_review' || f.status === 'no_match');
     const overdueCases = openReports.filter((r) => ageDays(r.createdAt) >= 30);
     const staleCases = openReports.filter((r) => ageDays(latestCaseTouch(r)) >= 14);
@@ -1454,6 +1623,7 @@ export default function registerDashboardRoutes(router, deps) {
       caseStatus: statusCounts(reports),
       sightingStatus: statusCounts(foundReports),
       demographics: {
+        byCategory: groupCounts(reports, (r) => PERSON_CATEGORIES[personCategoryOf(r)]),
         byAgeBand: groupCounts(reports, (r) => ageBand(r.age)),
         byGender: groupCounts(reports, (r) => r.gender),
         byRegistrationSource: groupCounts(reports, registeredSource),
@@ -1536,7 +1706,9 @@ export default function registerDashboardRoutes(router, deps) {
     const sightingRows = scopedFound.map((f) => ({
       id: f.id,
       type: 'foundReport',
-      subject: f.reporterName || 'Public sighting',
+      // Masked exactly as the review queue masks it: a citizen who asked to
+      // stay confidential is "Confidential citizen" on every desk's screen.
+      subject: f.reporterName ? publicReporterName(f) : 'Public sighting',
       status: f.status,
       location: f.foundLocation,
       dataPurpose: f.dataPurpose || 'sighting_review_and_child_protection',
@@ -1584,6 +1756,14 @@ export default function registerDashboardRoutes(router, deps) {
               parentPhone: null,
               parentEmail: null,
               address: null,
+              // Who verified the identity, where, and what officers wrote when
+              // they told the family are as identifying as the name.
+              verification: report.verification
+                ? { method: report.verification.method, methodLabel: report.verification.methodLabel, recordedAt: report.verification.recordedAt || null, anonymized: true }
+                : null,
+              familyContacts: Array.isArray(report.familyContacts)
+                ? report.familyContacts.map((contact) => ({ ...contact, note: null }))
+                : report.familyContacts || null,
               privacyReviewStatus: 'anonymized',
               anonymizedAt: new Date(now).toISOString(),
               anonymizationApproval: approval,
@@ -1629,11 +1809,22 @@ export default function registerDashboardRoutes(router, deps) {
               reporterName: 'Anonymized citizen',
               reporterPhone: null,
               note: null,
+              reviewNote: null,
+              verification: found.verification
+                ? { method: found.verification.method, methodLabel: found.verification.methodLabel, recordedAt: found.verification.recordedAt || null, anonymized: true }
+                : null,
               privacyReviewStatus: 'anonymized',
               anonymizedAt: new Date(now).toISOString(),
               anonymizationApproval: approval,
             }
-          : { status: found.status === 'pending_review' ? 'referred_cwc' : found.status, privacyReviewStatus: 'retention_reviewed', referralStatus: found.referralStatus || 'Privacy retention reviewed' };
+          : {
+              // The reporter's receipt is unaffected: its stage depends only on
+              // time (publicSightingStatus in shared/case-domain.js), so moving
+              // a matched sighting here cannot tell the reporter it had matched.
+              status: found.status === 'pending_review' ? 'referred_cwc' : found.status,
+              privacyReviewStatus: 'retention_reviewed',
+              referralStatus: found.referralStatus || 'Privacy retention reviewed',
+            };
       updateFoundReport(id, patch);
       const auditAction = decision === 'extend'
         ? 'privacy.retention_extended'
@@ -1658,7 +1849,17 @@ export default function registerDashboardRoutes(router, deps) {
         } : patch,
       });
       addActivity({ actor: req.user.name, action: `${decision === 'extend' ? 'Extended' : decision === 'anonymize' ? 'Anonymized' : 'Reviewed'} privacy retention`, target: found.foundLocation, icon: 'eye', scope: { state: found.state, district: found.district, matchedReportId: found.matchedReportId } });
-      return res.json({ item: { ...found, ...patch } });
+      // The reporter's name and phone as the review queue shows them: masked
+      // for a reporter who asked to stay confidential.
+      const item = { ...found, ...patch };
+      return res.json({
+        item: {
+          ...item,
+          reporterName: publicReporterName(item),
+          reporterPhone: item.confidentialReporter ? null : item.reporterPhone || null,
+          reporterPhoneVisible: item.confidentialReporter ? null : item.reporterPhone || null,
+        },
+      });
     }
   
     return res.status(400).json({ error: 'Unknown retention item type' });

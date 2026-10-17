@@ -218,9 +218,11 @@ Previously committed to the repo and **must be treated as compromised**:
   history: **rotate the database password.** Until then, anyone who reads the
   repository history holds the credentials to the case database.
 
-All 18 seeded accounts share the password `khozo123` and their bcrypt hashes were
-publicly readable for a period. **Rotate every password before go-live** and
-delete or disable the demo accounts.
+All 18 seeded accounts shared the password `khozo123` and their bcrypt hashes were
+publicly readable for a period. Official accounts are rotated with
+`scripts/rotate-account-passwords.mjs` (new passwords go to a CSV outside the
+repository); only the low-privilege demo parent and NGO accounts keep the shared
+password. `scripts/reset-passwords.mjs` now refuses any non-local database.
 
 ---
 
@@ -291,7 +293,13 @@ Do this before the case count outgrows the 25-candidate cap.
 One comparison takes ~1.8s, and a sighting is compared against up to
 `KHOZO_MATCH_CANDIDATES` (25) open cases. Run sequentially that is 45 seconds of
 upload spinner, so comparisons run `KHOZO_MATCH_CONCURRENCY` (5) at a time.
-Raise the concurrency or lower the candidate cap if the provider rate-limits.
+Lower the concurrency or the candidate cap if the provider rate-limits. On the
+Worker the concurrency is capped at 5: an invocation holds at most six outbound
+connections and queues the rest with their 12-second abort already running, so
+a wider fan-out silently drops the last comparisons. Registering a case compares
+its photo with up to `KHOZO_REVERSE_MATCH_CANDIDATES` (50) stored sightings the
+same way, about 18 seconds at 1.8s a call, inside the registration request. The
+engine's `comparedAgainst` counts the comparisons that answered.
 
 Each tier runs only if configured, and the engine reported to the dashboard names
 the tier that actually produced the scores. With neither configured, the

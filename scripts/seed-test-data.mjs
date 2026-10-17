@@ -175,7 +175,9 @@ async function submitSighting(photoName, details) {
   if (details.lat != null) form.append('lat', String(details.lat));
   if (details.lng != null) form.append('lng', String(details.lng));
   form.append('photo', image.blob, image.name);
-  return api('/reports/found', { method: 'POST', form });
+  // Filed with an officer's token: a public reporter's receipt is deliberately
+  // neutral (no score, no candidates), and this script reports the scores.
+  return api('/reports/found', { method: 'POST', form, token: details.token });
 }
 
 async function main() {
@@ -197,12 +199,9 @@ async function main() {
     );
   }
 
-  console.log('\nPublishing bulletins...');
+  // No bulletins are published: public appeals are disabled (the API answers
+  // 403), and matching never depended on them.
   const { token: adminToken } = await login('admin@khozo.org');
-  for (const { report } of registered) {
-    await api(`/reports/${report.id}/bulletin`, { method: 'POST', token: adminToken, body: { publish: true } });
-    console.log(`  published   ${report.id}`);
-  }
 
   console.log('\nSubmitting sightings (a different photo of the same person)...');
   const outcomes = [];
@@ -213,6 +212,7 @@ async function main() {
       state: entry.state,
       district: entry.district,
       lat: 19.076, lng: 72.877,
+      token: adminToken,
     });
     outcomes.push({ expected: report.id, entry, result });
     console.log(
@@ -222,11 +222,11 @@ async function main() {
   }
 
   console.log('\nSubmitting a second sighting of an already-registered child...');
-  const second = await submitSighting(SECOND_LOOK_SIGHTING.photo, SECOND_LOOK_SIGHTING);
+  const second = await submitSighting(SECOND_LOOK_SIGHTING.photo, { ...SECOND_LOOK_SIGHTING, token: adminToken });
   console.log(`  repeat      ${second.foundReport.id}  score=${second.foundReport.matchScore}`);
 
   console.log('\nSubmitting a control sighting whose face matches no case...');
-  const control = await submitSighting(CONTROL_SIGHTING.photo, CONTROL_SIGHTING);
+  const control = await submitSighting(CONTROL_SIGHTING.photo, { ...CONTROL_SIGHTING, token: adminToken });
   console.log(`  control     ${control.foundReport.id}  score=${control.foundReport.matchScore}`);
 
   const engine = outcomes[0]?.result?.foundReport?.matchEngine;

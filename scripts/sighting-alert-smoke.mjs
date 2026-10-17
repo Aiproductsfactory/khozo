@@ -19,13 +19,15 @@
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const dbFile = path.join(root, 'server', 'data', 'db.json');
-const backupFile = path.join(root, 'server', 'data', 'db.json.alert.bak');
+// The server under test gets its own temporary data directory, so the
+// developer's server/data/db.json is never read or rewritten by a test run.
+const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'khozo-alert-smoke-'));
 const port = Number(process.env.KHOZO_ALERT_PORT || 4600);
 const base = `http://localhost:${port}/api`;
 
@@ -72,13 +74,9 @@ async function waitForServer() {
 }
 
 async function run() {
-  if (fs.existsSync(dbFile)) {
-    fs.copyFileSync(dbFile, backupFile);
-    fs.rmSync(dbFile, { force: true });
-  }
   server = spawn(process.execPath, ['src/index.js'], {
     cwd: path.join(root, 'server'),
-    env: { ...process.env, DATABASE_URL: '', PORT: String(port), KHOZO_FOUND_REPORT_LIMIT: '50' },
+    env: { ...process.env, DATABASE_URL: '', KHOZO_DATA_DIR: dataDir, PORT: String(port), KHOZO_FOUND_REPORT_LIMIT: '50' },
     stdio: ['ignore', 'ignore', 'pipe'],
   });
   server.stderr.on('data', (buf) => process.stderr.write(`[api] ${buf}`));
@@ -138,6 +136,16 @@ async function run() {
     `${parentInbox.payload?.notifications?.length ?? '?'} notifications`
   );
 
+  // Nor is an NGO account: anyone can register one with a phone number, and an
+  // inbox of sightings would tell the person who sent one what became of it.
+  const ngo = await login('ngo@khozo.org');
+  const ngoInbox = await call('/dashboard/notifications', { token: ngo.token });
+  check(
+    'an NGO account is not alerted about sightings',
+    !(ngoInbox.payload?.notifications || []).some((n) => n.scope?.foundReportId),
+    `${ngoInbox.payload?.notifications?.length ?? '?'} notifications`
+  );
+
   // Read state is per officer.
   const police = await login('police@khozo.org');
   const before = await call('/dashboard/notifications', { token: police.token });
@@ -175,10 +183,8 @@ try {
   check('the flow ran end to end', false, err.message);
 } finally {
   if (server) server.kill();
-  if (fs.existsSync(backupFile)) {
-    fs.copyFileSync(backupFile, dbFile);
-    fs.rmSync(backupFile, { force: true });
-  }
+  await new Promise((r) => setTimeout(r, 250));
+  fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 }
 
 const failed = checks.filter((c) => !c.ok);

@@ -16,9 +16,19 @@
  */
 
 import crypto from 'node:crypto';
+import { auditHead, verifyAuditLinks } from '../../shared/audit-chain.js';
 import path from 'node:path';
 
-import { query, upsertRecord, upsertMany, savePhotoBlob, readPhotoBlob, photoBlobStats } from './db.js';
+import {
+  query,
+  upsertRecord,
+  upsertMany,
+  readVersioned,
+  updateIfVersion,
+  savePhotoBlob,
+  readPhotoBlob,
+  photoBlobStats,
+} from './db.js';
 
 export function photoMimeType(filename) {
   const ext = path.extname(filename || '').toLowerCase();
@@ -65,7 +75,7 @@ function auditHash(row, prevHash = row.prevHash || null) {
 const norm = (v) => String(v || '').trim().toLowerCase();
 
 /** Real Postgres access. Tests substitute this to run without a database. */
-const POSTGRES = { query, upsertRecord, upsertMany, savePhotoBlob, readPhotoBlob, photoBlobStats };
+const POSTGRES = { query, upsertRecord, upsertMany, readVersioned, updateIfVersion, savePhotoBlob, readPhotoBlob, photoBlobStats };
 
 /**
  * Hydrates the dataset and returns the synchronous store the shared routes use,
@@ -159,6 +169,44 @@ export async function createRequestStore(env, ctx, io = POSTGRES) {
       return markDirty('found_reports', replace(db.foundReports, found.id, { ...found, ...patch }));
     },
 
+    /**
+     * Changes a sighting only if it is still what the caller decided on,
+     * checked and written in one step against the database rather than this
+     * request's copy.
+     *
+     * For the reverse search (shared/routes/reports.js matchStoredSightings),
+     * which decides to link a sighting seconds after this replica was read,
+     * after a round of face comparisons. Meanwhile another request may have
+     * linked the same sighting to another case, an officer may have rejected
+     * it, recorded a CWC follow-up, or anonymised it. The flush writes whole
+     * rows, so linking from the stale copy would silently undo that work, and
+     * undo an anonymisation by writing the reporter's name and phone back.
+     *
+     * So: read the row as it is now; if `isEligible` no longer holds, leave it
+     * (and refresh this request's copy); otherwise write `makePatch(row)` over
+     * it on condition that it has not changed since that read. The write is
+     * made here, not at the flush, and the row is not left dirty, so the flush
+     * cannot write it a second time. Returns the linked row, or null.
+     */
+    async claimFoundReport(id, makePatch, isEligible = () => true) {
+      const local = store.findFoundReport(id);
+      if (!local) return null;
+      // Added or already changed by this request: there is no other copy of
+      // these changes to race with, so the replica is the truth.
+      if (dirty.get('found_reports')?.has(local.id)) {
+        if (!isEligible(local)) return null;
+        return store.updateFoundReport(local.id, makePatch(local));
+      }
+      const current = await io.readVersioned(env, 'found_reports', local.id, ctx);
+      if (!current) return null;
+      replace(db.foundReports, local.id, current.data);
+      if (!isEligible(current.data)) return null;
+      const linked = { ...current.data, ...makePatch(current.data) };
+      const written = await io.updateIfVersion(env, 'found_reports', linked, current.version, ctx);
+      if (!written) return null;
+      return replace(db.foundReports, local.id, linked);
+    },
+
     // --- Grievances ---
     listGrievances: () => db.grievances,
     findGrievance: (id) => (id ? db.grievances.find((g) => g.id === id) || null : null),
@@ -212,7 +260,7 @@ export async function createRequestStore(env, ctx, io = POSTGRES) {
     // --- Tamper-evident audit log ---
     listAudit: () => db.audit,
     addAudit(entry) {
-      const prevHash = db.audit[0]?.hash || null;
+      const prevHash = auditHead(db.audit);
       const row = {
         id: `audit_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
         ts: Date.now(),
@@ -232,26 +280,7 @@ export async function createRequestStore(env, ctx, io = POSTGRES) {
       return markDirty('audit', row);
     },
     verifyAuditChain(rows = db.audit) {
-      const chronological = rows.slice().reverse();
-      let prevHash = null;
-      let checked = 0;
-      for (const row of chronological) {
-        const expected = auditHash(row, prevHash);
-        if (row.prevHash !== prevHash || row.hash !== expected) {
-          return {
-            ok: false,
-            checked,
-            failedId: row.id,
-            expectedHash: expected,
-            actualHash: row.hash || null,
-            expectedPrevHash: prevHash,
-            actualPrevHash: row.prevHash || null,
-          };
-        }
-        prevHash = row.hash;
-        checked++;
-      }
-      return { ok: true, checked, headHash: prevHash };
+      return verifyAuditLinks(rows, auditHash);
     },
 
     // --- Photo blobs ---

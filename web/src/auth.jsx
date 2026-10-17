@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { api } from './api.js';
+import { useT } from './i18n.jsx';
 
 const AuthCtx = createContext(null);
 
@@ -50,9 +51,10 @@ export function AuthTestProvider({ value, children }) {
 }
 
 export function RequireAuth({ children }) {
+  const t = useT();
   const { user, loading } = useAuth();
   const loc = useLocation();
-  if (loading) return <div className="grid min-h-screen place-items-center text-gray-400">Loading…</div>;
+  if (loading) return <div className="grid min-h-screen place-items-center text-gray-400">{t('Loading…')}</div>;
   if (!user) return <Navigate to="/login" state={{ from: loc }} replace />;
   if (user.mustChangePassword && loc.pathname !== '/change-password') {
     return <Navigate to="/change-password" replace />;
@@ -61,16 +63,17 @@ export function RequireAuth({ children }) {
 }
 
 export function RequireRole({ roles, children }) {
+  const t = useT();
   const { user, loading } = useAuth();
-  if (loading) return <div className="grid min-h-screen place-items-center text-gray-400">Loading...</div>;
+  if (loading) return <div className="grid min-h-screen place-items-center text-gray-400">{t('Loading...')}</div>;
   if (!user) return <Navigate to="/login" replace />;
   if (!roles.includes(user.role)) {
     return (
       <div className="mx-auto max-w-xl rounded-xl border border-amber-200 bg-amber-50 p-5 text-amber-900">
-        <h2 className="text-lg font-semibold">Access restricted</h2>
-        <p className="mt-1 text-sm text-amber-800">This dashboard section is not available for your role.</p>
+        <h2 className="text-lg font-semibold">{t('Access restricted')}</h2>
+        <p className="mt-1 text-sm text-amber-800">{t('This dashboard section is not available for your role.')}</p>
         <a href="/app" className="mt-4 inline-flex rounded-lg bg-amber-900 px-3 py-2 text-sm font-semibold text-white">
-          Return to overview
+          {t('Return to overview')}
         </a>
       </div>
     );

@@ -1,6 +1,7 @@
 {
   "name": "khozo",
   "version": "1.0.0",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
   "description": "Project Khozo - reunite missing children with their families. An initiative by Aegis School of Data Science.",
@@ -16,7 +17,7 @@
     "dev:web": "npm run dev -w web",
     "seed:test-data": "node scripts/seed-test-data.mjs",
     "test:accounts": "node scripts/test-accounts.mjs",
-    "test:all": "npm run test:coverage && npm run smoke:api && npm run smoke:worker && npm run smoke:alerts && npm run smoke:intake && npm run smoke:store && npm run smoke:web-routes && npm run smoke:pwa",
+    "test:all": "npm run test:coverage && npm run smoke:api && npm run smoke:worker && npm run smoke:alerts && npm run smoke:intake && npm run smoke:match-pool && npm run smoke:scope && npm run smoke:store && npm run smoke:web-routes && npm run smoke:pwa && npm run smoke:bulk-import && npm run smoke:audit-chain && npm run smoke:script-display",
     "test:coverage": "node scripts/api-coverage.mjs",
     "smoke:store": "node scripts/store-replica-smoke.mjs",
     "smoke:api": "node scripts/api-smoke.mjs",
@@ -29,7 +30,13 @@
     "db:migrate-photos": "node scripts/migrate-photos.mjs",
     "db:sightings": "node scripts/purge-test-sightings.mjs",
     "smoke:alerts": "node scripts/sighting-alert-smoke.mjs",
-    "smoke:intake": "node scripts/intake-screening-smoke.mjs"
+    "smoke:intake": "node scripts/intake-screening-smoke.mjs",
+    "i18n:check": "node scripts/i18n-check.mjs",
+    "smoke:match-pool": "node scripts/match-pool-smoke.mjs",
+    "smoke:scope": "node scripts/scope-smoke.mjs",
+    "smoke:bulk-import": "node scripts/bulk-import-smoke.mjs",
+    "smoke:audit-chain": "node scripts/audit-chain-smoke.mjs",
+    "smoke:script-display": "node scripts/script-display-smoke.mjs"
   },
   "devDependencies": {
     "concurrently": "^10.0.3",

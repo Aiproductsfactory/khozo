@@ -291,7 +291,8 @@ async function main() {
     }
 
     console.log(
-      `  ${name.padEnd(29)} ${String(res.status).padEnd(8)} ${String(fr.matchScore ?? '—').padEnd(6)} ` +
+      // The public receipt carries no score by design; the officer view does.
+      `  ${name.padEnd(29)} ${String(res.status).padEnd(8)} ${String(officerView?.matchScore ?? '—').padEnd(6)} ` +
       `${(matchedName || '—').padEnd(15)} ${(expectedName || 'none').padEnd(12)} ${verdict}`,
     );
 

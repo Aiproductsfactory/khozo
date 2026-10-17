@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
-import { timeAgo } from '../lib.jsx';
+import { asList, timeAgo, txt } from '../lib.jsx';
+import { useT } from '../i18n.jsx';
 
 const POLL_MS = 20000;
 
@@ -18,6 +19,7 @@ const POLL_MS = 20000;
  * header can say so honestly instead of always claiming to be connected.
  */
 export default function NotificationBell({ onConnectionChange }) {
+  const t = useT();
   const [items, setItems] = useState([]);
   const [unread, setUnread] = useState(0);
   const [open, setOpen] = useState(false);
@@ -27,8 +29,9 @@ export default function NotificationBell({ onConnectionChange }) {
   const load = useCallback(async () => {
     try {
       const data = await api.get('/dashboard/notifications');
-      setItems(data.notifications || []);
-      setUnread(data.unread || 0);
+      // A malformed alert is dropped here rather than rendered.
+      setItems(asList(data?.notifications).filter((n) => n && typeof n === 'object'));
+      setUnread(Number(data?.unread) || 0);
       onConnectionChange?.(true);
     } catch {
       onConnectionChange?.(false);
@@ -78,8 +81,11 @@ export default function NotificationBell({ onConnectionChange }) {
   return (
     <div className="relative" ref={ref}>
       <button
+        type="button"
+        data-notification-bell
         onClick={() => setOpen((v) => !v)}
-        aria-label={unread ? `${unread} unread alerts` : 'Alerts'}
+        aria-expanded={open}
+        aria-label={unread === 1 ? t('1 unread alert') : unread ? t('{n} unread alerts', { n: unread }) : t('Alerts')}
         className="relative rounded-full p-2.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-all duration-200 focus:outline-none ring-2 ring-transparent focus:ring-indigo-100"
       >
         <span className="text-lg leading-none">🔔</span>
@@ -91,25 +97,29 @@ export default function NotificationBell({ onConnectionChange }) {
       </button>
 
       {open && (
-        <div className="absolute right-0 z-50 mt-2 w-96 max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-200">
-          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-            <p className="text-sm font-bold text-slate-900">Alerts</p>
+        /*
+          On a phone the inbox spans the screen under the header: anchored to
+          the bell, a 24rem panel ran off the left edge.
+        */
+        <div className="fixed inset-x-2 top-16 z-50 overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-200 sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-96 sm:max-w-[calc(100vw-2rem)]">
+          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2 sm:py-3">
+            <p className="text-sm font-bold text-slate-900">{t('Alerts')}</p>
             {unread > 0 && (
-              <button onClick={markAllRead} className="text-xs font-semibold text-indigo-600 hover:underline">
-                Mark all read
+              <button onClick={markAllRead} className="px-2 text-xs font-semibold text-indigo-600 hover:underline">
+                {t('Mark all read')}
               </button>
             )}
           </div>
 
-          <div className="max-h-96 overflow-y-auto">
+          <div className="max-h-[calc(100dvh-10rem)] overflow-y-auto overscroll-contain sm:max-h-96">
             {items.length === 0 && (
               <p className="px-4 py-10 text-center text-sm text-slate-400">
-                No alerts yet. You will be notified here the moment a child is reported spotted.
+                {t('No alerts yet. You will be notified here the moment a child is reported spotted.')}
               </p>
             )}
-            {items.map((item) => (
+            {items.map((item, i) => (
               <button
-                key={item.id}
+                key={txt(item.id) || i}
                 onClick={() => openAlert(item)}
                 className={`flex w-full gap-3 border-b border-slate-50 px-4 py-3 text-left transition hover:bg-slate-50 ${
                   item.readAt ? 'opacity-60' : ''
@@ -121,13 +131,13 @@ export default function NotificationBell({ onConnectionChange }) {
                   }`}
                 />
                 <span className="min-w-0">
-                  <span className="block text-sm font-semibold text-slate-900">{item.title}</span>
-                  <span className="mt-0.5 block text-xs text-slate-500">{item.body}</span>
+                  <span className="block text-sm font-semibold text-slate-900">{txt(item.title)}</span>
+                  <span className="mt-0.5 block text-xs text-slate-500">{txt(item.body)}</span>
                   <span className="mt-1 flex items-center gap-2 text-[11px] text-slate-400">
                     {timeAgo(item.ts)}
                     {item.inJurisdiction && (
                       <span className="rounded-full bg-indigo-50 px-1.5 py-0.5 font-semibold text-indigo-600">
-                        Your jurisdiction
+                        {t('Your jurisdiction')}
                       </span>
                     )}
                   </span>
