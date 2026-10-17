@@ -358,6 +358,10 @@ engine-agnostic layer:
 Switching it on (Worker):
 
 ```sh
+# First, check the key read-only: it is typed at a hidden prompt, never shown,
+# and the check reports the gallery it opens, its counts, limits and model.
+npm run check:gallery
+
 # The key reaches Khozo's technical contact out of band. Paste it at the
 # prompt; it never goes in a file, a commit, a chat or a document.
 npx wrangler secret put AARAKSHAK_GALLERY_KEY

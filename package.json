@@ -32,6 +32,7 @@
     "smoke:alerts": "node scripts/sighting-alert-smoke.mjs",
     "smoke:intake": "node scripts/intake-screening-smoke.mjs",
     "i18n:check": "node scripts/i18n-check.mjs",
+    "check:gallery": "node scripts/check-face-gallery.mjs",
     "smoke:match-pool": "node scripts/match-pool-smoke.mjs",
     "smoke:match-engines": "node scripts/match-engine-parity-smoke.mjs",
     "smoke:face-index": "node scripts/face-index-smoke.mjs",
