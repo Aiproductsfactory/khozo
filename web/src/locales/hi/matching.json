@@ -81,5 +81,16 @@
   "That sighting is not linked to this case": "वह सूचना इस मामले से जुड़ी नहीं है",
   "A found-child intake is not compared with sightings": "मिले बच्चे के पंजीकरण की सूचनाओं से तुलना नहीं होती",
   "A found-child intake is compared with missing cases as they are registered, not with sightings.": "मिले बच्चे के पंजीकरण की तुलना लापता मामलों के दर्ज होने पर उनसे होती है, सूचनाओं से नहीं।",
-  "No face could be found in the photo by any engine, so no face comparison was possible.": "किसी भी इंजन को फ़ोटो में चेहरा नहीं मिला, इसलिए चेहरे की तुलना संभव नहीं थी।"
+  "No face could be found in the photo by any engine, so no face comparison was possible.": "किसी भी इंजन को फ़ोटो में चेहरा नहीं मिला, इसलिए चेहरे की तुलना संभव नहीं थी।",
+  "Face search gallery: no face was found in this photo": "चेहरा खोज गैलरी: इस फ़ोटो में कोई चेहरा नहीं मिला",
+  "Face search gallery: several faces in this photo — use a photo of the person alone": "चेहरा खोज गैलरी: इस फ़ोटो में कई चेहरे हैं — व्यक्ति की अकेले की फ़ोटो लगाएँ",
+  "Face search gallery: the face is too small — use a closer, sharper photo": "चेहरा खोज गैलरी: चेहरा बहुत छोटा है — पास से ली गई, ज़्यादा साफ़ फ़ोटो लगाएँ",
+  "Face search gallery: the photo file could not be read — upload it again": "चेहरा खोज गैलरी: फ़ोटो की फ़ाइल पढ़ी नहीं जा सकी — फिर से अपलोड करें",
+  "Fill the face search gallery": "चेहरा खोज गैलरी भरें",
+  "Filling the face search gallery…": "चेहरा खोज गैलरी भरी जा रही है…",
+  "{enrolled} of {open} open cases in the face search gallery, {needsPhoto} need a better photo": "{open} खुले मामलों में से {enrolled} चेहरा खोज गैलरी में हैं, {needsPhoto} के लिए बेहतर फ़ोटो चाहिए",
+  "The face search gallery did not answer": "चेहरा खोज गैलरी ने जवाब नहीं दिया",
+  "The gallery key belongs to another gallery: {name}": "गैलरी की कुंजी किसी दूसरी गैलरी की है: {name}",
+  "{enrolled} added, {removed} removed, {remaining} left": "{enrolled} जोड़े, {removed} हटाए, {remaining} बाकी",
+  "waiting for the per-minute limit": "प्रति मिनट की सीमा के लिए इंतज़ार हो रहा है"
 }

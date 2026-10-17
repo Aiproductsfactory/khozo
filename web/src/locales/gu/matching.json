@@ -81,5 +81,16 @@
   "That sighting is not linked to this case": "તે જાણકારી આ કેસ સાથે જોડાયેલી નથી",
   "A found-child intake is not compared with sightings": "મળેલા બાળકની નોંધણીની જાણકારીઓ સાથે સરખામણી થતી નથી",
   "A found-child intake is compared with missing cases as they are registered, not with sightings.": "મળેલા બાળકની નોંધણીની સરખામણી ગુમ થયેલા કેસ નોંધાય ત્યારે તેમની સાથે થાય છે, જાણકારીઓ સાથે નહીં.",
-  "No face could be found in the photo by any engine, so no face comparison was possible.": "કોઈ પણ એન્જિનને ફોટામાં ચહેરો મળ્યો નહીં, તેથી ચહેરાની સરખામણી શક્ય ન હતી."
+  "No face could be found in the photo by any engine, so no face comparison was possible.": "કોઈ પણ એન્જિનને ફોટામાં ચહેરો મળ્યો નહીં, તેથી ચહેરાની સરખામણી શક્ય ન હતી.",
+  "Face search gallery: no face was found in this photo": "ચહેરા શોધ ગેલેરી: આ ફોટામાં કોઈ ચહેરો મળ્યો નથી",
+  "Face search gallery: several faces in this photo — use a photo of the person alone": "ચહેરા શોધ ગેલેરી: આ ફોટામાં એકથી વધુ ચહેરા છે — વ્યક્તિના એકલાનો ફોટો વાપરો",
+  "Face search gallery: the face is too small — use a closer, sharper photo": "ચહેરા શોધ ગેલેરી: ચહેરો ખૂબ નાનો છે — નજીકથી લીધેલો, વધુ સ્પષ્ટ ફોટો વાપરો",
+  "Face search gallery: the photo file could not be read — upload it again": "ચહેરા શોધ ગેલેરી: ફોટાની ફાઇલ વાંચી શકાઈ નથી — ફરી અપલોડ કરો",
+  "Fill the face search gallery": "ચહેરા શોધ ગેલેરી ભરો",
+  "Filling the face search gallery…": "ચહેરા શોધ ગેલેરી ભરાય છે…",
+  "{enrolled} of {open} open cases in the face search gallery, {needsPhoto} need a better photo": "{open} ખુલ્લા કેસમાંથી {enrolled} ચહેરા શોધ ગેલેરીમાં છે, {needsPhoto} માટે વધુ સારો ફોટો જોઈએ",
+  "The face search gallery did not answer": "ચહેરા શોધ ગેલેરીએ જવાબ આપ્યો નથી",
+  "The gallery key belongs to another gallery: {name}": "ગેલેરીની કી બીજી ગેલેરીની છે: {name}",
+  "{enrolled} added, {removed} removed, {remaining} left": "{enrolled} ઉમેર્યા, {removed} કાઢ્યા, {remaining} બાકી",
+  "waiting for the per-minute limit": "પ્રતિ મિનિટ મર્યાદા માટે રાહ જોવાય છે"
 }

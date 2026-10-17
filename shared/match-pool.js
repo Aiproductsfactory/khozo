@@ -169,9 +169,18 @@ function idSet(values) {
   return new Set((Array.isArray(values) ? values : [values]).filter(Boolean));
 }
 
-/** Whether a case is in the one-to-many index this search used. */
-function isIndexed(report, provider) {
-  return Boolean(provider) && report?.faceIndex?.provider === provider && report.faceIndex.status === 'enrolled';
+/**
+ * How long after enrolment a face may not be searchable yet. Aarakshak's
+ * gallery takes about five seconds to index a new face; until this has passed,
+ * the case is compared pairwise as if it were not in the index.
+ */
+export const INDEX_SETTLE_MS = 10000;
+
+/** Whether a case is in the one-to-many index this search used, and searchable there. */
+function isIndexed(report, provider, clock = Date.now()) {
+  if (!provider || report?.faceIndex?.provider !== provider || report.faceIndex.status !== 'enrolled') return false;
+  const at = Date.parse(report.faceIndex.at);
+  return !Number.isFinite(at) || clock - at >= INDEX_SETTLE_MS;
 }
 
 /**
@@ -204,7 +213,9 @@ export function selectMatchCandidates(reports = [], hints = {}, max = 25, now = 
       }
       if (fromIndex.length >= limit) break;
     }
-    const unindexed = open.filter((r) => !seen.has(r.id) && !isIndexed(r, hints.indexProvider));
+    // `now` may be a past sighting's time (a re-match); settling is about
+    // the index today.
+    const unindexed = open.filter((r) => !seen.has(r.id) && !isIndexed(r, hints.indexProvider, Date.now()));
     const rest = limit - fromIndex.length > 0
       ? spendBudget(unindexed, hints, missingTime, limit - fromIndex.length, limit, fit).selected
       : [];

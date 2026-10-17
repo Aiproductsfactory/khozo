@@ -148,6 +148,10 @@ export default function FoundReports({ view = 'matches' }) {
   const [placements, setPlacements] = useState({});
   // The national re-match batch: { processed, linked, remaining, running }.
   const [batch, setBatch] = useState(null);
+  // The face search gallery (GET /dashboard/face-index), for the national
+  // desk, and its fill run: { enrolled, removed, remaining, waiting, running }.
+  const [gallery, setGallery] = useState(null);
+  const [fill, setFill] = useState(null);
   const canCwcFollowup = ['super_admin', 'admin', 'cwc', 'dcpu', 'state_nodal', 'sara'].includes(user.role);
   const canFormalizeIntake = ['super_admin', 'admin', 'police', 'sjpu', 'cwc', 'dcpu', 'cci', 'saa', 'state_nodal', 'sara'].includes(user.role);
 
@@ -171,6 +175,12 @@ export default function FoundReports({ view = 'matches' }) {
     api.get('/reports').then(indexCases).catch(() => {});
   }, []);
   useEffect(load, [load]);
+
+  const loadGallery = useCallback(() => {
+    if (user.role !== 'super_admin') return;
+    api.get('/dashboard/face-index').then(setGallery).catch(() => setGallery(null));
+  }, [user.role]);
+  useEffect(loadGallery, [loadGallery]);
 
   // A sighting queue that only loads once is a queue an officer has to remember
   // to refresh. The whole point of this page is that something arrives while
@@ -315,6 +325,41 @@ export default function FoundReports({ view = 'matches' }) {
     load();
   });
 
+  // The national desk fills the face search gallery a batch at a time,
+  // pausing between batches as long as the server says (Aarakshak's pilot
+  // allows 30 calls a minute), until nothing is left or a batch gets nowhere.
+  const runFill = () => action.run('index-fill', async () => {
+    let since = null;
+    let enrolled = 0;
+    let removed = 0;
+    let last = null;
+    let previous = Infinity;
+    let limitedInARow = 0;
+    for (let round = 0; round < 60; round += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      last = await api.post('/dashboard/face-index/backfill', { limit: 10, ...(since ? { since } : {}) });
+      since = last?.since || since;
+      enrolled += Number(last?.enrolled) || 0;
+      removed += Number(last?.removed) || 0;
+      const remaining = Number(last?.remaining) || 0;
+      setFill({ enrolled, removed, remaining, waiting: false, running: true });
+      if (!last?.enabled || remaining <= 0) break;
+      if (last.rateLimited) {
+        limitedInARow += 1;
+        if (limitedInARow > 3) break;
+      } else {
+        limitedInARow = 0;
+        if (remaining >= previous) break;
+      }
+      previous = remaining;
+      setFill({ enrolled, removed, remaining, waiting: true, running: true });
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((resolve) => setTimeout(resolve, Math.min(90000, Math.max(0, Number(last.waitMs) || 0))));
+    }
+    setFill({ enrolled, removed, remaining: Number(last?.remaining) || 0, waiting: false, running: false });
+    loadGallery();
+  });
+
   // The dialog's submit: throws on refusal, so the reason shows in the dialog.
   const confirmMatch = async (verification) => {
     const { sighting } = confirming;
@@ -427,6 +472,41 @@ export default function FoundReports({ view = 'matches' }) {
                 </p>
               )}
               <ActionMessage action={action} id="rematch-batch" />
+            </div>
+          )}
+          {/*
+            The face search gallery, once one is configured: how many open
+            cases it holds, and a run that enrols the rest and removes the
+            faces of cases no longer open. The national desk only.
+          */}
+          {user.role === 'super_admin' && gallery?.enabled && (
+            <div className="text-right">
+              <button
+                type="button"
+                onClick={runFill}
+                disabled={action.pending}
+                className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-indigo-600 ring-1 ring-indigo-200 hover:bg-indigo-50"
+              >
+                {action.busy('index-fill') ? t('Filling the face search gallery…') : t('Fill the face search gallery')}
+              </button>
+              {gallery.counts && (
+                <p className="mt-1 text-[11px] text-slate-500">
+                  {t('{enrolled} of {open} open cases in the face search gallery, {needsPhoto} need a better photo', gallery.counts)}
+                </p>
+              )}
+              {!gallery.gallery && <p className="mt-1 text-[11px] font-semibold text-red-600">{t('The face search gallery did not answer')}</p>}
+              {gallery.gallery && gallery.gallery.galleryMatches === false && (
+                <p className="mt-1 text-[11px] font-semibold text-red-600">
+                  {t('The gallery key belongs to another gallery: {name}', { name: gallery.gallery.galleryId || '?' })}
+                </p>
+              )}
+              {fill && (
+                <p className="mt-1 text-[11px] text-slate-500">
+                  {t('{enrolled} added, {removed} removed, {remaining} left', fill)}
+                  {fill.waiting ? ` · ${t('waiting for the per-minute limit')}` : ''}
+                </p>
+              )}
+              <ActionMessage action={action} id="index-fill" />
             </div>
           )}
         </div>

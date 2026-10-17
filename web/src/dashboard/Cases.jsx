@@ -13,7 +13,7 @@ import { useDisplay } from '../useDisplay.js';
 import { useBackClose } from '../useBackClose.js';
 import { POLICE_ROLES } from '../../../shared/scope.js';
 import { ActionMessage, ActionToast, useAction } from './useAction.jsx';
-import { ConfirmMatchDialog, FamilyContactList, FamilyContactPanel, ReopenCasePanel, photoCheckFlag } from './Reunite.jsx';
+import { ConfirmMatchDialog, FamilyContactList, FamilyContactPanel, ReopenCasePanel, faceIndexFlag, photoCheckFlag } from './Reunite.jsx';
 import { preparePhoto } from '../photoPrep.js';
 
 const FORMAL_ACTION_ROLES = ['super_admin', 'admin', 'police', 'sjpu'];
@@ -1331,9 +1331,10 @@ export default function Cases() {
             {/*
               Whether this photo can be matched at all. A photo with no face,
               or of a group, is never refused at registration; it is flagged
-              here, and police can replace it.
+              here, and police can replace it. The face search gallery may
+              refuse a photo the check passed (a face too small to enrol).
             */}
-            {(photoCheckFlag(selected.photoCheck) || (canReplacePhoto && !selected.anonymizedAt)) && (
+            {(photoCheckFlag(selected.photoCheck) || faceIndexFlag(selected.faceIndex) || (canReplacePhoto && !selected.anonymizedAt)) && (
               <div className="mt-6 rounded-xl border border-black/5 p-4">
                 <p className="text-sm font-medium">{t('Case photo')}</p>
                 {photoCheckFlag(selected.photoCheck) ? (
@@ -1343,6 +1344,11 @@ export default function Cases() {
                 ) : selected.photoCheck?.verdict === 'usable' ? (
                   <p className="mt-1 text-xs text-emerald-700">{t('One face found: the photo can be used for matching.')}</p>
                 ) : null}
+                {faceIndexFlag(selected.faceIndex) && (
+                  <p className={`mt-2 rounded-lg px-3 py-2 text-xs font-semibold ring-1 ${faceIndexFlag(selected.faceIndex).className}`}>
+                    {t(faceIndexFlag(selected.faceIndex).label)}
+                  </p>
+                )}
                 {canReplacePhoto && !selected.anonymizedAt && (
                   <>
                     <p className="mt-2 text-xs text-gray-600">

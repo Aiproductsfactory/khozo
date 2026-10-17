@@ -110,6 +110,25 @@ export function photoCheckFlag(photoCheck) {
   return null;
 }
 
+const FACE_INDEX_REFUSALS = {
+  no_face: msg('Face search gallery: no face was found in this photo'),
+  face_not_found_at_box: msg('Face search gallery: no face was found in this photo'),
+  multiple_faces: msg('Face search gallery: several faces in this photo — use a photo of the person alone'),
+  face_too_small: msg('Face search gallery: the face is too small — use a closer, sharper photo'),
+  photo_missing: msg('Face search gallery: the photo file could not be read — upload it again'),
+};
+
+/**
+ * Why the face search gallery (shared/face-index.js) refused a case's photo,
+ * when it did. The case is then searched only pairwise, a few cases at a time;
+ * replacing the photo puts it in the gallery.
+ */
+export function faceIndexFlag(faceIndex) {
+  if (!faceIndex || typeof faceIndex !== 'object' || faceIndex.status !== 'failed') return null;
+  const label = FACE_INDEX_REFUSALS[faceIndex.reason];
+  return label ? { label, className: 'bg-amber-50 text-amber-800 ring-amber-200' } : null;
+}
+
 /**
  * The candidate a sighting currently points at: its entry in the candidate
  * list, or, for a record from before candidates were kept, one rebuilt from

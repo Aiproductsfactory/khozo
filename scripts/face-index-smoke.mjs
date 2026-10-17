@@ -10,8 +10,17 @@
  *   - a new sighting asks the index for 50 faces and spends the pairwise
  *     comparison (and its confirmation) on that shortlist, plus any open case
  *     the index does not hold yet - and on nothing else;
- *   - an index that does not answer falls back to the nearest-first budget.
+ *   - an index that does not answer falls back to the nearest-first budget;
+ *   - a case enrolled seconds ago, which the gallery cannot find yet, is still
+ *     compared pairwise;
+ *   - the Aarakshak v2 adapter sends exactly what its contract says - the
+ *     opaque case id and the photo, never a name or metadata - retries a
+ *     broken call once with the same Idempotency-Key, never retries a 429,
+ *     and reads refusals, searches, receipts and the gallery list;
+ *   - the backfill removes before it enrols, leaves faces that are not
+ *     Khozo's alone, does not resend a refused photo, and stops at a 429.
  *
+
  * The routes are called directly with an in-memory store; the comparisons go
  * through the Worker engine against a stubbed Aarakshak. No network.
  *
@@ -21,7 +30,8 @@ import process from 'node:process';
 
 import registerReportRoutes from '../shared/routes/reports.js';
 import registerDashboardRoutes from '../shared/routes/dashboard.js';
-import { createFaceIndex, safeFaceIndex } from '../shared/face-index.js';
+import registerFaceIndexAdminRoutes from '../shared/routes/face-index-admin.js';
+import { aarakshakGalleryIndex, createFaceIndex, safeFaceIndex } from '../shared/face-index.js';
 import { detectPerson, rankMatches, rankSightingMatches } from '../worker/src/match.js';
 
 const checks = [];
@@ -45,10 +55,141 @@ console.warn = () => {};
 check('a provider fault is contained', (await broken.search(Buffer.from('x'), 50)) === null && (await broken.enroll('r_1', Buffer.from('x'))).ok === false);
 console.warn = quiet;
 
-// --- A fake index and a stubbed Aarakshak ---------------------------------------
+// --- The Aarakshak v2 adapter, against a fake gallery ----------------------------
 const JPEG_HEAD = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]);
 const photo = (person, role) => Buffer.concat([JPEG_HEAD, Buffer.from(`FACE:${person}:${role};`)]);
 const personIn = (buf) => /FACE:(\w+):/.exec(Buffer.from(buf).toString('latin1'))?.[1] || null;
+
+/** Aarakshak's /api/v2, as far as Khozo uses it. `queue` overrides the next answers. */
+function fakeGallery() {
+  const requests = [];
+  const queue = [];
+  const reply = (status, body, requestId = `req-${requests.length}`) =>
+    new Response(body == null ? '' : JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', 'X-Request-ID': requestId } });
+  async function fetchImpl(url, init = {}) {
+    const u = new URL(url);
+    const headers = Object.fromEntries(Object.entries(init.headers || {}).map(([k, v]) => [k.toLowerCase(), v]));
+    const body = init.body ? Buffer.from(init.body).toString('latin1') : '';
+    requests.push({ method: init.method, path: u.pathname, query: u.search, headers, body });
+    if (queue.length) {
+      const next = queue.shift();
+      if (next === 'network') throw new TypeError('fetch failed');
+      return reply(next.status, next.body, next.requestId);
+    }
+    if (init.method === 'POST' && u.pathname === '/api/v2/cases') {
+      const caseId = /name="case_id"\r\n\r\n([^\r]+)/.exec(body)?.[1];
+      return reply(201, {
+        case: { case_id: caseId, metadata: {}, faces: [], created_at: 'now', updated_at: 'now' },
+        photos: [{ photo_index: 0, status: 'enrolled', face_id: `f_${caseId}`, faces_detected: 1, box: null, detected_boxes: [], quality_score: 0.82, warnings: [] }],
+        faces_enrolled: 1,
+        model: { model_version: 'm1', embedding_model: 'e1', score: 'cosine' },
+      });
+    }
+    if (init.method === 'POST' && u.pathname === '/api/v2/search') {
+      return reply(200, {
+        gallery_id: 'khozo-sandbox', faces_detected: 2, top_k: 50, min_score: null, model: {},
+        faces: [
+          { box: {}, quality_score: 0.9, warnings: [], matches: [{ case_id: 'r_aaaa1111', face_id: 'f1', score: 0.71 }, { case_id: 'r_bbbb2222', face_id: 'f2', score: 0.40 }] },
+          { box: {}, quality_score: 0.6, warnings: [], matches: [{ case_id: 'r_bbbb2222', face_id: 'f3', score: 0.88 }, { case_id: 'r_cccc3333', face_id: 'f4', score: -0.2 }] },
+        ],
+      });
+    }
+    if (init.method === 'DELETE' && u.pathname.startsWith('/api/v2/cases/')) {
+      return reply(200, { case_id: decodeURIComponent(u.pathname.split('/').pop()), case_id_sha256: 'ab12', faces_deleted: 1, deleted_at: '2026-10-17T10:00:00Z', signature: 'sig==' });
+    }
+    if (init.method === 'GET' && u.pathname === '/api/v2/gallery') {
+      return reply(200, { gallery_id: 'khozo-sandbox', label: 'Khozo sandbox', owner: 'khozo', case_count: 3, face_count: 4, limits: { max_faces: 4000, requests_per_minute: 30 }, model: { model_version: 'm1', embedding_model: 'e1', score: 'cosine' } });
+    }
+    if (init.method === 'GET' && u.pathname === '/api/v2/cases') {
+      const all = ['r_aaaa1111', 'r_bbbb2222', 'r_cccc3333'];
+      const offset = Number(u.searchParams.get('offset')) || 0;
+      const limit = Number(u.searchParams.get('limit')) || 1000;
+      return reply(200, { case_ids: all.slice(offset, offset + limit), total: all.length, offset, limit });
+    }
+    return reply(404, { detail: 'Not Found' });
+  }
+  return { requests, queue, fetchImpl };
+}
+
+{
+  const fake = fakeGallery();
+  const g = aarakshakGalleryIndex({ url: 'https://gallery.example/api/v2/', key: ' sandbox-key ', gallery: 'khozo-sandbox', fetchImpl: fake.fetchImpl, retryDelayMs: 0 });
+  const quietWarn = console.warn;
+  const warnings = [];
+  console.warn = (...a) => warnings.push(a.join(' '));
+  try {
+    const enrolled = await g.enroll('r_aaaa1111', photo('A', 'case'));
+    const req = fake.requests.at(-1);
+    check('enrolment posts the case to /api/v2/cases with the key and an Idempotency-Key',
+      req.method === 'POST' && req.path === '/api/v2/cases' && req.headers['x-api-key'] === 'sandbox-key' && /^khozo-enrol-r_aaaa1111-/.test(req.headers['idempotency-key'] || ''),
+      JSON.stringify({ path: req.path, headers: req.headers }));
+    const fields = [...req.body.matchAll(/; name="([^"]+)"/g)].map((m) => m[1]);
+    check('it sends the opaque case id, replace=true and one photo - no name, no metadata',
+      fields.join() === 'case_id,replace,images' && /name="replace"\r\n\r\ntrue/.test(req.body) && !/Child|sex|birth_year|state_code|district_code/.test(req.body),
+      fields.join());
+    check('and reads the enrolled face', enrolled.ok === true && enrolled.faceId === 'f_r_aaaa1111' && enrolled.quality === 0.82, JSON.stringify(enrolled));
+
+    fake.queue.push({ status: 503, body: { detail: 'busy' }, requestId: 'rid-503' });
+    const retried = await g.enroll('r_aaaa1111', photo('A', 'case'));
+    const [first, second] = fake.requests.slice(-2);
+    check('a 5xx is retried once, with the same Idempotency-Key',
+      retried.ok === true && first.headers['idempotency-key'] === second.headers['idempotency-key'], JSON.stringify(retried));
+    check('and the failure is logged with Aarakshak\'s X-Request-ID', warnings.some((w) => w.includes('rid-503')), warnings.join(' | '));
+    check('a later enrolment of the same case gets a new key',
+      new Set(fake.requests.filter((r) => r.path === '/api/v2/cases' && r.method === 'POST').map((r) => r.headers['idempotency-key'])).size === 2);
+
+    const before = fake.requests.length;
+    fake.queue.push({ status: 429, body: { detail: 'rate limited' } });
+    const limited = await g.enroll('r_aaaa1111', photo('A', 'case'));
+    check('a 429 is not retried, and says so', fake.requests.length === before + 1 && limited.ok === false && limited.reason === 'rate_limited', JSON.stringify(limited));
+
+    fake.queue.push({ status: 201, body: { case: {}, photos: [{ photo_index: 0, status: 'multiple_faces', face_id: null, faces_detected: 2, warnings: [] }], faces_enrolled: 0, model: {} } });
+    const several = await g.enroll('r_aaaa1111', photo('A', 'case'));
+    fake.queue.push({ status: 422, body: { detail: { photos: [{ photo_index: 0, status: 'face_too_small', faces_detected: 1, quality_score: 0.2, warnings: ['small'] }] } } });
+    const small = await g.enroll('r_aaaa1111', photo('A', 'case'));
+    check('a refused photo comes back with Aarakshak\'s reason',
+      several.ok === false && several.reason === 'multiple_faces' && small.ok === false && small.reason === 'face_too_small' && small.warnings[0] === 'small',
+      JSON.stringify({ several, small }));
+
+    const hits = await g.search(photo('A', 'sighting'), 50);
+    const searchReq = fake.requests.at(-1);
+    check('search posts one image and top_k to /api/v2/search',
+      searchReq.path === '/api/v2/search' && /name="top_k"\r\n\r\n50/.test(searchReq.body) && /name="image"; filename=/.test(searchReq.body));
+    check('every face in the probe is searched, each case at its best score, best first',
+      JSON.stringify(hits) === JSON.stringify([{ caseId: 'r_bbbb2222', score: 0.88 }, { caseId: 'r_aaaa1111', score: 0.71 }, { caseId: 'r_cccc3333', score: 0 }]),
+      JSON.stringify(hits));
+    fake.queue.push({ status: 200, body: { gallery_id: 'khozo-sandbox', faces_detected: 0, faces: [], top_k: 50, min_score: null, model: {} } });
+    const noFace = await g.search(photo('A', 'sighting'), 50);
+    const beforeSearch = fake.requests.length;
+    fake.queue.push({ status: 429, body: { detail: 'rate limited' } });
+    const limitedSearch = await g.search(photo('A', 'sighting'), 50);
+    check('a probe with no face, or a 429, is no answer - the pairwise budget decides - and is not retried',
+      noFace === null && limitedSearch === null && fake.requests.length === beforeSearch + 1);
+
+    const gone = await g.remove('r_aaaa1111');
+    const removeReq = fake.requests.at(-1);
+    fake.queue.push({ status: 404, body: { detail: 'not found' } });
+    const already = await g.remove('r_zzzz9999');
+    check('removal deletes /api/v2/cases/{id} and keeps the signed receipt; already gone is done',
+      removeReq.method === 'DELETE' && removeReq.path === '/api/v2/cases/r_aaaa1111' &&
+        gone.ok && gone.receipt?.signature === 'sig==' && gone.receipt.caseIdSha256 === 'ab12' && already.ok === true,
+      JSON.stringify({ gone, already }));
+
+    const info = await g.info();
+    const wrong = await aarakshakGalleryIndex({ url: 'https://gallery.example', key: 'k', gallery: 'someone-else', fetchImpl: fake.fetchImpl }).info();
+    check('gallery info is read, and a key for another gallery is flagged',
+      info.galleryId === 'khozo-sandbox' && info.faces === 4 && info.limits.max_faces === 4000 && info.galleryMatches === true && wrong.galleryMatches === false,
+      JSON.stringify(info));
+    const ids = await g.listCaseIds({ pageSize: 2 });
+    check('the gallery list is read page by page',
+      JSON.stringify(ids) === JSON.stringify(['r_aaaa1111', 'r_bbbb2222', 'r_cccc3333']) && fake.requests.at(-1).query === '?offset=2&limit=2', JSON.stringify(ids));
+    check('a URL given with /api/v2 on the end is the same host', fake.requests.every((r) => r.path.startsWith('/api/v2/')));
+  } finally {
+    console.warn = quietWarn;
+  }
+}
+
+// --- A fake index and a stubbed Aarakshak ---------------------------------------
 
 function memoryIndex() {
   const faces = new Map();
@@ -69,6 +210,7 @@ function memoryIndex() {
       if (this.failSearch) return null;
       const probe = personIn(buf);
       return [...faces.entries()]
+        .filter(([caseId]) => !this.hidden?.has(caseId))
         .map(([caseId, person]) => ({ caseId, score: person === probe ? 0.97 : 0.1 }))
         .sort((a, b) => b.score - a.score)
         .slice(0, topK);
@@ -148,7 +290,7 @@ const deps = {
   settings: {},
 };
 
-function harness(register) {
+function harness(register, d = deps) {
   const routes = [];
   const router = {
     use: () => router,
@@ -160,7 +302,7 @@ function harness(register) {
       },
     ])),
   };
-  register(router, deps);
+  register(router, d);
   return async (method, path, { params = {}, user = null, body = {}, file = null } = {}) => {
     const route = routes.find((r) => r.method === method && r.path === path);
     if (!route) throw new Error(`no route ${method} ${path}`);
@@ -281,11 +423,154 @@ try {
   // Replacing a photo replaces the face in the index.
   const replaced = await reports('POST', '/:id/photo', { params: { id: x.id }, user: police, body: {}, file: fileOf(photo('X2', 'case')) });
   check('replacing a case photo replaces its face in the index', replaced.status === 200 && index.faces.get(x.id) === 'X2', JSON.stringify(replaced.payload));
+
+  // A face enrolled seconds ago that the gallery cannot find yet (Aarakshak
+  // indexes in about five seconds): still compared pairwise.
+  const fresh = await register(police, 'N');
+  index.hidden = new Set([fresh.id]);
+  compared.length = 0;
+  const early = await reports('POST', '/found', {
+    user: null,
+    body: { foundLocation: 'Kalupur station', state: 'Gujarat', district: 'Ahmedabad', photoConsent: 'true', reporterPhone: '9000003004' },
+    file: fileOf(photo('N', 'sighting')),
+  });
+  check('a case enrolled seconds ago is compared pairwise until the gallery can find it',
+    compared.includes('N~N') && find(db.foundReports, early.payload.foundReport.id).matchedReportId === fresh.id, compared.join());
+  find(db.reports, fresh.id).faceIndex.at = new Date(Date.now() - 60000).toISOString();
+  compared.length = 0;
+  await reports('POST', '/found', {
+    user: null,
+    body: { foundLocation: 'Kalupur station', state: 'Gujarat', district: 'Ahmedabad', photoConsent: 'true', reporterPhone: '9000003005' },
+    file: fileOf(photo('N', 'sighting')),
+  });
+  check('and once settled, the gallery\'s answer is trusted', !compared.includes('N~N'), compared.join());
+  index.hidden = null;
 } finally {
+
   globalThis.fetch = realFetch;
 }
 
+// --- The backfill -------------------------------------------------------------
+{
+  const old = new Date(Date.now() - 3600000).toISOString();
+  const store = { reports: [], audit: [], photos: new Map() };
+  const open = (id, person, extra = {}) => {
+    store.photos.set(`${id}.jpg`, photo(person, 'case'));
+    store.reports.push({ id, childName: `Child ${person}`, status: 'missing', intakeStatus: 'verified', photoFile: `${id}.jpg`, createdAt: Date.now(), ...extra });
+  };
+  open('r_open0001', 'P1');
+  open('r_open0002', 'P2', { faceIndex: { provider: 'gallery-test', status: 'failed', reason: 'rate_limited', at: old } });
+  open('r_bad00001', 'M', { faceIndex: { provider: 'gallery-test', status: 'failed', reason: 'multiple_faces', at: old } });
+  open('r_marked01', 'P3', { faceIndex: { provider: 'gallery-test', status: 'enrolled', reason: null, at: old } });
+  store.reports.push({ id: 'r_nophoto1', childName: 'Child Q', status: 'missing', intakeStatus: 'verified', photoFile: 'r_nophoto1.jpg', createdAt: Date.now() });
+  open('r_found001', 'F', { status: 'found', faceIndex: { provider: 'gallery-test', status: 'enrolled', reason: null, at: old } });
+  open('r_closed01', 'C', { status: 'closed', faceIndex: { provider: 'gallery-test', status: 'enrolled', reason: null, at: old } });
+
+  function galleryIndex(initial) {
+    const faces = new Map(initial.map((id) => [id, 'x']));
+    const log = [];
+    return {
+      name: 'gallery-test',
+      enabled: true,
+      faces,
+      log,
+      limitAfter: Infinity,
+      async enroll(caseId, buf) {
+        log.push(['enroll', caseId]);
+        if (log.filter(([op]) => op === 'enroll').length > this.limitAfter) return { ok: false, reason: 'rate_limited' };
+        if (personIn(buf) === 'M') return { ok: false, reason: 'multiple_faces' };
+        faces.set(caseId, personIn(buf));
+        return { ok: true, quality: 0.8 };
+      },
+      async search() {
+        return [];
+      },
+      async remove(caseId) {
+        log.push(['remove', caseId]);
+        faces.delete(caseId);
+        return { ok: true, receipt: { signature: 'sig' } };
+      },
+      async info() {
+        return { galleryId: 'khozo-sandbox', cases: faces.size, faces: faces.size, limits: {}, galleryMatches: true };
+      },
+      async listCaseIds() {
+        return [...faces.keys()];
+      },
+    };
+  }
+  const adminDeps = (idx, s) => ({
+    ...deps,
+    faceIndex: idx,
+    listReports: () => s.reports,
+    findReport: (id) => find(s.reports, id),
+    updateReport: update(s.reports),
+    readPhoto: async (key) => s.photos.get(key) || null,
+    addAudit: (row) => s.audit.push(row),
+  });
+  const g = galleryIndex(['r_found001', 'r_stray001', 'aarakshak-demo-7']);
+  const admin = harness(registerFaceIndexAdminRoutes, adminDeps(g, store));
+
+  const status = await admin('GET', '/face-index', { user: superAdmin });
+  check('the status counts what the gallery holds and what it does not',
+    status.payload.enabled && status.payload.gallery.galleryId === 'khozo-sandbox' && status.payload.counts.pending === 4 &&
+      status.payload.counts.missingFromGallery === 1 && status.payload.counts.toRemove === 2 && status.payload.counts.needsPhoto === 1,
+    JSON.stringify(status.payload.counts));
+  check('and lists the cases that need a better photo by id and reason only',
+    JSON.stringify(status.payload.needsPhoto.map((r) => Object.keys(r).sort())) === JSON.stringify([['at', 'id', 'reason']]) && status.payload.needsPhoto[0].reason === 'multiple_faces',
+    JSON.stringify(status.payload.needsPhoto));
+
+  const run = await admin('POST', '/face-index/backfill', { user: superAdmin, body: { limit: 20 } });
+  const ops = g.log.map(([op, id]) => `${op}:${id}`);
+  check('the backfill removes the found case and the stray Khozo id before it enrols',
+    ops.includes('remove:r_found001') && ops.includes('remove:r_stray001') &&
+      Math.max(ops.indexOf('remove:r_found001'), ops.indexOf('remove:r_stray001')) < ops.findIndex((o) => o.startsWith('enroll')),
+    ops.join());
+  check('a closed case the gallery does not hold is marked removed without a call',
+    !ops.includes('remove:r_closed01') && find(store.reports, 'r_closed01').faceIndex.status === 'removed');
+  check('a face that is not Khozo\'s is left alone', g.faces.has('aarakshak-demo-7'));
+  check('it enrols new cases, rate-limited ones and ones missing from the gallery',
+    ['r_open0001', 'r_open0002', 'r_marked01'].every((id) => g.faces.has(id) && find(store.reports, id).faceIndex.status === 'enrolled'), ops.join());
+  check('a refused photo is not sent again, and a case with no photo on file is marked for one',
+    !ops.includes('enroll:r_bad00001') && find(store.reports, 'r_nophoto1').faceIndex.reason === 'photo_missing');
+  check('the batch reports its work and leaves nothing for this run',
+    run.payload.enrolled === 3 && run.payload.removed === 3 && run.payload.rejected === 1 && run.payload.remaining === 0 && run.payload.rateLimited === false,
+    JSON.stringify(run.payload));
+  check('and is audited', store.audit.some((a) => a.action === 'face_index.backfill' && a.metadata.enrolled === 3));
+
+  // A 429 stops the batch; the rate-limited case is due again in the same run.
+  const store2 = { reports: [], audit: [], photos: new Map() };
+  for (const n of [1, 2, 3]) {
+    store2.photos.set(`r_rate000${n}.jpg`, photo(`R${n}`, 'case'));
+    store2.reports.push({ id: `r_rate000${n}`, childName: 'x', status: 'missing', intakeStatus: 'verified', photoFile: `r_rate000${n}.jpg`, createdAt: Date.now() - n });
+  }
+  const g2 = galleryIndex([]);
+  g2.limitAfter = 1;
+  const admin2 = harness(registerFaceIndexAdminRoutes, adminDeps(g2, store2));
+  const limited = await admin2('POST', '/face-index/backfill', { user: superAdmin, body: { limit: 20 } });
+  check('a 429 stops the batch and asks for a minute\'s wait',
+    limited.payload.rateLimited === true && limited.payload.waitMs === 60000 && g2.log.filter(([op]) => op === 'enroll').length === 2 && limited.payload.remaining === 2,
+    JSON.stringify(limited.payload));
+  g2.limitAfter = Infinity;
+  const resumed = await admin2('POST', '/face-index/backfill', { user: superAdmin, body: { limit: 20, since: limited.payload.since } });
+  check('and the same run picks the rate-limited case up again',
+    resumed.payload.enrolled === 2 && resumed.payload.remaining === 0 && g2.faces.size === 3, JSON.stringify(resumed.payload));
+
+  // A gallery mostly of Khozo ids with no case on file: nothing is removed.
+  const g3 = galleryIndex(Array.from({ length: 12 }, (_, i) => `r_unknown${String(i).padStart(2, '0')}`));
+  const admin3 = harness(registerFaceIndexAdminRoutes, adminDeps(g3, { reports: [], audit: [], photos: new Map() }));
+  const guarded = await admin3('POST', '/face-index/backfill', { user: superAdmin, body: {} });
+  check('a gallery that is mostly unknown to the cases loaded is not emptied',
+    guarded.payload.unknownGuarded === true && g3.faces.size === 12 && guarded.payload.removed === 0, JSON.stringify(guarded.payload));
+
+  const off = harness(registerFaceIndexAdminRoutes, adminDeps(createFaceIndex({}), store));
+  const offStatus = await off('GET', '/face-index', { user: superAdmin });
+  const offRun = await off('POST', '/face-index/backfill', { user: superAdmin, body: {} });
+  check('without an index both say so and do nothing',
+    offStatus.payload.enabled === false && offRun.payload.enabled === false && offRun.payload.processed === 0);
+}
+
 const failed = checks.filter((c) => !c.ok);
+
 console.log(`\n--- ${checks.length - failed.length}/${checks.length} checks passed ---`);
 if (failed.length) {
   console.log('\nFailures:');

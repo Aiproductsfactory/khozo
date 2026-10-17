@@ -81,5 +81,16 @@
   "That sighting is not linked to this case": "ती माहिती या प्रकरणाशी जोडलेली नाही",
   "A found-child intake is not compared with sightings": "सापडलेल्या मुलाच्या नोंदणीची माहितीशी तुलना होत नाही",
   "A found-child intake is compared with missing cases as they are registered, not with sightings.": "सापडलेल्या मुलाच्या नोंदणीची तुलना हरवलेली प्रकरणे नोंदवली जातात तेव्हा त्यांच्याशी होते, माहितीशी नाही.",
-  "No face could be found in the photo by any engine, so no face comparison was possible.": "कोणत्याही इंजिनला फोटोत चेहरा आढळला नाही, त्यामुळे चेहऱ्याची तुलना शक्य नव्हती."
+  "No face could be found in the photo by any engine, so no face comparison was possible.": "कोणत्याही इंजिनला फोटोत चेहरा आढळला नाही, त्यामुळे चेहऱ्याची तुलना शक्य नव्हती.",
+  "Face search gallery: no face was found in this photo": "चेहरा शोध गॅलरी: या फोटोत कोणताही चेहरा आढळला नाही",
+  "Face search gallery: several faces in this photo — use a photo of the person alone": "चेहरा शोध गॅलरी: या फोटोत अनेक चेहरे आहेत — व्यक्तीचा एकट्याचा फोटो वापरा",
+  "Face search gallery: the face is too small — use a closer, sharper photo": "चेहरा शोध गॅलरी: चेहरा खूप लहान आहे — जवळून घेतलेला, अधिक स्पष्ट फोटो वापरा",
+  "Face search gallery: the photo file could not be read — upload it again": "चेहरा शोध गॅलरी: फोटोची फाइल वाचता आली नाही — पुन्हा अपलोड करा",
+  "Fill the face search gallery": "चेहरा शोध गॅलरी भरा",
+  "Filling the face search gallery…": "चेहरा शोध गॅलरी भरली जात आहे…",
+  "{enrolled} of {open} open cases in the face search gallery, {needsPhoto} need a better photo": "{open} खुल्या प्रकरणांपैकी {enrolled} चेहरा शोध गॅलरीत आहेत, {needsPhoto} साठी अधिक चांगला फोटो हवा",
+  "The face search gallery did not answer": "चेहरा शोध गॅलरीने उत्तर दिले नाही",
+  "The gallery key belongs to another gallery: {name}": "गॅलरीची की दुसऱ्या गॅलरीची आहे: {name}",
+  "{enrolled} added, {removed} removed, {remaining} left": "{enrolled} जोडले, {removed} काढले, {remaining} शिल्लक",
+  "waiting for the per-minute limit": "प्रति मिनिट मर्यादेसाठी प्रतीक्षा सुरू आहे"
 }

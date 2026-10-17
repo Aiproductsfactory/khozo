@@ -17,6 +17,7 @@ import {
 import { canonicalPlace } from '../geo/index.js';
 import { removeCaseFromIndex } from '../face-index.js';
 import registerMatchingAdminRoutes from './matching-admin.js';
+import registerFaceIndexAdminRoutes from './face-index-admin.js';
 import {
   cleanText,
   jurisdictionError,
@@ -2052,6 +2053,10 @@ export default function registerDashboardRoutes(router, deps) {
   // The re-match batch (POST /rematch-sightings), behind the authentication
   // above (shared/routes/matching-admin.js).
   registerMatchingAdminRoutes(router, deps);
+
+  // The one-to-many index's status and backfill (GET /face-index, POST
+  // /face-index/backfill; shared/routes/face-index-admin.js).
+  registerFaceIndexAdminRoutes(router, deps);
 
   return router;
 }

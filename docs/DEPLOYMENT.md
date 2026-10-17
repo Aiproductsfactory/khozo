@@ -195,7 +195,8 @@ AWS_ACCESS_KEY_ID=...                   # optional: Rekognition confirms, both b
 AWS_SECRET_ACCESS_KEY=...
 AWS_REGION=ap-south-1
 AARAKSHAK_GALLERY_URL=...               # optional: one-to-many index (off unless
-AARAKSHAK_GALLERY_KEY=...               #   both are set; see 3. Face matching)
+AARAKSHAK_GALLERY_KEY=...               #   both are set; see One-to-many index)
+AARAKSHAK_GALLERY_NAME=khozo-sandbox    # optional: the gallery the key should open
 KHOZO_SMS_GATEWAY_URL=...               # required for public registration OTPs
 KHOZO_SMS_API_KEY=...
 ```
@@ -345,23 +346,61 @@ candidates land in the "not checked" lane.
 
 A sighting is compared pairwise against `KHOZO_MATCH_CANDIDATES` (25) open
 cases, nearest first. That stays the active path until an index provider is
-configured. The owners' decision is that the one-to-many index will be
-**Aarakshak's own gallery**, not Rekognition collections; its enrol/search API
-is not published yet. `shared/face-index.js` is the engine-agnostic layer:
+configured. The owners' decision is that the one-to-many index is
+**Aarakshak's own gallery** (API v2, <https://aarakshak.com/openapi.json>, tag
+`gallery-v2`), not Rekognition collections. `shared/face-index.js` is the
+engine-agnostic layer:
 
 - provider `none` (the default): disabled, every call a no-op;
 - provider `aarakshak-gallery`: enabled only when both `AARAKSHAK_GALLERY_URL`
-  and `AARAKSHAK_GALLERY_KEY` are set. A skeleton until the API is published -
-  the request shapes are marked `TODO(aarakshak-gallery)`.
+  and `AARAKSHAK_GALLERY_KEY` are set.
 
-With a provider enabled, registering (or verifying, or reopening) a case
-enrols its photo; closing, confirming found and anonymising remove it; and the
-forward search asks the index for its 50 closest faces, then spends the pairwise
-comparison and the Rekognition confirmation on that shortlist (plus any open
-case the index does not hold yet). A provider that does not answer falls back
-to the nearest-first budget. Cases registered before the provider was enabled
-are not enrolled until they are next registered, verified, reopened or given a
-new photo: backfill them before relying on the index alone.
+Switching it on (Worker):
+
+```sh
+# The key reaches Khozo's technical contact out of band. Paste it at the
+# prompt; it never goes in a file, a commit, a chat or a document.
+npx wrangler secret put AARAKSHAK_GALLERY_KEY
+npx wrangler secret put AARAKSHAK_GALLERY_URL     # https://aarakshak.com
+npx wrangler secret put AARAKSHAK_GALLERY_NAME    # khozo-sandbox
+```
+
+`AARAKSHAK_GALLERY_URL` is the host; `/api/v2` on the end is accepted. The key
+is bound to one gallery, so no request names it; `AARAKSHAK_GALLERY_NAME` is
+only compared with what `GET /api/v2/gallery` reports, and a mismatch shows in
+red on the sightings page.
+
+What is sent: the opaque case id (`r_...`) and the photo - never a name, and
+none of the optional metadata (sex, birth year, state, district), because a
+search is never narrowed by what a family estimated. Aarakshak keeps the face
+template, not the photo. Each enrolment carries its own `Idempotency-Key`,
+reused by its one retry.
+
+With the provider enabled, registering (or verifying, or reopening) a case
+enrols its photo; closing, confirming found and anonymising remove it, and the
+case keeps Aarakshak's signed deletion receipt (`faceIndex.receipt`). The
+forward search asks the gallery for its 50 closest faces, across every face in
+the sighting photo, then spends the pairwise comparison and the Rekognition
+confirmation on that shortlist, plus any open case the gallery does not hold
+yet and any enrolled in the last 10 seconds (the gallery takes about five to
+index a face). A gallery that does not answer, is rate-limited, or finds no
+face in the sighting falls back to the nearest-first budget.
+
+The pilot key allows **30 requests a minute**, shared by live searches and
+enrolments; a 429 is never retried in the request path. A photo the gallery
+refuses (no face, several faces, face too small) is flagged on the case for
+the officer, and replacing the photo enrols it.
+
+**Backfill.** Cases registered before the provider was enabled are not in the
+gallery. On the sightings page the national desk sees how many open cases the
+gallery holds and **Fill the face search gallery**, which runs
+`POST /api/dashboard/face-index/backfill` batch after batch at about 20 calls a
+minute, until nothing is left. Each batch first removes faces that should not
+be there (cases found, closed or anonymised; Khozo case ids with no case on
+file - unless they are most of the gallery, which means the list of cases did
+not load), then enrols open cases the gallery does not hold. Faces whose id is
+not a Khozo case id are never touched. `GET /api/dashboard/face-index` is the
+same status as JSON.
 
 ### Latency
 
