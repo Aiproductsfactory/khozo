@@ -14,7 +14,7 @@
 import { nanoid } from 'nanoid';
 
 import { POLICE_ROLES, canAccessReport, isPoliceOnly, sameDistrict, sameState, sameStatePlace, scopeFoundReports, scopeReports } from '../scope.js';
-import { resolveSightingLocation } from '../geocode.js';
+import { resolveSightingLocation, reverseGeocode } from '../geocode.js';
 import { canonicalPlace, placeFields } from '../geo/index.js';
 import { expectedAgeAt, isForwardPoolCase, isFoundChildIntake, isRematchEligible, isReverseMatchCandidate, wasLinkRejected } from '../match-pool.js';
 import { createSightingMatcher, engineRecordOf, engineSummary, evidenceOf, isReverseLinked } from '../sighting-matching.js';
@@ -1348,6 +1348,9 @@ export default function registerReportRoutes(router, deps) {
         raisesAlert: !req.file || screening.verdict === 'person',
       },
       locationSource: locationScope.source || 'reporter',
+      // The street address of the phone's coordinates, for the officers who
+      // go there. Never in the reporter's receipt (above).
+      geoAddress: locationScope.address || null,
       createdAt: Date.now(),
     };
     addFoundReport(fr);
@@ -2153,6 +2156,29 @@ export default function registerReportRoutes(router, deps) {
    * sighting linked to a case keeps the case's jurisdiction until an officer
    * decides the link; its reported place is what changes.
    */
+  /**
+   * Looks up the street address of a sighting's coordinates, for a sighting
+   * sent before addresses were kept, and saves it. Any desk that can see the
+   * sighting may ask; the answer is the same for everyone, so it is asked of
+   * the geocoder once.
+   */
+  router.post('/found/:id/address', protectedRoute, requireRole(...REVIEW_ROLES), async (req, res) => {
+    const f = findFoundReport(req.params.id);
+    if (!f) return res.status(404).json({ error: 'Found report not found' });
+    if (scopeFoundReports(req.user, [f], listReports()).length !== 1) {
+      return res.status(403).json({ error: 'Found report is outside your jurisdiction' });
+    }
+    if (f.geoAddress) return res.json({ geoAddress: f.geoAddress });
+    if (f.lat == null || f.lng == null || f.anonymizedAt) {
+      return res.status(409).json({ error: 'This sighting has no location to look up' });
+    }
+    const resolved = await reverseGeocode(f.lat, f.lng, { fetchImpl });
+    const geoAddress = resolved?.address || null;
+    if (!geoAddress) return res.status(502).json({ error: 'The address could not be found. Open the location in Maps instead.' });
+    updateFoundReport(f.id, { geoAddress });
+    res.json({ geoAddress });
+  });
+
   router.post('/found/:id/place', protectedRoute, requireRole(...PLACEMENT_ROLES), async (req, res) => {
     const f = findFoundReport(req.params.id);
     if (!f) return res.status(404).json({ error: 'Found report not found' });

@@ -100,11 +100,27 @@ function confidenceBand(score) {
   return { label: t('No candidate'), className: 'text-slate-300' };
 }
 
+/**
+ * Whether a sighting's location is only the coordinates the reporter's phone
+ * filled in (photoLocation.js formatCoordinates: "Lat 19.1270, Lng 72.9050").
+ */
+function isCoordinateText(value) {
+  return /^Lat\s-?\d/i.test(txt(value));
+}
+
 /** What the intake screen found, for the reviewer who has to weigh it. */
 function screeningNote(screening) {
   if (!screening) return null;
   if (screening.verdict === 'person') {
-    return { label: t('Person detected in the photo'), className: 'bg-emerald-50 text-emerald-700' };
+    // Said as what the engine reported: it has read a face into a reflection
+    // in a glass door. The officer's own eyes decide.
+    const faces = Number(screening.faces) || 1;
+    return {
+      label: faces === 1
+        ? t('The face engine found 1 face — check the photo yourself')
+        : t('The face engine found {n} faces — check the photo yourself', { n: faces }),
+      className: 'bg-slate-100 text-slate-700',
+    };
   }
   if (screening.verdict === 'no_person') {
     return { label: t('No person detected — screened out of the general alert'), className: 'bg-amber-50 text-amber-700' };
@@ -133,6 +149,21 @@ export default function FoundReports({ view = 'matches' }) {
   const [error, setError] = useState('');
   // Photos an officer chose to see despite the screen holding them back.
   const [revealed, setRevealed] = useState({});
+  // The sighting whose photograph is open full size.
+  const [viewing, setViewing] = useState(null);
+  useBackClose(Boolean(viewing), () => setViewing(null));
+  // Street addresses looked up for sightings sent before they were kept.
+  const [addressLookup, setAddressLookup] = useState({});
+  const lookUpAddress = async (f) => {
+    setAddressLookup((m) => ({ ...m, [f.id]: { busy: true } }));
+    try {
+      const data = await api.post(`/reports/found/${f.id}/address`);
+      setRows((list) => list.map((row) => (row.id === f.id ? { ...row, geoAddress: data?.geoAddress || row.geoAddress } : row)));
+      setAddressLookup((m) => ({ ...m, [f.id]: null }));
+    } catch (e) {
+      setAddressLookup((m) => ({ ...m, [f.id]: { error: txt(e?.message) || 'Request failed' } }));
+    }
+  };
 
   // A notification links to one sighting, so arriving from an alert has to land
   // on that card rather than on a list of twenty-five.
@@ -659,28 +690,39 @@ export default function FoundReports({ view = 'matches' }) {
                   — it is one click away, with the reason it was held back.
                 */}
                 <div className="h-24 w-24 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-100 sm:h-28 sm:w-28">
-                  {f.screening && f.screening.verdict !== 'person' && !revealed[f.id] ? (
+                  {/* A text report has no photo to hold back: it falls through
+                      to "No photo — text report". */}
+                  {f.screening && !['person', 'no_photo'].includes(f.screening.verdict) && !revealed[f.id] ? (
                     <button
                       onClick={() => setRevealed((r) => ({ ...r, [f.id]: true }))}
                       className="grid h-full w-full place-items-center gap-1 px-2 text-center hover:bg-slate-200"
                     >
-                      <span className="text-lg">🚫</span>
+                      <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5 text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M3 3l18 18M10.6 5.1A9.7 9.7 0 0 1 12 5c5 0 9 4.5 10 7a13 13 0 0 1-3.2 4.3M6.2 6.6C4.1 8 2.6 10 2 12c1 2.5 5 7 10 7a9.6 9.6 0 0 0 4.6-1.2" />
+                      </svg>
                       <span className="text-[10px] font-semibold text-slate-500">
                         {f.screening.verdict === 'no_person' ? t('No person detected') : t('Not screened')}
                       </span>
                       <span className="text-[10px] text-indigo-600 underline">{t('Show anyway')}</span>
                     </button>
                   ) : (
-                    <ProtectedImage
-                      src={txt(f.photoUrl) || `/api/reports/photo/${f.id}`}
-                      alt={t('Reported sighting')}
-                      className="h-full w-full object-contain"
-                      fallback={
-                        <div className="grid h-full w-full place-items-center px-2 text-center text-[11px] text-slate-400">
-                          {t('No photo — text report')}
-                        </div>
-                      }
-                    />
+                    <button
+                      type="button"
+                      onClick={() => setViewing(f)}
+                      aria-label={t('Open the photo full size')}
+                      className="block h-full w-full cursor-zoom-in"
+                    >
+                      <ProtectedImage
+                        src={txt(f.photoUrl) || `/api/reports/photo/${f.id}`}
+                        alt={t('Reported sighting')}
+                        className="h-full w-full object-contain"
+                        fallback={
+                          <div className="grid h-full w-full place-items-center px-2 text-center text-[11px] text-slate-400">
+                            {t('No photo — text report')}
+                          </div>
+                        }
+                      />
+                    </button>
                   )}
                 </div>
 
@@ -690,7 +732,36 @@ export default function FoundReports({ view = 'matches' }) {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
                     </svg>
                     <span className="min-w-0">
-                      {d(f.foundLocation)}
+                      {/*
+                        The street address leads when the reporter's phone gave
+                        only coordinates: "Lat 19.1270, Lng 72.9050" is not a
+                        place anyone can drive to. What a reporter typed stays
+                        first, with the address beneath it.
+                      */}
+                      {txt(f.geoAddress) && isCoordinateText(f.foundLocation)
+                        ? (
+                          <>
+                            {txt(f.geoAddress)}
+                            <span className="block text-xs font-normal text-slate-400">{d(f.foundLocation)}</span>
+                          </>
+                        )
+                        : d(f.foundLocation)}
+                      {txt(f.geoAddress) && !isCoordinateText(f.foundLocation) && (
+                        <span className="block text-xs font-normal text-slate-600">{t('Near {address}', { address: txt(f.geoAddress) })}</span>
+                      )}
+                      {!txt(f.geoAddress) && coordsOf(f) && !f.anonymizedAt && (
+                        <span className="block text-xs font-normal">
+                          <button
+                            type="button"
+                            onClick={() => lookUpAddress(f)}
+                            disabled={addressLookup[f.id]?.busy}
+                            className="inline-flex min-h-11 items-center font-semibold text-khozo-dark underline underline-offset-2 hover:text-ink disabled:opacity-60 sm:min-h-0"
+                          >
+                            {addressLookup[f.id]?.busy ? t('Looking up the address…') : t('Show the street address')}
+                          </button>
+                          {addressLookup[f.id]?.error && <span className="ml-2 text-amber-700">{t(addressLookup[f.id].error)}</span>}
+                        </span>
+                      )}
                       {(txt(f.district) || txt(f.state)) && (
                         <span className="block text-xs font-normal text-slate-500">
                           {d.places(f.district, f.state)}
@@ -1038,6 +1109,37 @@ export default function FoundReports({ view = 'matches' }) {
           );
         })}
       </div>
+
+      {/* The photograph a citizen sent, whole and large: a thumbnail is too
+          small to tell a face from a reflection. */}
+      {viewing && (
+        <div
+          className="fixed inset-0 z-[80] flex flex-col bg-black/85"
+          role="dialog"
+          aria-modal="true"
+          aria-label={t('Reported sighting')}
+          onClick={() => setViewing(null)}
+        >
+          <div className="flex items-center justify-between gap-3 px-4 py-3 text-white">
+            <p className="min-w-0 truncate text-sm">{txt(viewing.geoAddress) || d(viewing.foundLocation)}</p>
+            <button
+              type="button"
+              onClick={() => setViewing(null)}
+              className="grid h-11 w-11 shrink-0 place-items-center rounded-xl hover:bg-white/10"
+              aria-label={t('Close')}
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+            </button>
+          </div>
+          <div className="flex min-h-0 flex-1 items-center justify-center p-4 pt-0" onClick={(e) => e.stopPropagation()}>
+            <ProtectedImage
+              src={txt(viewing.photoUrl) || `/api/reports/photo/${viewing.id}`}
+              alt={t('Reported sighting')}
+              className="max-h-full max-w-full object-contain"
+            />
+          </div>
+        </div>
+      )}
 
       {/* Side-by-side compare: both photographs whole, for looking. Confirming
           goes through the verification dialog. */}

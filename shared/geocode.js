@@ -35,6 +35,29 @@ function parseCoordinate(value, limit) {
   return number;
 }
 
+/**
+ * A street-level address an officer can walk to, from Nominatim's address
+ * parts: the landmark or road, the locality, the town and the PIN code —
+ * "Temple, Powai, Mumbai 400076" rather than "Lat 19.1270, Lng 72.9050".
+ * Officers only: the public never sees where a sighting was made.
+ */
+export function shortAddress(address) {
+  if (!address || typeof address !== 'object') return null;
+  const pick = (...keys) => keys.map((k) => String(address[k] || '').trim()).find(Boolean) || '';
+  const street = address.house_number && address.road ? `${address.house_number} ${address.road}` : '';
+  const parts = [
+    pick('amenity', 'building', 'shop', 'tourism', 'office', 'leisure', 'railway'),
+    street || pick('road', 'pedestrian', 'footway'),
+    pick('neighbourhood', 'quarter', 'suburb', 'hamlet'),
+    pick('city', 'town', 'village', 'municipality'),
+  ];
+  const seen = new Set();
+  const unique = parts.filter((p) => p && !seen.has(p.toLowerCase()) && seen.add(p.toLowerCase()));
+  if (!unique.length) return null;
+  const postcode = String(address.postcode || '').trim();
+  return `${unique.join(', ')}${postcode ? ` ${postcode}` : ''}`.slice(0, 200);
+}
+
 /** The place fields a sighting stores, without canonicalPlace's bookkeeping. */
 function stored({ resolved, ...fields }) {
   return fields;
@@ -63,8 +86,10 @@ export async function reverseGeocode(lat, lng, { fetchImpl = fetch, signal } = {
 
   try {
     // English names: they are what LGD and most of the gazetteer's spellings
-    // are written in (it resolves Gujarati and Devanagari too).
-    const url = `${NOMINATIM_URL}?format=jsonv2&zoom=10&addressdetails=1&accept-language=en&lat=${latitude}&lon=${longitude}`;
+    // are written in (it resolves Gujarati and Devanagari too). Street level
+    // (zoom 18), for the address officers walk to; the state and district
+    // parts of the answer are the same as at city level.
+    const url = `${NOMINATIM_URL}?format=jsonv2&zoom=18&addressdetails=1&accept-language=en&lat=${latitude}&lon=${longitude}`;
     const res = await fetchImpl(url, {
       headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
       signal: controller.signal,
@@ -105,6 +130,7 @@ export async function reverseGeocode(lat, lng, { fetchImpl = fetch, signal } = {
     return {
       ...stored(place),
       place: data.display_name || null,
+      address: shortAddress(address),
       source: 'nominatim',
     };
   } catch {
@@ -178,6 +204,7 @@ export async function resolveSightingLocation(body = {}, options = {}) {
   return {
     ...out,
     place: resolved.place,
+    address: resolved.address || null,
     source: reporterGaveAny ? 'reporter+coordinates' : 'coordinates',
   };
 }

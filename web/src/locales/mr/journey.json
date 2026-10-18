@@ -80,5 +80,13 @@
   "Missing longest": "सर्वात जास्त काळ हरवलेले",
   "Possible match waiting ({n})": "संभाव्य जुळणी प्रलंबित ({n})",
   "Sort": "क्रम",
-  "Show {n} more": "आणखी {n} दाखवा"
+  "Show {n} more": "आणखी {n} दाखवा",
+  "The face engine found 1 face — check the photo yourself": "फेस इंजिनला 1 चेहरा आढळला — फोटो स्वतः तपासा",
+  "The face engine found {n} faces — check the photo yourself": "फेस इंजिनला {n} चेहरे आढळले — फोटो स्वतः तपासा",
+  "Open the photo full size": "फोटो पूर्ण आकारात उघडा",
+  "Near {address}": "{address} जवळ",
+  "Looking up the address…": "पत्ता शोधला जात आहे…",
+  "Show the street address": "रस्त्याचा पत्ता दाखवा",
+  "This sighting has no location to look up": "या माहितीमध्ये शोधण्यासाठी कोणतेही ठिकाण नाही",
+  "The address could not be found. Open the location in Maps instead.": "पत्ता सापडला नाही. त्याऐवजी ठिकाण Maps मध्ये उघडा."
 }

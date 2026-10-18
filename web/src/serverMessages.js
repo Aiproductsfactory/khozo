@@ -112,4 +112,8 @@ export const SERVER_MESSAGES = [
   msg('A state is required for this role'),
   msg('Requested jurisdiction is outside your provisioning scope'),
   msg('You cannot provision this role'),
+
+  // Looking up a sighting's street address (POST /api/reports/found/:id/address).
+  msg('This sighting has no location to look up'),
+  msg('The address could not be found. Open the location in Maps instead.'),
 ];
