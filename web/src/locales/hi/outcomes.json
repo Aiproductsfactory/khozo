@@ -1,0 +1,13 @@
+{
+  "Under 30 days": "30 दिन से कम",
+  "30 days to 6 months": "30 दिन से 6 महीने",
+  "6 to 12 months": "6 से 12 महीने",
+  "1 to 5 years": "1 से 5 वर्ष",
+  "Over 5 years": "5 वर्ष से अधिक",
+  "Recovery by district": "ज़िलेवार बरामदगी",
+  "Recovered": "बरामद",
+  "Recovery rate": "बरामदगी दर",
+  "Median days to recovery": "बरामदगी तक के दिन (माध्यिका)",
+  "Median days to first match candidate": "पहले संभावित मिलान तक के दिन (माध्यिका)",
+  "Open cases by time missing": "लापता रहने की अवधि के अनुसार खुले मामले"
+}

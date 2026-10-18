@@ -9,6 +9,7 @@ import process from 'node:process';
 
 import { assessTraffickingRisk, detectPatterns, samePerson } from '../shared/trafficking.js';
 import { aadhaarFields } from '../shared/privacy.js';
+import { outcomeMeasures, recoveredAt } from '../shared/outcomes.js';
 
 const checks = [];
 const check = (name, ok, detail = '') => {
@@ -128,6 +129,34 @@ const kase = (fields = {}) => ({
 
   const anonymised = detectPatterns({ reports: reports.map((r) => ({ ...r, anonymizedAt: daysAgo(1) })), foundReports, now: NOW });
   check('anonymised cases are never in a pattern', anonymised.surges.length === 0 && anonymised.repeatMissing.length === 0 && anonymised.highRisk.length === 0 && anonymised.corridors.length === 0);
+}
+
+// ---- Outcome measures (shared/outcomes.js)
+{
+  const at = (d) => new Date(NOW - d * DAY).toISOString();
+  const reports = [
+    { id: 'o1', status: 'found', state: 'Gujarat', district: 'Ahmedabad', dateOfMissing: at(30), createdAt: NOW - 30 * DAY, foundAt: at(20) },
+    { id: 'o2', status: 'closed', state: 'Gujarat', district: 'Ahmedabad', dateOfMissing: at(100), createdAt: NOW - 100 * DAY, closure: { reason: 'restored_family', closedAt: at(70) } },
+    { id: 'o3', status: 'closed', state: 'Gujarat', district: 'Ahmedabad', dateOfMissing: at(100), createdAt: NOW - 100 * DAY, closure: { reason: 'death', closedAt: at(50) } },
+    { id: 'o4', status: 'missing', state: 'Gujarat', district: 'Surat', dateOfMissing: at(10), createdAt: NOW - 10 * DAY },
+    { id: 'o5', status: 'missing', state: 'Gujarat', district: 'Surat', dateOfMissing: at(400), createdAt: NOW - 5 * DAY },
+    { id: 'o6', status: 'missing', state: 'Gujarat', district: 'Surat', dateOfMissing: at(3000), createdAt: NOW - 5 * DAY },
+    { id: 'o7', status: 'under_review', caseOrigin: 'found_child_intake', state: 'Gujarat', district: 'Surat', createdAt: NOW - DAY },
+  ];
+  const foundReports = [
+    { id: 'fo1', createdAt: NOW - 25 * DAY, matchedReportId: 'o1', matchCandidates: [{ reportId: 'o1', proposedAt: at(26) }] },
+    { id: 'fo2', createdAt: NOW - 8 * DAY, matchCandidates: [{ reportId: 'o4', proposedAt: at(8) }] },
+  ];
+  const o = outcomeMeasures({ reports, foundReports, now: NOW });
+  check('a found child and a restored child are recoveries; a death is not', o.recovered === 2 && recoveredAt(reports[2]) === null);
+  check('a found-child intake is not a missing person', o.registered === 6);
+  check('the recovery rate is recovered over registered', o.recoveryRate === Number((2 / 6).toFixed(3)));
+  check('the median time to recovery runs from going missing', o.medianDaysToRecovery === 20, String(o.medianDaysToRecovery));
+  check('the time to a first lead runs from registration', o.medianDaysToFirstCandidate === 3 && o.casesWithCandidate === 2, String(o.medianDaysToFirstCandidate));
+  const band = Object.fromEntries(o.openBacklog.map((b) => [b.name, b.count]));
+  check('open cases are banded by how long the person has been missing', band['Under 30 days'] === 1 && band['1 to 5 years'] === 1 && band['Over 5 years'] === 1, JSON.stringify(band));
+  const surat = o.byDistrict.find((d) => d.name === 'Surat, Gujarat');
+  check('each district gets its own rate', surat?.registered === 3 && surat.recovered === 0 && o.byDistrict.find((d) => d.name === 'Ahmedabad, Gujarat')?.recovered === 2);
 }
 
 const failed = checks.filter((c) => !c.ok);

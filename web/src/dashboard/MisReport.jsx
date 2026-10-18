@@ -1,7 +1,55 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { fmtDate } from '../lib.jsx';
-import { currentLocale, useT } from '../i18n.jsx';
+import { currentLocale, msg, useT } from '../i18n.jsx';
+
+// The open-case bands the server sends (shared/outcomes.js), registered for
+// translation.
+msg('Under 30 days');
+msg('30 days to 6 months');
+msg('6 to 12 months');
+msg('1 to 5 years');
+msg('Over 5 years');
+
+const pct = (rate) => (rate == null ? '-' : `${Math.round(rate * 100)}%`);
+const days = (value) => (value == null ? '-' : value);
+
+function OutcomeTable({ rows }) {
+  const t = useT();
+  return (
+    <div className="overflow-x-auto rounded-xl bg-white ring-1 ring-black/5">
+      <div className="border-b border-black/5 px-4 py-3">
+        <h3 className="font-semibold">{t('Recovery by district')}</h3>
+      </div>
+      {rows.length === 0 ? (
+        <p className="px-4 py-5 text-sm text-gray-400">{t('No records')}</p>
+      ) : (
+        <table className="w-full text-sm">
+          <thead className="text-left text-xs uppercase tracking-wide text-gray-400">
+            <tr>
+              <th className="px-4 py-2 font-semibold">{t('District')}</th>
+              <th className="px-4 py-2 text-right font-semibold">{t('Registered')}</th>
+              <th className="px-4 py-2 text-right font-semibold">{t('Recovered')}</th>
+              <th className="px-4 py-2 text-right font-semibold">{t('Recovery rate')}</th>
+              <th className="px-4 py-2 text-right font-semibold">{t('Median days to recovery')}</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-black/5">
+            {rows.map((row) => (
+              <tr key={row.name}>
+                <td className="px-4 py-2 text-gray-700">{row.name}</td>
+                <td className="px-4 py-2 text-right">{row.registered}</td>
+                <td className="px-4 py-2 text-right">{row.recovered}</td>
+                <td className="px-4 py-2 text-right font-semibold">{pct(row.recoveryRate)}</td>
+                <td className="px-4 py-2 text-right">{days(row.medianDaysToRecovery)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
 
 function Stat({ label, value }) {
   return (
@@ -86,6 +134,21 @@ export default function MisReport() {
         <Stat label={t('Pending sightings')} value={totals.pendingSightings} />
         <Stat label={t('Privacy due')} value={totals.privacyDue} />
       </div>
+
+      {report.outcomes && (
+        <>
+          <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+            <Stat label={t('Recovered')} value={`${report.outcomes.recovered} / ${report.outcomes.registered}`} />
+            <Stat label={t('Recovery rate')} value={pct(report.outcomes.recoveryRate)} />
+            <Stat label={t('Median days to recovery')} value={days(report.outcomes.medianDaysToRecovery)} />
+            <Stat label={t('Median days to first match candidate')} value={days(report.outcomes.medianDaysToFirstCandidate)} />
+          </div>
+          <div className="grid gap-4 lg:grid-cols-3">
+            <CountTable title={t('Open cases by time missing')} rows={report.outcomes.openBacklog || []} translate />
+            <div className="lg:col-span-2"><OutcomeTable rows={report.outcomes.byDistrict || []} /></div>
+          </div>
+        </>
+      )}
 
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <Stat label={t('Formal follow-ups')} value={totals.formalFollowups || 0} />

@@ -34,6 +34,7 @@ import {
 } from '../case-domain.js';
 import { anonymisedLabel, deskCaseView } from '../privacy.js';
 import { assessTraffickingRisk, detectPatterns } from '../trafficking.js';
+import { outcomeMeasures } from '../outcomes.js';
 import { anonymiseCase, anonymiseSighting, runRetentionSweep } from '../retention.js';
 
 export default function registerDashboardRoutes(router, deps) {
@@ -1832,6 +1833,9 @@ export default function registerDashboardRoutes(router, deps) {
           { name: 'formal follow-ups due', count: formalAlerts.length },
         ],
       },
+      // Results, not only work: recovery rate, time to recovery, time to a
+      // first lead, and how long the open cases have been missing.
+      outcomes: outcomeMeasures({ reports, foundReports }),
       byState: groupCounts(reports, (r) => r.state),
       byDistrict: groupCounts(reports, (r) => r.district).slice(0, 12),
       workflowActions: groupCounts(

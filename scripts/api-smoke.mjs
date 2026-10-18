@@ -2121,6 +2121,10 @@ async function run() {
   const sjpuReports = await request('GET', '/reports', { token: sjpu.token });
   assert(sjpuReports.reports.some((row) => row.id === sjpuReport.report.id), 'SJPU should see own district report');
   const sjpuMis = await request('GET', '/dashboard/mis', { token: sjpu.token });
+  assert(
+    sjpuMis.outcomes && Number.isInteger(sjpuMis.outcomes.registered) && Array.isArray(sjpuMis.outcomes.openBacklog) && sjpuMis.outcomes.openBacklog.length === 5 && Array.isArray(sjpuMis.outcomes.byDistrict),
+    `the MIS report carries outcome measures: ${JSON.stringify(sjpuMis.outcomes)?.slice(0, 200)}`
+  );
   assert(sjpuMis.demographics.byRegistrationSource.some((row) => row.name === 'SJPU/FIR'), 'MIS should identify SJPU/FIR source');
   const ahtuStats = await request('GET', '/dashboard/stats', { token: ahtu.token });
   assert(ahtuStats.scope === 'Mumbai AHTU', `AHTU scope should be Mumbai AHTU, got ${ahtuStats.scope}`);
