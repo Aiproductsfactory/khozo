@@ -52,9 +52,10 @@ At the start of each shift, in this order:
 | 2 | **Matches** page, status *pending review* | Review each possible match (section 4). | Start the same shift |
 | 3 | **Bell: "Match confirmed — rescue required"** | The person must be reached. Send a team to the place in the alert. | At once |
 | 4 | **Sightings** page, unmatched, in your area | Child: refer to CWC/1098, or act yourself. Woman or adult: police follow-up. | Within [24 hours] |
-| 5 | Sightings with **no state or district** | These reach every desk in the country. If the place is in your area, take it and record a note. *(There is no "place this sighting" button yet: DPIA G22.)* | Within [4 hours] |
+| 5 | Sightings with **no state or district** | These reach every desk in the country. If the place is in your area, place it in your district from the sighting (police and command desks can), and record a note. | Within [4 hours] |
 | 6 | **Cases**, status *intake pending* | Check a parent's or NGO's registration: speak to the complainant, see an ID or the FIR. Only then verify it. It is not face-searched until you do. | Within [48 hours] |
-| 7 | **Privacy review** (nodal officer, monthly) | Act on every record marked *expired* or *due soon* (section 10). | Monthly |
+| 7 | **Bell: "High trafficking risk"** (AHTU and SJPU) | Review the case's reasons with the investigating officer and add a case note (section 11). | Within [24 hours] |
+| 8 | **Privacy review** (nodal officer, monthly) | Act on every record marked *expired* or *due soon* (section 10). | Monthly |
 
 ## 4. Reviewing a possible match
 
@@ -177,11 +178,29 @@ Every month, open **Privacy review**:
 | *Expired* or *due soon* | Decide: **extend** (only if an open case or court proceeding needs it; note why), **close**, or **anonymise** (admin, state nodal or super admin; an approval or order reference is required) |
 | A sighting linked to an open case | Extend it, so it is kept while the case is open |
 
-Until automatic deletion is built (DPIA G3), this monthly review is the only thing that ends a
-record's life. Anonymising does not yet delete the photograph (DPIA G1): [until fixed, ask the
-Operator in writing to delete the photographs of anonymised records].
+Every night Khozo lists what has reached its date and alerts the super admins. It deletes on its
+own only once the Department has approved the retention schedule and the Operator has switched
+enforcement on; until then this monthly review is what ends a record's life. Anonymising deletes
+the photograph and everything that identifies the person (DPIA G1). An open case past its date
+is never removed automatically: review it and record the decision.
 
-## 11. What never to share publicly
+## 11. Trafficking-risk prompts (AHTU, SJPU and police)
+
+- A case can carry **Trafficking risk: high** or **elevated**, with the reasons listed on the case.
+  It is worked out from what was recorded: flags, age, the circumstances, a previous
+  disappearance, other adolescents missing from the same district. It is a prompt to look
+  again, never evidence and never a finding.
+- A **high** prompt alerts the AHTU and SJPU desks that can open the case. Within [24 hours], the
+  AHTU desk reviews it with the investigating officer and adds a case note: action taken, or why
+  none is needed.
+- **Trafficking patterns** (Oversight menu) shows district surges, repeat disappearances, shared
+  contact numbers, movement between districts and states, and sighting hotspots. Review it
+  [weekly]; raise a pattern with the SP / DCP and, for movement across states, the other state's
+  AHTU through the nodal officer.
+- Never tell a family, the press or a CWC desk that a case was raised for trafficking risk. Share
+  what a child's protection needs through the formal referral.
+
+## 12. What never to share publicly
 
 - A missing person's name, photo, age, address, school or anything else that identifies them.
 - The existence of a case, or a case number.
@@ -193,11 +212,12 @@ Operator in writing to delete the photographs of anonymised records].
 Use the Network page's WhatsApp links only to reach another desk, and never send a photo, name
 or case through WhatsApp.
 
-## 12. Escalation timelines
+## 13. Escalation timelines
 
 | Event | Who | Escalate to | Within |
 |---|---|---|---|
 | Possible match not reviewed | Desk officer | SHO / SJPU in-charge | [4 hours] |
+| High trafficking-risk prompt not reviewed | AHTU desk | AHTU in-charge and SP / DCP | [24 hours] |
 | Confirmed child not produced before CWC | Investigating officer | SP / DCP and CWC | 24 hours |
 | Adult traced; consent not yet asked | Investigating officer | SHO | [Same day] |
 | Citizen or NGO intake not verified | Station | SJPU | [48 hours] |
@@ -206,10 +226,11 @@ or case through WhatsApp.
 | A request from the press or public for case details | Anyone | Nodal officer / PRO | Do not answer; pass on at once |
 | A Data Principal asks to see, correct or delete data | Anyone | Grievance Officer | [2 working days] |
 
-## 13. Your account
+## 14. Your account
 
 - Never share your password. Log out on shared computers: a sign-in lasts 7 days.
-- Change your password when told to, and at once if you think someone else knows it.
+- Change your password when told to, and at once if you think someone else knows it. Changing
+  it signs your account out on every other phone and computer.
 - When you transfer or retire, [your SHO tells the nodal officer], who closes the account
   within [7 days].
 

@@ -77,6 +77,9 @@ Runs with no server, database or network:
 | `smoke:store`         | the Worker's per-request store replica, including the audit chain    |
 | `smoke:web-routes`    | dashboard route guards match the roles they claim                    |
 | `smoke:pwa`           | the service worker and offline sighting queue                        |
+| `smoke:privacy`       | anonymisation, Aadhaar fingerprints, desk views and the retention job |
+| `smoke:photo-strip`   | uploads lose GPS and device metadata and keep their orientation      |
+| `smoke:trafficking`   | trafficking-risk prompts, cross-case patterns and outcome measures   |
 
 Two more need something running, so they are not in `test:all`:
 
@@ -106,6 +109,26 @@ changing anything near it:
 The reporter gets a receipt id and can track the status publicly, and is never
 told which child was matched.
 
+## Trafficking signals
+
+Trafficking shows up across records, not in one. Khozo looks for it in what it
+already holds (`shared/trafficking.js`):
+
+- **Every case gets a risk prompt** at registration, verification and found-child
+  intake, from its flags, the person's age, the circumstances recorded (a job,
+  marriage, online contact or agent, in English, Hindi, Gujarati or Marathi),
+  travel by train or bus, a previous disappearance, and other adolescents missing
+  from the same district. A high level alerts the AHTU and SJPU desks that can
+  open the case. The reasons are always shown: it is a prompt, never a finding.
+- **The Trafficking patterns page** shows police, SJPU, AHTU, DCRB, RPF and
+  command desks the high-risk open cases, district surges, repeat
+  disappearances, shared contact numbers, movement between districts and states,
+  and places where sightings of children gather, over the cases they can see.
+- **The MIS report measures results**: recovery rate, days to recovery, days to
+  the first match candidate, and how long open cases have been missing.
+
+Families and welfare desks never see the prompts, the alerts or the page.
+
 ## Deploy to Cloudflare Workers
 
 ```bash
@@ -119,9 +142,27 @@ Worker needs a Hyperdrive binding to the Postgres instance (already in
 `wrangler.jsonc`) and these secrets:
 
 ```bash
-npx wrangler secret put KHOZO_JWT_SECRET
+npx wrangler secret put KHOZO_JWT_SECRET          # required: a deployed Worker refuses tokens without it
 npx wrangler secret put KHOZO_EXPORT_SIGNING_KEY
 npx wrangler secret put AARAKSHAK_API_KEY
+npx wrangler secret put KHOZO_FIELD_HASH_KEY      # optional: keys Aadhaar fingerprints; derived from the JWT secret if unset
+```
+
+Retention (see `docs/governance/retention-schedule.md`). Leave these unset until the
+Department approves the schedule; the nightly job then only reports what is due:
+
+```bash
+npx wrangler secret put KHOZO_RETENTION_ENFORCE              # "on": anonymise expired sightings and closed cases
+npx wrangler secret put KHOZO_NOTIFICATION_RETENTION_DAYS    # e.g. 90
+npx wrangler secret put KHOZO_ACTIVITY_RETENTION_DAYS        # e.g. 730
+```
+
+Cases registered before Aadhaar numbers stopped being stored still hold them whole.
+After deploying, rewrite them with the deployed key:
+
+```bash
+KHOZO_FIELD_HASH_KEY=... node scripts/migrate-aadhaar.mjs           # count
+KHOZO_FIELD_HASH_KEY=... node scripts/migrate-aadhaar.mjs --apply   # rewrite
 ```
 
 **Hyperdrive query caching must stay off.** With it on, a sighting is written to
