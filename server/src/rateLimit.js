@@ -1,5 +1,5 @@
-import crypto from 'node:crypto';
 import { addAudit } from './store.js';
+import { identityHashWith, privacySecrets } from '../../shared/privacy.js';
 
 const DEFAULT_WINDOW_MS = Number(process.env.KHOZO_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000);
 
@@ -13,9 +13,11 @@ function positiveInt(value, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
 }
 
+// An HMAC under a deployment secret (KHOZO_RATE_LIMIT_AUDIT_SALT, or one
+// derived from the JWT secret), never a salt from this repository: anyone can
+// hash every phone number, so a public salt hides none of them (DPIA G18).
 function identityHash(identity) {
-  const salt = process.env.KHOZO_RATE_LIMIT_AUDIT_SALT || 'khozo-demo-rate-limit-audit';
-  return crypto.createHash('sha256').update(`${salt}:${identity || 'unknown'}`).digest('hex');
+  return identityHashWith(privacySecrets(process.env).rateLimitAuditSalt, identity);
 }
 
 function routeTemplate(req) {

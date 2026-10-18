@@ -7,6 +7,18 @@ const QUEUE_KEY = 'khozo.sightingQueue';
 const PHOTO_DIR_NAME = 'queued-sightings';
 
 /**
+ * How long an unsent sighting is kept on the phone: 72 hours, as the web
+ * app's queue keeps it (web/src/offlineQueue.js). A report that has not gone
+ * through in three days is stale for the officers who would act on it, and a
+ * child's photo and the reporter's number should not sit on a phone that may
+ * be lost or shared (DPIA G14). The Outbox screen shows the reporter what is
+ * waiting, so nothing leaves unseen before then.
+ */
+export const QUEUE_TTL_MS = 72 * 60 * 60 * 1000;
+
+const isExpired = (item, now = Date.now()) => Number(item?.createdAt || 0) + QUEUE_TTL_MS < now;
+
+/**
  * Durable outbox for sightings.
  *
  * Field reporting happens in exactly the places with the worst connectivity —
@@ -41,7 +53,7 @@ async function persist(items) {
 }
 
 export async function loadQueue() {
-  if (cache) return cache;
+  if (cache) return pruneExpired(cache);
   try {
     const raw = await AsyncStorage.getItem(QUEUE_KEY);
     cache = raw ? JSON.parse(raw) : [];
@@ -49,7 +61,18 @@ export async function loadQueue() {
     cache = [];
   }
   emit();
-  return cache;
+  return pruneExpired(cache);
+}
+
+/** Drops unsent sightings older than QUEUE_TTL_MS, with their photos. */
+async function pruneExpired(items) {
+  const now = Date.now();
+  const expired = items.filter((item) => isExpired(item, now));
+  if (!expired.length) return items;
+  for (const item of expired) releasePhoto(item.payload?.photoUri);
+  const kept = items.filter((item) => !isExpired(item, now));
+  await persist(kept);
+  return kept;
 }
 
 /**

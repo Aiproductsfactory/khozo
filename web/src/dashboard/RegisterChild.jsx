@@ -402,8 +402,8 @@ export default function RegisterChild() {
           <input type="checkbox" className="mt-1" checked={form.photoConsent} onChange={setChecked('photoConsent')} required={!!file} />
           <span>
             {adult
-              ? t('I confirm this photo may be used for the missing-person investigation, police review, and face-match search. Photo metadata will be retained for the case lifecycle.')
-              : t('I confirm this photo may be used for missing-child investigation, police/CWC review, and face-match search. Photo metadata will be retained for the case lifecycle.')}
+              ? t('I confirm this photo may be used for the missing-person investigation, police review, and face-match search. The photo is kept for 10 years from registration, or longer while the case is open.')
+              : t('I confirm this photo may be used for missing-child investigation, police/CWC review, and face-match search. The photo is kept for 10 years from registration, or longer while the case is open.')}
           </span>
         </label>
 

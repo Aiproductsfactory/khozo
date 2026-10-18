@@ -13,6 +13,9 @@
 // every quarter of an hour, without a table of its own.
 import * as db from './db.js';
 import { matchEngineInfo } from './match.js';
+import { createRequestStore } from './store-sync.js';
+import { createFaceIndex } from '../../shared/face-index.js';
+import { runRetentionSweep } from '../../shared/retention.js';
 
 // Secrets arrive as typed; a stray byte-order mark once broke a key for hours.
 const cleanSecret = (value) => String(value || '').replace(/^﻿/, '').trim();
@@ -128,6 +131,7 @@ const LABELS = {
   backlog: 'Possible matches waiting too long',
   silentMatching: 'Sighting photos not being compared',
   backup: 'Nightly backup failed',
+  retention: 'Nightly retention job failed',
 };
 
 /**
@@ -247,11 +251,92 @@ export async function runBackup(env, ctx, now = new Date(), io = db) {
   return { ok: true, detail: `${objectKey} (${body.length} bytes)`, removed: old.length };
 }
 
+// --- Retention -----------------------------------------------------------------
+//
+// Every night the retention schedule is planned (shared/retention.js) and the
+// super admins are told what is due: sightings past 180 days, closed cases
+// past their date, open cases past their date (for review, never removed). It
+// is carried out only where the Department has approved the schedule and the
+// deployment says so with KHOZO_RETENTION_ENFORCE=on (DPIA G3).
+//
+// Notifications and the activity feed are kept indefinitely unless the
+// Department sets a period: KHOZO_NOTIFICATION_RETENTION_DAYS and
+// KHOZO_ACTIVITY_RETENTION_DAYS delete rows older than that (DPIA G24).
+
+const RETENTION_KIND = 'retention_notice';
+
+function positiveDays(value) {
+  const n = Number(cleanSecret(value));
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : null;
+}
+
+export async function runRetention(env, ctx, { now = Date.now(), io = db, createStore = createRequestStore, faceIndex = null } = {}) {
+  const enforce = cleanSecret(env?.KHOZO_RETENTION_ENFORCE).toLowerCase() === 'on';
+  const { store, flush } = await createStore(env, ctx);
+  const deps = {
+    listReports: store.listReports,
+    listFoundReports: store.listFoundReports,
+    updateReport: store.updateReport,
+    updateFoundReport: store.updateFoundReport,
+    addAudit: store.addAudit,
+    deletePhoto: store.deletePhoto,
+    rewriteActivity: store.rewriteActivity,
+    faceIndex: faceIndex || createFaceIndex(env),
+  };
+  const result = await runRetentionSweep(deps, { now, apply: enforce });
+  const s = result.summary;
+  const due = s.sightingsToAnonymise + s.casesToAnonymise + s.openCasesToReview;
+
+  if (due || result.done.sightingsExtended) {
+    const title = enforce
+      ? `Retention: ${result.done.sightingsAnonymised} sightings and ${result.done.casesAnonymised} closed cases anonymised`
+      : `Retention: ${s.sightingsToAnonymise} sightings and ${s.casesToAnonymise} closed cases past their date`;
+    const body = [
+      enforce ? null : 'Nothing has been deleted: automatic retention is off. Review them in Privacy review, or run the schedule from there.',
+      s.openCasesToReview ? `${s.openCasesToReview} open case(s) have passed their retention date and need a review decision.` : null,
+      s.sightingsKeptWithCase ? `${s.sightingsKeptWithCase} sighting(s) are kept because they belong to an open or confirmed case.` : null,
+      s.dueSoonSightings + s.dueSoonCases ? `${s.dueSoonSightings + s.dueSoonCases} more record(s) reach their date within 30 days.` : null,
+    ].filter(Boolean).join(' ');
+    for (const admin of store.listUsers().filter((u) => u.role === 'super_admin')) {
+      store.addNotification({ userId: admin.id, kind: RETENTION_KIND, title, body, priority: s.openCasesToReview ? 'high' : 'normal', scope: {} });
+    }
+  }
+  if (result.applied || due) {
+    store.addAudit({
+      actorName: 'Khozo retention job',
+      actorRole: 'system',
+      action: result.applied ? 'privacy.retention_sweep_applied' : 'privacy.retention_sweep_planned',
+      targetType: 'retention',
+      summary: result.applied
+        ? `Nightly retention: ${result.done.sightingsAnonymised} sightings and ${result.done.casesAnonymised} cases anonymised`
+        : `Nightly retention plan: ${s.sightingsToAnonymise} sightings and ${s.casesToAnonymise} cases due`,
+      scope: {},
+      metadata: { ...s, ...result.done, enforce },
+    });
+  }
+  await flush();
+
+  const purged = {};
+  const notificationDays = positiveDays(env?.KHOZO_NOTIFICATION_RETENTION_DAYS);
+  if (notificationDays) {
+    const { rowCount } = await io.query(env, 'delete from public.notifications where ts < $1', [now - notificationDays * 86400000], ctx);
+    purged.notifications = rowCount || 0;
+  }
+  const activityDays = positiveDays(env?.KHOZO_ACTIVITY_RETENTION_DAYS);
+  if (activityDays) {
+    const { rowCount } = await io.query(env, 'delete from public.activity where ts < $1', [now - activityDays * 86400000], ctx);
+    purged.activity = rowCount || 0;
+  }
+
+  return { ok: true, enforce, summary: s, done: result.done, purged, detail: `${due} due, enforce ${enforce ? 'on' : 'off'}` };
+}
+
 /** Cloudflare cron entry point; see "triggers" in wrangler.jsonc. */
 export async function scheduled(event, env, ctx) {
   const results = (await runHealthChecks(env, ctx)).checks;
   if (event?.cron === '30 20 * * *') {
     results.backup = await runBackup(env, ctx).catch((err) => ({ ok: false, detail: String(err?.message || err) }));
+    results.retention = await runRetention(env, ctx).catch((err) => ({ ok: false, detail: String(err?.message || err) }));
   }
   try {
     await raiseAlerts(env, ctx, results);

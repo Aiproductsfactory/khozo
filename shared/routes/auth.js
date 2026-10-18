@@ -24,6 +24,17 @@ import { sendSms, smsGatewayConfigured } from '../sms.js';
  */
 const otpStore = new Map();
 
+/**
+ * bcrypt work factor for new password hashes. It was 8; each step doubles the
+ * cost of guessing a leaked hash. A hash at a lower cost is upgraded the next
+ * time its owner signs in (DPIA G9).
+ */
+export const BCRYPT_COST = 10;
+
+export function hashPassword(password) {
+  return bcrypt.hashSync(String(password), BCRYPT_COST);
+}
+
 export default function registerAuthRoutes(router, deps) {
   const {
     findUserByEmail, addUser, addAudit, updateUser,
@@ -210,7 +221,7 @@ export default function registerAuthRoutes(router, deps) {
       id: `u_${nanoid(8)}`,
       name,
       email,
-      passwordHash: bcrypt.hashSync(password, 8),
+      passwordHash: hashPassword(password),
       role,
       phone: cleanPhone,
       phoneVerified: true,
@@ -240,7 +251,17 @@ export default function registerAuthRoutes(router, deps) {
     const user = findUserByEmail(email || '');
     if (!user || !bcrypt.compareSync(password || '', user.passwordHash))
       return res.status(401).json({ error: 'Invalid email or password' });
-    res.json({ token: await signToken(user), user: publicUser(user) });
+    // A hash made at a lower work factor is replaced while the password is
+    // in hand; nobody has to reset anything.
+    let current = user;
+    try {
+      if (bcrypt.getRounds(user.passwordHash) < BCRYPT_COST) {
+        current = updateUser(user.id, { passwordHash: hashPassword(password) }) || user;
+      }
+    } catch {
+      // An unreadable hash still verified above; leave it as it is.
+    }
+    res.json({ token: await signToken(current), user: publicUser(current) });
   });
   
   router.get('/me', authRequired, (req, res) => {
@@ -282,7 +303,7 @@ export default function registerAuthRoutes(router, deps) {
     res.json({ user: publicUser(user) });
   });
   
-  router.post('/change-password', authRequired, (req, res) => {
+  router.post('/change-password', authRequired, async (req, res) => {
     const read = readFields(req.body, { currentPassword: 'secret', newPassword: 'secret' });
     if (read.error) return res.status(400).json({ error: read.error });
     const { currentPassword, newPassword } = read.body;
@@ -297,10 +318,14 @@ export default function registerAuthRoutes(router, deps) {
       return res.status(400).json({ error: 'New password must be different from the current password' });
     }
   
+    // A new password signs out every other session: whoever had the old
+    // password, or a token from a lost phone, is out (DPIA G9). This session
+    // gets a fresh token in the response.
     const user = updateUser(req.user.id, {
-      passwordHash: bcrypt.hashSync(nextPassword, 8),
+      passwordHash: hashPassword(nextPassword),
       mustChangePassword: false,
       passwordChangedAt: Date.now(),
+      tokenVersion: Number(req.user.tokenVersion || 0) + 1,
     });
     addAudit({
       actorId: user.id,
@@ -314,9 +339,27 @@ export default function registerAuthRoutes(router, deps) {
         state: user.jurisdiction?.state || null,
         district: user.jurisdiction?.district || null,
       },
-      metadata: { forcedChangeCompleted: Boolean(req.user.mustChangePassword) },
+      metadata: { forcedChangeCompleted: Boolean(req.user.mustChangePassword), otherSessionsSignedOut: true },
     });
-    res.json({ user: publicUser(user) });
+    res.json({ token: await signToken(user), user: publicUser(user) });
+  });
+
+  // Signs this account out on every device, this one included: for a lost or
+  // shared phone. The caller signs in again.
+  router.post('/logout-all', authRequired, (req, res) => {
+    const user = updateUser(req.user.id, { tokenVersion: Number(req.user.tokenVersion || 0) + 1 });
+    addAudit({
+      actorId: req.user.id,
+      actorName: req.user.name,
+      actorRole: req.user.role,
+      action: 'auth.sessions_revoked',
+      targetType: 'user',
+      targetId: req.user.id,
+      summary: 'User signed out of every session',
+      scope: { state: req.user.jurisdiction?.state || null, district: req.user.jurisdiction?.district || null },
+      metadata: { tokenVersion: user?.tokenVersion ?? null },
+    });
+    res.json({ ok: true });
   });
   
 

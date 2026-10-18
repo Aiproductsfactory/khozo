@@ -156,6 +156,8 @@ import {
   jurisdictionError,
   INTAKE_ALERT_ROLES,
 } from '../case-domain.js';
+import { NO_FAMILY_CONTACT_ROLES, aadhaarFields, deskCaseView } from '../privacy.js';
+import { stripImageMetadata } from '../photo-strip.js';
 
 export default function registerReportRoutes(router, deps) {
   const {
@@ -253,6 +255,9 @@ export default function registerReportRoutes(router, deps) {
     declarationMethod: ['text', 40],
     declarationAccepted: 'flag',
     photoConsent: 'flag',
+    // Why Khozo may hold the photo: the family's consent, or (for an officer
+    // importing a department's own register) the register itself.
+    photoBasis: ['text', 40],
     allowDuplicate: 'flag',
   };
 
@@ -643,6 +648,16 @@ export default function registerReportRoutes(router, deps) {
     onLimit: auditPublicRateLimit,
   });
 
+  /**
+   * Strips an uploaded photo's GPS, device and capture metadata before any
+   * handler, store or face engine sees it (shared/photo-strip.js, DPIA G13).
+   * The orientation flag is kept so the face stays upright.
+   */
+  function withoutPhotoMetadata(req, _res, next) {
+    if (req.file?.buffer) req.file.buffer = stripImageMetadata(req.file.buffer);
+    next();
+  }
+
   async function storePhoto(key, file) {
     if (!file) return { photoUrl: null, photoFile: null };
     const photoFile = await savePhoto(key, file.buffer, storedImageMime(file));
@@ -856,11 +871,20 @@ export default function registerReportRoutes(router, deps) {
     if (category) rows = rows.filter((r) => personCategoryOf(r) === category);
     if (q) {
       const needle = String(q).toLowerCase();
-      rows = rows.filter((r) =>
-        [r.childName, r.parentName, r.firNo, r.address, r.state, r.district]
+      // Marks, clothing, languages and hair are searched too: an officer
+      // holding a description ("scar above left eyebrow", "speaks Bhojpuri")
+      // finds the case without a usable photo. A desk that does not see the
+      // family's address cannot search by it either.
+      const addressVisible = !NO_FAMILY_CONTACT_ROLES.includes(req.user.role);
+      rows = rows.filter((r) => {
+        const profile = r.identificationProfile || {};
+        return [
+          r.id, r.childName, r.parentName, r.firNo, addressVisible ? r.address : null, r.state, r.district,
+          profile.identificationMark, profile.birthMark, profile.clothing, profile.languages, profile.hair,
+        ]
           .filter(Boolean)
-          .some((v) => String(v).toLowerCase().includes(needle))
-      );
+          .some((v) => String(v).toLowerCase().includes(needle));
+      });
     }
     // A match an officer has not yet confirmed lives on the sighting, not the
     // case, so a case list that reads only case status shows "missing" for a
@@ -890,7 +914,7 @@ export default function registerReportRoutes(router, deps) {
     const citizen = isCitizenRole(req.user.role);
     res.json({
       reports: rows.map((r) => ({
-        ...(citizen ? citizenCaseView(r) : r),
+        ...(citizen ? citizenCaseView(r) : deskCaseView(req.user, r)),
         // Records written before the field existed are children; say so
         // explicitly so no client has to know the default.
         personCategory: personCategoryOf(r),
@@ -900,17 +924,23 @@ export default function registerReportRoutes(router, deps) {
   });
 
   // Register a missing child. Parents/NGOs file a report; police file a formal FIR.
-  router.post('/', protectedRoute, requireRole(...REPORT_CREATE_ROLES), upload.single('photo'), async (req, res) => {
+  router.post('/', protectedRoute, requireRole(...REPORT_CREATE_ROLES), upload.single('photo'), withoutPhotoMetadata, async (req, res) => {
     const read = readFields(req.body, REPORT_FIELDS);
     if (read.error) return res.status(400).json({ error: read.error, errors: [read.error] });
     const b = read.body;
     const validation = validateMissingReport(b, req.file);
     if (validation.errors) return res.status(400).json({ error: validation.errors[0], errors: validation.errors });
-    if (req.file && !isTruthy(b.photoConsent)) {
+    const isPolice = FORMAL_CASE_ROLES.includes(req.user.role);
+    // A photo from a department's own register was not given with anyone's
+    // consent, and the record must not claim it was (DPIA G15). Only officers
+    // who register formal cases may give that basis.
+    const photoBasis = req.file
+      ? (b.photoBasis === 'department_register' && isPolice ? 'department_register' : isTruthy(b.photoConsent) ? 'consent' : null)
+      : null;
+    if (req.file && !photoBasis) {
       return res.status(400).json({ error: 'Photo consent is required before uploading a child image' });
     }
     const id = `r_${nanoid(8)}`;
-    const isPolice = FORMAL_CASE_ROLES.includes(req.user.role);
     const personCategory = validation.personCategory || 'child';
     const adult = isAdultCategory(personCategory);
     const childProfile = buildChildProfile(b);
@@ -961,10 +991,13 @@ export default function registerReportRoutes(router, deps) {
       }
       visibility = requestedVisibility;
     }
+    // The number itself is never stored: its last four digits and a keyed
+    // fingerprint are (shared/privacy.js, DPIA G2).
+    const aadhaar = aadhaarFields(b.childAadhar, settings.fieldHashKey);
     const incoming = {
       personCategory,
       childName: b.childName,
-      childAadhar: b.childAadhar || null,
+      ...aadhaar,
       gender,
       age: validation.age,
       parentPhone,
@@ -975,6 +1008,7 @@ export default function registerReportRoutes(router, deps) {
     };
     const duplicateCandidates = findDuplicateCandidates(req.user, incoming, listReports(), scopeReports, {
       nonFamilyPhones: nonFamilyPhoneSet(listUsers()),
+      aadhaarKey: settings.fieldHashKey,
     });
     const allowDuplicate = b.allowDuplicate === true || b.allowDuplicate === 'true';
     if (duplicateCandidates.length && !allowDuplicate) {
@@ -984,7 +1018,7 @@ export default function registerReportRoutes(router, deps) {
         actorRole: req.user.role,
         action: 'case.duplicate_warning',
         targetType: 'report',
-        summary: `Potential duplicate report blocked for ${b.childName}`,
+        summary: `Potential duplicate case blocked (closest: case ${duplicateCandidates[0].report.id})`,
         scope: { state: incoming.state, district: incoming.district },
         metadata: { candidateIds: duplicateCandidates.map((c) => c.report.id), topScore: duplicateCandidates[0].score },
       });
@@ -999,7 +1033,7 @@ export default function registerReportRoutes(router, deps) {
       ...(visibility ? { visibility } : {}),
       firNo: b.firNo || (isPolice ? generatedFirNo() : null),
       childName: b.childName,
-      childAadhar: b.childAadhar || null,
+      ...aadhaar,
       gender,
       age: validation.age,
       height: validation.height,
@@ -1011,7 +1045,8 @@ export default function registerReportRoutes(router, deps) {
       hasVulnerabilityProfile: childProfile.hasVulnerabilityProfile,
       dateOfMissing: b.dateOfMissing || new Date().toISOString(),
       ...(await storePhoto(id, req.file)),
-      photoConsent: req.file ? true : isTruthy(b.photoConsent),
+      photoConsent: req.file ? photoBasis === 'consent' : isTruthy(b.photoConsent),
+      photoBasis,
       dataPurpose: b.dataPurpose || (adult ? 'missing_person_investigation' : 'missing_child_investigation'),
       retentionUntil: retentionUntil(REPORT_PHOTO_RETENTION_DAYS),
       status: isPolice ? 'missing' : 'intake_pending',
@@ -1043,12 +1078,13 @@ export default function registerReportRoutes(router, deps) {
       action: isPolice ? 'case.fir_registered' : 'case.report_registered',
       targetType: 'report',
       targetId: report.id,
-      summary: `${isPolice ? 'Registered FIR' : 'Submitted citizen/NGO intake'} for ${report.childName}`,
+      summary: `${isPolice ? 'Registered FIR' : 'Submitted citizen/NGO intake'} as case ${report.id}`,
       scope: { state: report.state, district: report.district },
       metadata: {
         personCategory,
         visibility,
         photoConsent: report.photoConsent,
+        photoBasis: report.photoBasis,
         dataPurpose: report.dataPurpose,
         retentionUntil: report.retentionUntil,
         intakeStatus: report.intakeStatus,
@@ -1069,7 +1105,7 @@ export default function registerReportRoutes(router, deps) {
         action: 'case.duplicate_override',
         targetType: 'report',
         targetId: report.id,
-        summary: `Created ${report.childName} after duplicate warning override`,
+        summary: `Created case ${report.id} after duplicate warning override`,
         scope: { state: report.state, district: report.district },
       metadata: { candidateIds: duplicateCandidates.map((c) => c.report.id), topScore: duplicateCandidates[0].score, retentionUntil: report.retentionUntil },
     });
@@ -1103,7 +1139,7 @@ export default function registerReportRoutes(router, deps) {
     }
     if (searchable) await matcher.indexCase(findReport(report.id) || report, req.file?.buffer);
     res.status(201).json({
-      report: isCitizenRole(req.user.role) ? citizenCaseView(report) : { ...(findReport(report.id) || report), photoCheck: report.photoCheck || null },
+      report: isCitizenRole(req.user.role) ? citizenCaseView(report) : { ...deskCaseView(req.user, findReport(report.id) || report), photoCheck: report.photoCheck || null },
       // How many stored sightings were linked to this case for police review.
       // Told to the officers who register formal cases. A parent or NGO
       // registering a case gets null whatever was found: a family is not told
@@ -1124,7 +1160,7 @@ export default function registerReportRoutes(router, deps) {
   // Public endpoint (no auth): citizen uploads a photo and gets a review-safe receipt.
   // optionalAuth only so that an officer filing a sighting from the console is
   // shown the match result; a member of the public never is (see the response).
-  router.post('/found', optionalAuth, upload.single('photo'), foundReportLimit, async (req, res) => {
+  router.post('/found', optionalAuth, upload.single('photo'), withoutPhotoMetadata, foundReportLimit, async (req, res) => {
     const read = readFields(req.body, FOUND_FIELDS);
     if (read.error) return res.status(400).json({ error: read.error, errors: [read.error] });
     const b = read.body;
@@ -1255,14 +1291,14 @@ export default function registerReportRoutes(router, deps) {
       createdAt: Date.now(),
     };
     addFoundReport(fr);
-    addActivity({ actor: publicReporterName(fr), action: adultSighting ? 'Reported a sighting of a missing person' : 'Uploaded a spotted-child photo', target: fr.foundLocation, icon: 'upload', scope: { state: fr.state, district: fr.district, matchedReportId: fr.matchedReportId } });
+    addActivity({ actor: publicReporterName(fr), action: adultSighting ? 'Reported a sighting of a missing person' : 'Uploaded a spotted-child photo', target: fr.foundLocation, icon: 'upload', scope: { state: fr.state, district: fr.district, matchedReportId: fr.matchedReportId, foundReportId: fr.id } });
     addAudit({
       actorName: publicReporterName(fr),
       actorRole: 'public',
       action: 'sighting.submitted',
       targetType: 'foundReport',
       targetId: fr.id,
-      summary: `Public sighting submitted at ${fr.foundLocation}`,
+      summary: `Public sighting ${fr.id} submitted`,
       scope: { matchedReportId: fr.matchedReportId, state: fr.state, district: fr.district },
       metadata: { personCategory, matchScore: fr.matchScore, status: fr.status, matchEngine: fr.matchEngine, candidateCount: fr.matchCandidates.length, matchAttempted: canRunMatch, confidentialReporter, idProofType, idProofCaptured: fr.idProofVerified },
     });
@@ -1306,18 +1342,18 @@ export default function registerReportRoutes(router, deps) {
         action: 'sighting.police_queued',
         targetType: 'foundReport',
         targetId: fr.id,
-        summary: `Queued unmatched missing-person sighting for police follow-up at ${fr.foundLocation}`,
+        summary: `Queued unmatched missing-person sighting ${fr.id} for police follow-up`,
         scope: { state: fr.state, district: fr.district },
       });
     } else if (!hasStrongMatch) {
-      addActivity({ actor: 'Khozo intake', action: 'Queued report for 1098/CWC follow-up', target: fr.foundLocation, icon: 'referral', scope: { state: fr.state, district: fr.district } });
+      addActivity({ actor: 'Khozo intake', action: 'Queued report for 1098/CWC follow-up', target: fr.foundLocation, icon: 'referral', scope: { state: fr.state, district: fr.district, foundReportId: fr.id } });
       addAudit({
         actorName: 'Khozo intake',
         actorRole: 'system',
         action: 'sighting.cwc_queued',
         targetType: 'foundReport',
         targetId: fr.id,
-        summary: `Queued unmatched sighting for 1098/CWC follow-up at ${fr.foundLocation}`,
+        summary: `Queued unmatched sighting ${fr.id} for 1098/CWC follow-up`,
         scope: { state: fr.state, district: fr.district },
       });
     }
@@ -1542,7 +1578,7 @@ export default function registerReportRoutes(router, deps) {
       updateFoundReport(f.id, { ...patch, ...reviewed });
       const after = findFoundReport(f.id);
       if (decision === 'refer_cwc') {
-        addActivity({ actor: req.user.name, action: 'Referred sighting to 1098/CWC', target: f.foundLocation, icon: 'referral', actorId: req.user.id, scope: { state: after.state, district: after.district, matchedReportId: after.matchedReportId } });
+        addActivity({ actor: req.user.name, action: 'Referred sighting to 1098/CWC', target: f.foundLocation, icon: 'referral', actorId: req.user.id, scope: { state: after.state, district: after.district, matchedReportId: after.matchedReportId, foundReportId: f.id } });
       }
       addAudit({
         actorId: req.user.id,
@@ -1578,7 +1614,7 @@ export default function registerReportRoutes(router, deps) {
           action: 'sighting.candidate_advanced',
           targetType: 'foundReport',
           targetId: f.id,
-          summary: `Proposed the next candidate case for the sighting at ${f.foundLocation}`,
+          summary: `Proposed the next candidate case for sighting ${f.id}`,
           scope: { matchedReportId: next.id, state: after.state, district: after.district },
           metadata: { reportId: next.id, matchScore: after.matchScore, decision },
         });
@@ -1598,7 +1634,7 @@ export default function registerReportRoutes(router, deps) {
         referralStatus: 'Referred to Childline/CWC',
       });
       const after = findFoundReport(f.id);
-      addActivity({ actor: req.user.name, action: 'Referred sighting to 1098/CWC', target: f.foundLocation, icon: 'referral', actorId: req.user.id, scope: { state: after.state, district: after.district, matchedReportId: after.matchedReportId } });
+      addActivity({ actor: req.user.name, action: 'Referred sighting to 1098/CWC', target: f.foundLocation, icon: 'referral', actorId: req.user.id, scope: { state: after.state, district: after.district, matchedReportId: after.matchedReportId, foundReportId: f.id } });
       addAudit({
         actorId: req.user.id,
         actorName: req.user.name,
@@ -1606,7 +1642,7 @@ export default function registerReportRoutes(router, deps) {
         action: 'sighting.referred_cwc',
         targetType: 'foundReport',
         targetId: f.id,
-        summary: `Referred sighting at ${f.foundLocation} to 1098/CWC`,
+        summary: `Referred sighting ${f.id} to 1098/CWC`,
         scope: { matchedReportId: f.matchedReportId },
         metadata: { noteLength: reviewNote ? reviewNote.length : 0 },
       });
@@ -1642,7 +1678,7 @@ export default function registerReportRoutes(router, deps) {
         targetId: f.id,
         // The summary names no one who verified: the verification itself is
         // in the metadata.
-        summary: `Confirmed sighting match for ${r.childName} (${verification.methodLabel})`,
+        summary: `Confirmed sighting match for case ${r.id} (${verification.methodLabel})`,
         scope: { state: r.state, district: r.district, reportId: r.id },
         metadata: { matchScore: f.matchScore, verification, noteLength: reviewNote ? reviewNote.length : 0 },
       });
@@ -1654,7 +1690,7 @@ export default function registerReportRoutes(router, deps) {
         action: 'sighting.match_confirmed',
         targetType: 'foundReport',
         targetId: f.id,
-        summary: `Confirmed sighting at ${f.foundLocation} (${verification.methodLabel})`,
+        summary: `Confirmed sighting ${f.id} (${verification.methodLabel})`,
         scope: { state: f.state, district: f.district },
         metadata: { matchScore: f.matchScore, verification, noteLength: reviewNote ? reviewNote.length : 0 },
       });
@@ -1666,7 +1702,7 @@ export default function registerReportRoutes(router, deps) {
         action: 'sighting.rejected',
         targetType: 'foundReport',
         targetId: f.id,
-        summary: `Rejected sighting at ${f.foundLocation}`,
+        summary: `Rejected sighting ${f.id}`,
         scope: { matchedReportId: f.matchedReportId },
         metadata: { noteLength: reviewNote ? reviewNote.length : 0 },
       });
@@ -1726,7 +1762,7 @@ export default function registerReportRoutes(router, deps) {
       target: f.foundLocation,
       icon: 'check',
       actorId: req.user.id,
-      scope: { state: f.state, district: f.district, matchedReportId: f.matchedReportId },
+      scope: { state: f.state, district: f.district, matchedReportId: f.matchedReportId, foundReportId: f.id },
     });
     addAudit({
       actorId: req.user.id,
@@ -1735,7 +1771,7 @@ export default function registerReportRoutes(router, deps) {
       action: 'sighting.cwc_followup_completed',
       targetType: 'foundReport',
       targetId: f.id,
-      summary: `CWC follow-up recorded for sighting at ${f.foundLocation}: ${followup.label}`,
+      summary: `CWC follow-up recorded for sighting ${f.id}: ${followup.label}`,
       scope: { state: f.state, district: f.district, matchedReportId: f.matchedReportId },
       metadata: { outcome, noteLength: cleanedNote.length },
     });
@@ -1934,7 +1970,7 @@ export default function registerReportRoutes(router, deps) {
       action: 'sighting.formal_intake_created',
       targetType: 'foundReport',
       targetId: f.id,
-      summary: `Opened formal found-child intake for ${childName}`,
+      summary: `Opened formal found-child intake as case ${reportId}`,
       scope: { state, district, reportId: report.id, foundReportId: f.id },
       metadata: {
         formalReportId: report.id,
@@ -1965,7 +2001,7 @@ export default function registerReportRoutes(router, deps) {
         retentionUntil: report.retentionUntil,
       },
     });
-    res.status(201).json({ foundReport: findFoundReport(f.id), report: findReport(report.id), careRecord: intakeRecord });
+    res.status(201).json({ foundReport: findFoundReport(f.id), report: deskCaseView(req.user, findReport(report.id)), careRecord: intakeRecord });
   });
 
   // ---- Searching again, placing a sighting, replacing a case photo ----------
@@ -2004,7 +2040,7 @@ export default function registerReportRoutes(router, deps) {
       action: 'sighting.rematched',
       targetType: 'foundReport',
       targetId: f.id,
-      summary: `Searched the open cases again for the sighting at ${f.foundLocation}`,
+      summary: `Searched the open cases again for sighting ${f.id}`,
       scope: { state: after.state, district: after.district, matchedReportId: after.matchedReportId || null },
       metadata: {
         trigger: 'rematch',
@@ -2088,7 +2124,7 @@ export default function registerReportRoutes(router, deps) {
       },
     });
     const placed = findFoundReport(f.id);
-    addActivity({ actor: req.user.name, action: 'Placed a sighting in a district', target: placed.foundLocation, icon: 'referral', actorId: req.user.id, scope: { state: placed.state, district: placed.district, matchedReportId: placed.matchedReportId } });
+    addActivity({ actor: req.user.name, action: 'Placed a sighting in a district', target: placed.foundLocation, icon: 'referral', actorId: req.user.id, scope: { state: placed.state, district: placed.district, matchedReportId: placed.matchedReportId, foundReportId: placed.id } });
     addAudit({
       actorId: req.user.id,
       actorName: req.user.name,
@@ -2096,7 +2132,7 @@ export default function registerReportRoutes(router, deps) {
       action: 'sighting.placed',
       targetType: 'foundReport',
       targetId: f.id,
-      summary: `Placed the sighting at ${f.foundLocation} in ${district}, ${state}`,
+      summary: `Placed sighting ${f.id} in ${district}, ${state}`,
       scope: { state, district, matchedReportId: placed.matchedReportId || null },
       metadata: { from: previous, to: { state, district } },
     });
@@ -2145,7 +2181,7 @@ export default function registerReportRoutes(router, deps) {
    * Police roles, for a case in their scope. Registration never refuses a
    * photo for being unusable; this is how it is put right.
    */
-  router.post('/:id/photo', protectedRoute, requireRole(...POLICE_ROLES), upload.single('photo'), async (req, res) => {
+  router.post('/:id/photo', protectedRoute, requireRole(...POLICE_ROLES), upload.single('photo'), withoutPhotoMetadata, async (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
     if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
@@ -2155,7 +2191,7 @@ export default function registerReportRoutes(router, deps) {
     if (!req.file) return res.status(400).json({ error: 'Attach the new photo' });
     const imageError = validateImageFile(req.file, isAdultCase(r) ? 'Photo' : 'Child photo');
     if (imageError) return res.status(400).json({ error: imageError });
-    if (!r.photoConsent && !isTruthy(read.body.photoConsent)) {
+    if (!r.photoConsent && r.photoBasis !== 'department_register' && !isTruthy(read.body.photoConsent)) {
       return res.status(400).json({ error: 'Photo consent is required before uploading a child image' });
     }
 
@@ -2197,7 +2233,7 @@ export default function registerReportRoutes(router, deps) {
       action: 'case.photo_replaced',
       targetType: 'report',
       targetId: r.id,
-      summary: `Replaced the photo of ${r.childName}`,
+      summary: `Replaced the photo of case ${r.id}`,
       scope: { state: r.state, district: r.district, reportId: r.id },
       metadata: {
         photoCheck: photoCheck.verdict,
@@ -2207,7 +2243,7 @@ export default function registerReportRoutes(router, deps) {
         provider: reverse.engine?.provider || null,
       },
     });
-    res.json({ report: findReport(r.id), photoCheck, sightingMatches: reverse.sightingMatches, engine: reverse.engine || null });
+    res.json({ report: deskCaseView(req.user, findReport(r.id)), photoCheck, sightingMatches: reverse.sightingMatches, engine: reverse.engine || null });
   });
 
   /**
@@ -2282,7 +2318,7 @@ export default function registerReportRoutes(router, deps) {
         action: 'sighting.match_confirmed',
         targetType: 'foundReport',
         targetId: sightingToConfirm.id,
-        summary: `Confirmed sighting match for ${r.childName} (${verification.methodLabel})`,
+        summary: `Confirmed sighting match for case ${r.id} (${verification.methodLabel})`,
         scope: { state: r.state, district: r.district, reportId: r.id },
         metadata: { matchScore: sightingToConfirm.matchScore, verification, via: 'confirm_match' },
       });
@@ -2304,7 +2340,7 @@ export default function registerReportRoutes(router, deps) {
       targetType: 'report',
       targetId: r.id,
       // Names no one who verified; the verification is in the metadata.
-      summary: `${family.sent ? 'Confirmed match and alerted parent' : 'Confirmed match'} for ${r.childName} (${verification.methodLabel})`,
+      summary: `${family.sent ? 'Confirmed match and alerted parent' : 'Confirmed match'} for case ${r.id} (${verification.methodLabel})`,
       scope: { state: r.state, district: r.district },
       metadata: { sendSms: wantsSms, smsSent: family.sent, familyNotified: family.sent, familyReason: family.reason, verification },
     });
@@ -2355,7 +2391,7 @@ export default function registerReportRoutes(router, deps) {
       },
     });
     res.json({
-      report: findReport(r.id),
+      report: deskCaseView(req.user, findReport(r.id)),
       familyNotified: family.sent,
       familyPhone: family.phone,
       ...(family.sent ? {} : { familyReason: family.reason, familyMessage: FAMILY_SMS_MESSAGES[family.reason] }),
@@ -2426,13 +2462,13 @@ export default function registerReportRoutes(router, deps) {
       action: 'case.reopened',
       targetType: 'report',
       targetId: r.id,
-      summary: `Reopened case for ${r.childName} (was ${r.status})`,
+      summary: `Reopened case ${r.id} (was ${r.status})`,
       scope: { state: r.state, district: r.district, reportId: r.id },
       metadata: { previousStatus: r.status, reason, reasonLength: reason.length },
     });
     // Missing again, so its face is searched for again.
     await matcher.indexCase(findReport(r.id));
-    res.json({ report: findReport(r.id) });
+    res.json({ report: deskCaseView(req.user, findReport(r.id)) });
   });
 
   /**
@@ -2506,7 +2542,7 @@ export default function registerReportRoutes(router, deps) {
       ...(outcome.sent ? {} : { reason: outcome.reason }),
       phone: outcome.phone,
       message: FAMILY_SMS_MESSAGES[outcome.reason],
-      report: findReport(r.id),
+      report: deskCaseView(req.user, findReport(r.id)),
     });
   });
 
@@ -2546,11 +2582,11 @@ export default function registerReportRoutes(router, deps) {
       action: 'case.family_contacted',
       targetType: 'report',
       targetId: r.id,
-      summary: `Recorded family contact for ${r.childName}: ${FAMILY_CONTACT_METHODS[method]}`,
+      summary: `Recorded family contact for case ${r.id}: ${FAMILY_CONTACT_METHODS[method]}`,
       scope: { state: r.state, district: r.district, reportId: r.id },
       metadata: { method, noteLength: note ? note.length : 0, personConsent: req.body?.personConsent === true },
     });
-    res.json({ report: findReport(r.id) });
+    res.json({ report: deskCaseView(req.user, findReport(r.id)) });
   });
 
   router.post('/:id/case-workflow', protectedRoute, requireRole(...CASE_WORKFLOW_ROLES), (req, res) => {
@@ -2595,11 +2631,11 @@ export default function registerReportRoutes(router, deps) {
       action: config.audit,
       targetType: 'report',
       targetId: r.id,
-      summary: `${config.label} for ${r.childName}`,
+      summary: `${config.label} for case ${r.id}`,
       scope: { state: r.state, district: r.district, reportId: r.id },
       metadata: { action, note: note || null },
     });
-    res.json({ report: findReport(r.id) });
+    res.json({ report: deskCaseView(req.user, findReport(r.id)) });
   });
 
   router.get('/:id/assignable-users', protectedRoute, requireRole(...CASE_ASSIGN_ROLES), (req, res) => {
@@ -2692,7 +2728,7 @@ export default function registerReportRoutes(router, deps) {
       action: 'case.assigned_owner',
       targetType: 'report',
       targetId: r.id,
-      summary: `Assigned ${CASE_ASSIGNMENT_TYPES[assignmentType].toLowerCase()} for ${r.childName} to ${assignee.name}`,
+      summary: `Assigned ${CASE_ASSIGNMENT_TYPES[assignmentType].toLowerCase()} for case ${r.id} to ${assignee.name}`,
       scope: { state: r.state, district: r.district, reportId: r.id },
       metadata: {
         assignmentType,
@@ -2703,7 +2739,7 @@ export default function registerReportRoutes(router, deps) {
         noteLength: note.length,
       },
     });
-    res.status(201).json({ report: findReport(r.id), assignment });
+    res.status(201).json({ report: deskCaseView(req.user, findReport(r.id)), assignment });
   });
 
   router.post('/:id/investigation-checklist', protectedRoute, requireRole(...INVESTIGATION_CHECKLIST_ROLES), (req, res) => {
@@ -2780,7 +2816,7 @@ export default function registerReportRoutes(router, deps) {
       action: 'case.investigation_checklist_updated',
       targetType: 'report',
       targetId: r.id,
-      summary: `Updated investigation checklist for ${r.childName}`,
+      summary: `Updated investigation checklist for case ${r.id}`,
       scope: { state: r.state, district: r.district, reportId: r.id },
       metadata: {
         items: selectedItems,
@@ -2791,7 +2827,7 @@ export default function registerReportRoutes(router, deps) {
         noteLength: note.length,
       },
     });
-    res.status(201).json({ report: findReport(r.id), checklistRecord });
+    res.status(201).json({ report: deskCaseView(req.user, findReport(r.id)), checklistRecord });
   });
 
   router.post('/:id/close-case', protectedRoute, requireRole(...CASE_CLOSE_ROLES), async (req, res) => {
@@ -2849,13 +2885,15 @@ export default function registerReportRoutes(router, deps) {
       action: 'case.closed',
       targetType: 'report',
       targetId: r.id,
-      summary: `Closed case for ${r.childName}: ${closure.label}`,
+      summary: `Closed case ${r.id}: ${closure.label}`,
       scope: { state: r.state, district: r.district, reportId: r.id },
-      metadata: closure,
+      // The closing note stays on the case, which can be anonymised; the
+      // permanent log keeps its length (DPIA G4).
+      metadata: { reason: closure.reason, label: closure.label, closedAt: closure.closedAt, actorRole: closure.actorRole, noteLength: closure.note ? closure.note.length : 0 },
     });
     // Closed: no longer a face anyone is looking for.
     await matcher.unindexCase(findReport(r.id));
-    res.json({ report: findReport(r.id) });
+    res.json({ report: deskCaseView(req.user, findReport(r.id)) });
   });
 
   router.post('/:id/notes', protectedRoute, requireRole(...CASE_NOTE_ROLES), (req, res) => {
@@ -2882,11 +2920,11 @@ export default function registerReportRoutes(router, deps) {
       action: 'case.note_added',
       targetType: 'report',
       targetId: r.id,
-      summary: `Added case note for ${r.childName}`,
+      summary: `Added case note for case ${r.id}`,
       scope: { state: r.state, district: r.district, reportId: r.id },
       metadata: { noteLength: noteText.length },
     });
-    res.status(201).json({ report: findReport(r.id), note });
+    res.status(201).json({ report: deskCaseView(req.user, findReport(r.id)), note });
   });
 
   router.post('/:id/cci-care', protectedRoute, requireRole(...CCI_CARE_ROLES), (req, res) => {
@@ -2985,7 +3023,7 @@ export default function registerReportRoutes(router, deps) {
       action: 'case.cci_care_recorded',
       targetType: 'report',
       targetId: r.id,
-      summary: `Recorded CCI care for ${r.childName}: ${careRecord.label}`,
+      summary: `Recorded CCI care for case ${r.id}: ${careRecord.label}`,
       scope: { state: r.state, district: r.district, reportId: r.id },
       metadata: {
         admissionType,
@@ -3001,7 +3039,7 @@ export default function registerReportRoutes(router, deps) {
         familyTracingStatusLength: familyTracingStatus ? familyTracingStatus.length : 0,
       },
     });
-    res.status(201).json({ report: findReport(r.id), careRecord });
+    res.status(201).json({ report: deskCaseView(req.user, findReport(r.id)), careRecord });
   });
 
   router.post('/:id/jjb-proceeding', protectedRoute, requireRole(...JJB_PROCEEDING_ROLES), (req, res) => {
@@ -3083,7 +3121,7 @@ export default function registerReportRoutes(router, deps) {
       action: 'case.jjb_proceeding_recorded',
       targetType: 'report',
       targetId: r.id,
-      summary: `Recorded JJB proceeding for ${r.childName}: ${proceeding.label}`,
+      summary: `Recorded JJB proceeding for case ${r.id}: ${proceeding.label}`,
       scope: { state: r.state, district: r.district, reportId: r.id },
       metadata: {
         proceedingType,
@@ -3094,7 +3132,7 @@ export default function registerReportRoutes(router, deps) {
         directionsLength: directions.length,
       },
     });
-    res.status(201).json({ report: findReport(r.id), proceeding });
+    res.status(201).json({ report: deskCaseView(req.user, findReport(r.id)), proceeding });
   });
 
   router.post('/:id/state-escalation', protectedRoute, requireRole(...STATE_ESCALATION_ROLES), (req, res) => {
@@ -3186,7 +3224,7 @@ export default function registerReportRoutes(router, deps) {
       action: 'case.state_escalation_recorded',
       targetType: 'report',
       targetId: r.id,
-      summary: `Recorded state escalation for ${r.childName}: ${stateEscalation.label}`,
+      summary: `Recorded state escalation for case ${r.id}: ${stateEscalation.label}`,
       scope: { state: r.state, district: r.district, reportId: r.id },
       metadata: {
         escalationType,
@@ -3199,7 +3237,7 @@ export default function registerReportRoutes(router, deps) {
         actionRequiredLength: actionRequired.length,
       },
     });
-    res.status(201).json({ report: findReport(r.id), stateEscalation });
+    res.status(201).json({ report: deskCaseView(req.user, findReport(r.id)), stateEscalation });
   });
 
   router.post('/:id/bureau-report', protectedRoute, requireRole(...BUREAU_REPORT_ROLES), (req, res) => {
@@ -3288,7 +3326,7 @@ export default function registerReportRoutes(router, deps) {
       action: 'case.bureau_report_recorded',
       targetType: 'report',
       targetId: r.id,
-      summary: `Recorded ${bureauReport.bureauLabel} report for ${r.childName}: ${bureauReport.label}`,
+      summary: `Recorded ${bureauReport.bureauLabel} report for case ${r.id}: ${bureauReport.label}`,
       scope: { state: r.state, district: r.district, reportId: r.id },
       metadata: {
         reportType,
@@ -3300,7 +3338,7 @@ export default function registerReportRoutes(router, deps) {
         summaryLength: summary.length,
       },
     });
-    res.status(201).json({ report: findReport(r.id), bureauReport });
+    res.status(201).json({ report: deskCaseView(req.user, findReport(r.id)), bureauReport });
   });
 
   router.post('/:id/external-id', protectedRoute, requireRole(...EXTERNAL_ID_ROLES), (req, res) => {
@@ -3373,7 +3411,7 @@ export default function registerReportRoutes(router, deps) {
       action: 'case.external_id_linked',
       targetType: 'report',
       targetId: r.id,
-      summary: `Linked ${externalRecord.label} for ${r.childName}`,
+      summary: `Linked ${externalRecord.label} for case ${r.id}`,
       scope: { state: r.state, district: r.district, reportId: r.id },
       metadata: {
         idType,
@@ -3383,7 +3421,7 @@ export default function registerReportRoutes(router, deps) {
         remarksLength: remarks.length,
       },
     });
-    res.status(201).json({ report: findReport(r.id), externalRecord });
+    res.status(201).json({ report: deskCaseView(req.user, findReport(r.id)), externalRecord });
   });
 
   router.post('/:id/restoration-plan', protectedRoute, requireRole(...RESTORATION_PLAN_ROLES), (req, res) => {
@@ -3509,7 +3547,7 @@ export default function registerReportRoutes(router, deps) {
       action: 'case.restoration_plan_recorded',
       targetType: 'report',
       targetId: r.id,
-      summary: `Recorded restoration plan for ${r.childName}: ${restorationPlan.label}`,
+      summary: `Recorded restoration plan for case ${r.id}: ${restorationPlan.label}`,
       scope: { state: r.state, district: r.district, reportId: r.id, targetState: toState, targetDistrict: toDistrict },
       metadata: {
         restorationType,
@@ -3532,7 +3570,7 @@ export default function registerReportRoutes(router, deps) {
         remarksLength: remarks.length,
       },
     });
-    res.status(201).json({ report: findReport(r.id), restorationPlan });
+    res.status(201).json({ report: deskCaseView(req.user, findReport(r.id)), restorationPlan });
   });
 
   router.post('/:id/welfare-referral', protectedRoute, requireRole(...WELFARE_REFERRAL_ROLES), (req, res) => {
@@ -3615,7 +3653,7 @@ export default function registerReportRoutes(router, deps) {
       action: 'case.welfare_referral_recorded',
       targetType: 'report',
       targetId: r.id,
-      summary: `Recorded welfare referral for ${r.childName}: ${welfareReferral.label}`,
+      summary: `Recorded welfare referral for case ${r.id}: ${welfareReferral.label}`,
       scope: { state: r.state, district: r.district, reportId: r.id },
       metadata: {
         scheme,
@@ -3627,7 +3665,7 @@ export default function registerReportRoutes(router, deps) {
         eligibilityNoteLength: eligibilityNote.length,
       },
     });
-    res.status(201).json({ report: findReport(r.id), welfareReferral });
+    res.status(201).json({ report: deskCaseView(req.user, findReport(r.id)), welfareReferral });
   });
 
   router.post('/:id/legal-aid-referral', protectedRoute, requireRole(...LEGAL_AID_REFERRAL_ROLES), (req, res) => {
@@ -3712,7 +3750,7 @@ export default function registerReportRoutes(router, deps) {
       action: 'case.legal_aid_referral_recorded',
       targetType: 'report',
       targetId: r.id,
-      summary: `Recorded legal-aid referral for ${r.childName}: ${legalAidReferral.label}`,
+      summary: `Recorded legal-aid referral for case ${r.id}: ${legalAidReferral.label}`,
       scope: { state: r.state, district: r.district, reportId: r.id },
       metadata: {
         serviceType,
@@ -3725,7 +3763,7 @@ export default function registerReportRoutes(router, deps) {
         noteLength: note.length,
       },
     });
-    res.status(201).json({ report: findReport(r.id), legalAidReferral });
+    res.status(201).json({ report: deskCaseView(req.user, findReport(r.id)), legalAidReferral });
   });
 
   router.post('/:id/adoption-record', protectedRoute, requireRole(...ADOPTION_RECORD_ROLES), (req, res) => {
@@ -3809,7 +3847,7 @@ export default function registerReportRoutes(router, deps) {
       action: 'case.adoption_recorded',
       targetType: 'report',
       targetId: r.id,
-      summary: `Recorded adoption follow-up for ${r.childName}: ${adoptionRecord.label}`,
+      summary: `Recorded adoption follow-up for case ${r.id}: ${adoptionRecord.label}`,
       scope: { state: r.state, district: r.district, reportId: r.id },
       metadata: {
         recordType,
@@ -3822,7 +3860,7 @@ export default function registerReportRoutes(router, deps) {
         noteLength: note.length,
       },
     });
-    res.status(201).json({ report: findReport(r.id), adoptionRecord });
+    res.status(201).json({ report: deskCaseView(req.user, findReport(r.id)), adoptionRecord });
   });
 
   router.post('/:id/case-assessment', protectedRoute, requireRole(...CASE_ASSESSMENT_ROLES), (req, res) => {
@@ -3907,7 +3945,7 @@ export default function registerReportRoutes(router, deps) {
       action: 'case.assessment_recorded',
       targetType: 'report',
       targetId: r.id,
-      summary: `Recorded ${assessment.label} for ${r.childName}`,
+      summary: `Recorded ${assessment.label} for case ${r.id}`,
       scope: { state: r.state, district: r.district, reportId: r.id },
       metadata: {
         assessmentType,
@@ -3920,7 +3958,7 @@ export default function registerReportRoutes(router, deps) {
         recommendationLength: recommendation.length,
       },
     });
-    res.status(201).json({ report: findReport(r.id), assessment });
+    res.status(201).json({ report: deskCaseView(req.user, findReport(r.id)), assessment });
   });
 
   router.post('/:id/production-record', protectedRoute, requireRole(...PRODUCTION_RECORD_ROLES), (req, res) => {
@@ -4010,7 +4048,7 @@ export default function registerReportRoutes(router, deps) {
       action: 'case.production_recorded',
       targetType: 'report',
       targetId: r.id,
-      summary: `Recorded production before authority for ${r.childName}: ${productionRecord.label}`,
+      summary: `Recorded production before authority for case ${r.id}: ${productionRecord.label}`,
       scope: { state: r.state, district: r.district, reportId: r.id },
       metadata: {
         productionType,
@@ -4024,7 +4062,7 @@ export default function registerReportRoutes(router, deps) {
         nextActionLength: nextAction.length,
       },
     });
-    res.status(201).json({ report: findReport(r.id), productionRecord });
+    res.status(201).json({ report: deskCaseView(req.user, findReport(r.id)), productionRecord });
   });
 
   router.post('/:id/transfer-jurisdiction', protectedRoute, requireRole(...CASE_TRANSFER_ROLES), (req, res) => {
@@ -4118,11 +4156,11 @@ export default function registerReportRoutes(router, deps) {
       action: 'case.jurisdiction_transferred',
       targetType: 'report',
       targetId: r.id,
-      summary: `Transferred ${r.childName} from ${[transfer.from.district, transfer.from.state].filter(Boolean).join(', ') || 'unscoped'} to ${[target.district, target.state].filter(Boolean).join(', ')}`,
+      summary: `Transferred case ${r.id} from ${[transfer.from.district, transfer.from.state].filter(Boolean).join(', ') || 'unscoped'} to ${[target.district, target.state].filter(Boolean).join(', ')}`,
       scope: { state: target.state, district: target.district, reportId: r.id, previousState: transfer.from.state, previousDistrict: transfer.from.district },
       metadata: { from: transfer.from, to: transfer.to, reasonLength: reason.length },
     });
-    res.json({ report: findReport(r.id) });
+    res.json({ report: deskCaseView(req.user, findReport(r.id)) });
   });
 
   router.post('/:id/verify-intake', protectedRoute, requireRole(...INTAKE_VERIFY_ROLES), async (req, res) => {
@@ -4165,7 +4203,7 @@ export default function registerReportRoutes(router, deps) {
       action: 'case.intake_verified',
       targetType: 'report',
       targetId: r.id,
-      summary: `Verified citizen/NGO intake for ${r.childName}`,
+      summary: `Verified citizen/NGO intake for case ${r.id}`,
       scope: { state: r.state, district: r.district, reportId: r.id },
       metadata: { firNo: patch.firNo, noteLength: event.note ? event.note.length : 0 },
     });
@@ -4179,7 +4217,7 @@ export default function registerReportRoutes(router, deps) {
       : { sightingMatches: 0 };
     if (photoCheck) updateReport(r.id, { photoCheck });
     if (photo) await matcher.indexCase(findReport(r.id), photo);
-    res.json({ report: findReport(r.id), sightingMatches: reverse.sightingMatches });
+    res.json({ report: deskCaseView(req.user, findReport(r.id)), sightingMatches: reverse.sightingMatches });
   });
 
   /**
@@ -4222,11 +4260,11 @@ export default function registerReportRoutes(router, deps) {
       action: 'case.bulletin_unpublished',
       targetType: 'report',
       targetId: r.id,
-      summary: `Unpublished public bulletin for ${r.childName}`,
+      summary: `Unpublished public bulletin for case ${r.id}`,
       scope: { state: r.state, district: r.district, reportId: r.id },
       metadata: { published: false },
     });
-    res.json({ report: findReport(r.id), bulletin: null });
+    res.json({ report: deskCaseView(req.user, findReport(r.id)), bulletin: null });
   });
 
   router.get('/:id/handoff-export', protectedRoute, requireRole(...CASE_HANDOFF_EXPORT_ROLES), (req, res) => {
@@ -4247,7 +4285,7 @@ export default function registerReportRoutes(router, deps) {
       action: 'case.handoff_exported',
       targetType: 'report',
       targetId: r.id,
-      summary: `Exported redacted case handoff for ${r.childName} to ${HANDOFF_TARGET_SYSTEMS[targetSystem]}`,
+      summary: `Exported redacted case handoff for case ${r.id} to ${HANDOFF_TARGET_SYSTEMS[targetSystem]}`,
       scope: { state: r.state, district: r.district, reportId: r.id },
       metadata: {
         targetSystem,
@@ -4263,7 +4301,7 @@ export default function registerReportRoutes(router, deps) {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
     if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
-    const view = isCitizenRole(req.user.role) ? citizenCaseView(r) : r;
+    const view = isCitizenRole(req.user.role) ? citizenCaseView(r) : deskCaseView(req.user, r);
     res.json({ report: { ...view, personCategory: personCategoryOf(r) } });
   });
 

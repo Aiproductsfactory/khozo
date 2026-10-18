@@ -15,7 +15,6 @@ import {
   scopeActivity, scopeAudit, scopeFoundReports, scopeReports, scopeLabel,
 } from '../scope.js';
 import { canonicalPlace } from '../geo/index.js';
-import { removeCaseFromIndex } from '../face-index.js';
 import registerMatchingAdminRoutes from './matching-admin.js';
 import registerFaceIndexAdminRoutes from './face-index-admin.js';
 import {
@@ -32,6 +31,8 @@ import {
   isCitizenRole,
   citizenCaseView,
 } from '../case-domain.js';
+import { anonymisedLabel, deskCaseView } from '../privacy.js';
+import { anonymiseCase, anonymiseSighting, runRetentionSweep } from '../retention.js';
 
 export default function registerDashboardRoutes(router, deps) {
   const {
@@ -40,6 +41,7 @@ export default function registerDashboardRoutes(router, deps) {
     addActivity, addAudit, addUser, findUserByEmail,
     listNotifications, markNotificationsRead,
     readPhoto, probeMatchProviders,
+    deletePhoto = null, rewriteActivity = null,
     isPostgres,
     authRequired, passwordChangeRequired, publicUser, requireRole,
     auditPublicRateLimit, clientIp, fixedWindowRateLimit,
@@ -1441,7 +1443,7 @@ export default function registerDashboardRoutes(router, deps) {
       id: `u_${nanoid(8)}`,
       name,
       email,
-      passwordHash: bcrypt.hashSync(initialPassword, 8),
+      passwordHash: bcrypt.hashSync(initialPassword, 10),
       role,
       phone: phone || null,
       org: org || null,
@@ -1796,6 +1798,40 @@ export default function registerDashboardRoutes(router, deps) {
     return 'active';
   }
   
+  // What the shared retention helpers (shared/retention.js) act through.
+  const retentionDeps = {
+    listReports, listFoundReports, updateReport, updateFoundReport, addAudit,
+    deletePhoto, rewriteActivity, faceIndex: deps.faceIndex,
+  };
+
+  // A dry run (the default) says what the retention schedule would do today;
+  // with `apply` and an approval reference, a super admin carries it out:
+  // expired sightings and closed cases anonymised, escalated sightings kept
+  // with their case, open cases past their date left for review.
+  router.post('/privacy/retention-sweep', requireRole('super_admin'), async (req, res) => {
+    const read = readFields(req.body || {}, { apply: 'flag', approvalReference: ['text', 120], approvalType: ['text', 60] });
+    if (read.error) return res.status(400).json({ error: read.error });
+    const apply = read.body.apply === true || read.body.apply === 'true';
+    const approval = anonymizationApproval(read.body);
+    if (apply && approval.reference.length < 6) {
+      return res.status(400).json({ error: 'Applying the retention schedule requires an approval/order reference of at least 6 characters' });
+    }
+    const result = await runRetentionSweep(retentionDeps, { apply, approval: apply ? approval : null, actor: req.user });
+    addAudit({
+      actorId: req.user.id,
+      actorName: req.user.name,
+      actorRole: req.user.role,
+      action: apply ? 'privacy.retention_sweep_applied' : 'privacy.retention_sweep_planned',
+      targetType: 'retention',
+      summary: apply
+        ? `Applied the retention schedule: ${result.done.sightingsAnonymised} sightings and ${result.done.casesAnonymised} cases anonymised`
+        : `Planned the retention schedule: ${result.summary.sightingsToAnonymise} sightings and ${result.summary.casesToAnonymise} cases due`,
+      scope: {},
+      metadata: { ...result.summary, ...result.done, approvalReference: apply ? approval.reference : null },
+    });
+    res.json({ applied: result.applied, summary: result.summary, done: result.done, plan: result.plan });
+  });
+
   function anonymizationApproval(body = {}) {
     const reference = String(body.approvalReference || '').trim().slice(0, 120);
     const type = String(body.approvalType || 'privacy_officer').trim().slice(0, 60) || 'privacy_officer';
@@ -1862,39 +1898,23 @@ export default function registerDashboardRoutes(router, deps) {
     if (type === 'report') {
       const report = scopedReports.find((r) => r.id === id);
       if (!report) return res.status(404).json({ error: 'Report not found in your scope' });
+      const hadPhoto = Boolean(report.photoFile);
+      // Anonymising: the allow-list patch, out of the face index, the
+      // photograph's bytes deleted, the activity feed rewritten (DPIA G1),
+      // the same steps the retention sweep takes (shared/retention.js).
       const patch = decision === 'extend'
         ? { retentionUntil: nextRetention, privacyReviewStatus: 'retention_extended' }
         : decision === 'anonymize'
-          ? {
-              childName: `Anonymized ${report.id}`,
-              childAadhar: null,
-              photoUrl: null,
-              parentName: 'Anonymized',
-              parentPhone: null,
-              parentEmail: null,
-              address: null,
-              // Who verified the identity, where, and what officers wrote when
-              // they told the family are as identifying as the name.
-              verification: report.verification
-                ? { method: report.verification.method, methodLabel: report.verification.methodLabel, recordedAt: report.verification.recordedAt || null, anonymized: true }
-                : null,
-              familyContacts: Array.isArray(report.familyContacts)
-                ? report.familyContacts.map((contact) => ({ ...contact, note: null }))
-                : report.familyContacts || null,
-              privacyReviewStatus: 'anonymized',
-              anonymizedAt: new Date(now).toISOString(),
-              anonymizationApproval: approval,
-            }
+          ? await anonymiseCase(retentionDeps, report, { now, approval })
           : { privacyReviewStatus: 'case_retention_reviewed' };
-      updateReport(id, patch);
-      // An anonymised case is no longer a face anyone may search for: out of
-      // the one-to-many index, when one is configured (shared/face-index.js).
-      if (decision === 'anonymize') await removeCaseFromIndex(deps.faceIndex, report, updateReport);
+      if (decision !== 'anonymize') updateReport(id, patch);
       const auditAction = decision === 'extend'
         ? 'privacy.retention_extended'
         : decision === 'anonymize'
           ? 'privacy.record_anonymized'
           : 'privacy.retention_reviewed';
+      // The audit log is permanent, so it names the case by id only (DPIA G4).
+      const verb = decision === 'extend' ? 'Extended' : decision === 'anonymize' ? 'Anonymized' : 'Reviewed';
       addAudit({
         actorId: req.user.id,
         actorName: req.user.name,
@@ -1902,7 +1922,7 @@ export default function registerDashboardRoutes(router, deps) {
         action: auditAction,
         targetType: 'report',
         targetId: id,
-        summary: `${decision === 'extend' ? 'Extended' : decision === 'anonymize' ? 'Anonymized' : 'Reviewed'} retention for ${report.childName}`,
+        summary: `${verb} retention for case ${id}`,
         scope: { state: report.state, district: report.district, reportId: id },
         metadata: decision === 'anonymize' ? {
           privacyReviewStatus: patch.privacyReviewStatus,
@@ -1910,33 +1930,21 @@ export default function registerDashboardRoutes(router, deps) {
           approvalType: approval.type,
           approvalReference: approval.reference,
           approvalNoteLength: approval.noteLength,
+          photoDeleted: hadPhoto,
         } : patch,
       });
-      addActivity({ actor: req.user.name, action: `${decision === 'extend' ? 'Extended' : decision === 'anonymize' ? 'Anonymized' : 'Reviewed'} privacy retention`, target: report.childName, icon: 'eye', scope: { state: report.state, district: report.district, reportId: id } });
-      return res.json({ item: { ...report, ...patch } });
+      addActivity({ actor: req.user.name, action: `${verb} privacy retention`, target: decision === 'anonymize' ? anonymisedLabel('report', id) : report.childName, icon: 'eye', scope: { state: report.state, district: report.district, reportId: id } });
+      return res.json({ item: deskCaseView(req.user, { ...report, ...patch }) });
     }
   
     if (type === 'foundReport') {
       const found = scopedFound.find((f) => f.id === id);
       if (!found) return res.status(404).json({ error: 'Sighting not found in your scope' });
+      const hadPhoto = Boolean(found.photoFile);
       const patch = decision === 'extend'
         ? { retentionUntil: nextRetention, privacyReviewStatus: 'retention_extended' }
         : decision === 'anonymize'
-          ? {
-              photoUrl: null,
-              lat: null,
-              lng: null,
-              reporterName: 'Anonymized citizen',
-              reporterPhone: null,
-              note: null,
-              reviewNote: null,
-              verification: found.verification
-                ? { method: found.verification.method, methodLabel: found.verification.methodLabel, recordedAt: found.verification.recordedAt || null, anonymized: true }
-                : null,
-              privacyReviewStatus: 'anonymized',
-              anonymizedAt: new Date(now).toISOString(),
-              anonymizationApproval: approval,
-            }
+          ? await anonymiseSighting(retentionDeps, found, { now, approval })
           : {
               // The reporter's receipt is unaffected: its stage depends only on
               // time (publicSightingStatus in shared/case-domain.js), so moving
@@ -1945,12 +1953,13 @@ export default function registerDashboardRoutes(router, deps) {
               privacyReviewStatus: 'retention_reviewed',
               referralStatus: found.referralStatus || 'Privacy retention reviewed',
             };
-      updateFoundReport(id, patch);
+      if (decision !== 'anonymize') updateFoundReport(id, patch);
       const auditAction = decision === 'extend'
         ? 'privacy.retention_extended'
         : decision === 'anonymize'
           ? 'privacy.record_anonymized'
           : 'privacy.retention_reviewed';
+      const verb = decision === 'extend' ? 'Extended' : decision === 'anonymize' ? 'Anonymized' : 'Reviewed';
       addAudit({
         actorId: req.user.id,
         actorName: req.user.name,
@@ -1958,7 +1967,7 @@ export default function registerDashboardRoutes(router, deps) {
         action: auditAction,
         targetType: 'foundReport',
         targetId: id,
-        summary: `${decision === 'extend' ? 'Extended' : decision === 'anonymize' ? 'Anonymized' : 'Reviewed'} retention for sighting at ${found.foundLocation}`,
+        summary: `${verb} retention for sighting ${id}`,
         scope: { state: found.state, district: found.district, matchedReportId: found.matchedReportId },
         metadata: decision === 'anonymize' ? {
           privacyReviewStatus: patch.privacyReviewStatus,
@@ -1966,9 +1975,10 @@ export default function registerDashboardRoutes(router, deps) {
           approvalType: approval.type,
           approvalReference: approval.reference,
           approvalNoteLength: approval.noteLength,
+          photoDeleted: hadPhoto,
         } : patch,
       });
-      addActivity({ actor: req.user.name, action: `${decision === 'extend' ? 'Extended' : decision === 'anonymize' ? 'Anonymized' : 'Reviewed'} privacy retention`, target: found.foundLocation, icon: 'eye', scope: { state: found.state, district: found.district, matchedReportId: found.matchedReportId } });
+      addActivity({ actor: req.user.name, action: `${verb} privacy retention`, target: decision === 'anonymize' ? anonymisedLabel('foundReport', id) : found.foundLocation, icon: 'eye', scope: { state: found.state, district: found.district, matchedReportId: found.matchedReportId, foundReportId: id } });
       // The reporter's name and phone as the review queue shows them: masked
       // for a reporter who asked to stay confidential.
       const item = { ...found, ...patch };

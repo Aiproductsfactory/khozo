@@ -27,6 +27,7 @@ import {
   updateIfVersion,
   savePhotoBlob,
   readPhotoBlob,
+  deletePhotoBlob,
   photoBlobStats,
 } from './db.js';
 
@@ -75,7 +76,7 @@ function auditHash(row, prevHash = row.prevHash || null) {
 const norm = (v) => String(v || '').trim().toLowerCase();
 
 /** Real Postgres access. Tests substitute this to run without a database. */
-const POSTGRES = { query, upsertRecord, upsertMany, readVersioned, updateIfVersion, savePhotoBlob, readPhotoBlob, photoBlobStats };
+const POSTGRES = { query, upsertRecord, upsertMany, readVersioned, updateIfVersion, savePhotoBlob, readPhotoBlob, deletePhotoBlob, photoBlobStats };
 
 /**
  * Hydrates the dataset and returns the synchronous store the shared routes use,
@@ -256,6 +257,18 @@ export async function createRequestStore(env, ctx, io = POSTGRES) {
       db.activity.unshift(row);
       return markDirty('activity', row);
     },
+    /** `fn(row)` returns the fields to change, or null (see server/src/store.js). */
+    rewriteActivity(fn) {
+      let changed = 0;
+      for (const row of db.activity) {
+        const patch = fn(row);
+        if (!patch) continue;
+        Object.assign(row, patch);
+        markDirty('activity', row);
+        changed += 1;
+      }
+      return changed;
+    },
 
     // --- Tamper-evident audit log ---
     listAudit: () => db.audit,
@@ -291,6 +304,11 @@ export async function createRequestStore(env, ctx, io = POSTGRES) {
     async readPhoto(key) {
       const blob = await io.readPhotoBlob(env, key, ctx);
       return blob ? blob.buffer : null;
+    },
+    /** Deletes a photograph's bytes: anonymisation, retention, a replaced photo. */
+    async deletePhoto(key) {
+      if (!key || typeof io.deletePhotoBlob !== 'function') return false;
+      return io.deletePhotoBlob(env, String(key), ctx);
     },
     photoMimeType,
     photoBlobStats: () => io.photoBlobStats(env, ctx),

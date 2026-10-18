@@ -9,6 +9,7 @@ import multer from 'multer';
 import registerReportRoutes from '../../../shared/routes/reports.js';
 import { PHOTO_TOO_LARGE } from '../../../shared/case-domain.js';
 import { createFaceIndex } from '../../../shared/face-index.js';
+import { privacySecrets } from '../../../shared/privacy.js';
 import { PHOTO_MAX_BYTES } from '../../../shared/photo-format.js';
 import {
   listReports, addReport, findReport, updateReport,
@@ -59,9 +60,9 @@ export default registerReportRoutes(Router(), {
     // (shared/sms.js); without one, Khozo says so instead of claiming a send.
     smsGatewayUrl: process.env.KHOZO_SMS_GATEWAY_URL,
     smsApiKey: process.env.KHOZO_SMS_API_KEY,
-    exportSigning: {
-      keyId: process.env.KHOZO_EXPORT_SIGNING_KEY_ID,
-      key: process.env.KHOZO_EXPORT_SIGNING_KEY,
-    },
+    // Set explicitly, or derived from the JWT secret; never a constant from
+    // this repository (shared/privacy.js).
+    exportSigning: privacySecrets(process.env).exportSigning,
+    fieldHashKey: privacySecrets(process.env).fieldHashKey,
   },
 });

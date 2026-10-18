@@ -199,8 +199,12 @@ export async function readPhotoBlob(env, key, ctx) {
   return rows.length ? { mime: rows[0].mime, buffer: rows[0].bytes } : null;
 }
 
+/** Deletes a photo under the same two spellings readPhotoBlob finds it by. */
 export async function deletePhotoBlob(env, key, ctx) {
-  const { rowCount } = await query(env, 'delete from public.photo_blobs where key = $1', [key], ctx);
+  const clean = String(key || '').trim();
+  if (!clean) return false;
+  const alt = clean.endsWith('.jpg') || clean.endsWith('.png') ? clean : `${clean}.jpg`;
+  const { rowCount } = await query(env, 'delete from public.photo_blobs where key = $1 or key = $2', [clean, alt], ctx);
   return rowCount > 0;
 }
 

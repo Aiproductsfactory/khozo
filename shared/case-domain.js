@@ -20,6 +20,7 @@ import crypto from 'node:crypto';
 import { canAccessReport, sameDistrictPlace, sameStatePlace } from './scope.js';
 import { PHOTO_MAX_BYTES, detectImageMime } from './photo-format.js';
 import { canonicalPlace } from './geo/index.js';
+import { isFullAadhaar, maskAadhaar, storedAadhaarFingerprint } from './privacy.js';
 
 const DAY = 86400000;
 const REPORT_PHOTO_RETENTION_DAYS = 3650;
@@ -804,6 +805,8 @@ function citizenCaseView(report) {
   // What the family wrote for a district the gazetteer did not recognise.
   view.districtText = registered.districtText || null;
   view.personCategory = personCategoryOf(report);
+  // A number stored whole before Khozo stopped storing them is shown masked.
+  if ('childAadhar' in view) view.childAadhar = maskAadhaar(view.childAadhar);
   return view;
 }
 
@@ -1028,13 +1031,28 @@ function familyPhone(record, nonFamilyPhones) {
   return String(record.parentPhone).trim() || null;
 }
 
-function duplicateScore(candidate, incoming, { nonFamilyPhones = null } = {}) {
+/**
+ * Whether two cases carry the same Aadhaar number. Cases store a keyed
+ * fingerprint, never the number (shared/privacy.js); a case stored before
+ * that rule still has the whole number, which is fingerprinted here. A masked
+ * "XXXX XXXX 1234" is never compared: thousands of children share the last
+ * four digits.
+ */
+function sameAadhaar(candidate, incoming, aadhaarKey) {
+  const a = storedAadhaarFingerprint(candidate, aadhaarKey);
+  const b = storedAadhaarFingerprint(incoming, aadhaarKey);
+  if (a && b) return a === b;
+  return isFullAadhaar(candidate.childAadhar) && isFullAadhaar(incoming.childAadhar)
+    && digits(candidate.childAadhar) === digits(incoming.childAadhar);
+}
+
+function duplicateScore(candidate, incoming, { nonFamilyPhones = null, aadhaarKey = null } = {}) {
   let score = 0;
   score += nameOverlap(candidate.childName, incoming.childName) * 0.32;
   const candidatePhone = familyPhone(candidate, nonFamilyPhones);
   const incomingPhone = familyPhone(incoming, nonFamilyPhones);
   if (candidatePhone && incomingPhone && candidatePhone === incomingPhone) score += 0.28;
-  if (candidate.childAadhar && incoming.childAadhar && candidate.childAadhar === incoming.childAadhar) score += 0.45;
+  if (sameAadhaar(candidate, incoming, aadhaarKey)) score += 0.45;
   // "Unknown" twice is two people nobody recorded, not a shared fact.
   if (candidate.gender && incoming.gender && candidate.gender !== 'Unknown' && candidate.gender === incoming.gender) score += 0.08;
   if (candidate.age != null && incoming.age != null) {
@@ -1053,9 +1071,9 @@ function duplicateScore(candidate, incoming, { nonFamilyPhones = null } = {}) {
   return Math.min(0.99, Number(score.toFixed(2)));
 }
 
-function findDuplicateCandidates(user, incoming, allReports = [], scopeReports = (_u, rows) => rows, { nonFamilyPhones = null } = {}) {
+function findDuplicateCandidates(user, incoming, allReports = [], scopeReports = (_u, rows) => rows, { nonFamilyPhones = null, aadhaarKey = null } = {}) {
   return scopeReports(user, allReports)
-    .map((report) => ({ report, score: duplicateScore(report, incoming, { nonFamilyPhones }) }))
+    .map((report) => ({ report, score: duplicateScore(report, incoming, { nonFamilyPhones, aadhaarKey }) }))
     .filter((c) => c.score >= 0.58)
     .sort((a, b) => b.score - a.score)
     .slice(0, 5);

@@ -336,7 +336,9 @@ function buildForm(p, allowDuplicate) {
     for (const cat of p.categories) fd.append('vulnerabilityCategories', cat);
     if (allowDuplicate) fd.append('allowDuplicate', 'true');
     if (p.photo) {
-      fd.append('photoConsent', 'true');
+      // The register's photo was not given with anyone's consent; the
+    // record says where it came from instead (DPIA G15).
+    fd.append('photoBasis', 'department_register');
       fd.append('photo', new Blob([readFileSync(p.photo)], { type: 'image/jpeg' }), path.basename(p.photo));
     }
     return fd;

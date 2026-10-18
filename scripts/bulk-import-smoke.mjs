@@ -321,7 +321,8 @@ ok(!clearlyDifferent({ reportId: 'r_5' }, undefined, baseRec, fields), 'duplicat
 
 {
   const fd = buildForm({ fields: { childName: 'A', age: '', gender: 'Male' }, categories: ['unaccompanied'] }, new Blob(['x'], { type: 'image/jpeg' }), { allowDuplicate: true, photoName: '1.jpg' });
-  eq([fd.get('childName'), fd.has('age'), fd.get('allowDuplicate'), fd.get('photoConsent'), fd.getAll('vulnerabilityCategories')], ['A', false, 'true', 'true', ['unaccompanied']], 'form: fields as the CLI sends them');
+  eq([fd.get('childName'), fd.has('age'), fd.get('allowDuplicate'), fd.get('photoBasis'), fd.getAll('vulnerabilityCategories')], ['A', false, 'true', 'department_register', ['unaccompanied']], 'form: fields as the CLI sends them');
+  eq(fd.has('photoConsent'), false, 'form: an imported photo does not claim a consent nobody gave');
 
   const existing = [{ ...sameCase }, { ...sibling }];
   const calls = [];

@@ -382,7 +382,7 @@ export default function ReportSightingScreen() {
             tone="info"
             icon="lock-closed"
             title="How this photo is used"
-            message="It is compared against missing-child records and reviewed only by authorised police and CWC officers. You will never be shown the child's identity. Sighting photos are deleted after 180 days."
+            message="It is compared against missing-child records and reviewed only by authorised police and CWC officers. You will never be shown the child's identity. Sighting photos are deleted after 180 days unless linked to a case."
           />
 
           <Banner
@@ -509,7 +509,7 @@ export default function ReportSightingScreen() {
 
           <CheckField
             label="Keep my identity confidential"
-            description="Officers see the report but your name and number are hidden from the case record."
+            description="Your name and number are stored with the report but hidden on officers' screens."
             value={form.confidentialReporter}
             onChange={(v) => set('confidentialReporter', v)}
           />

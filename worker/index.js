@@ -26,6 +26,7 @@ import { createRequestStore } from './src/store-sync.js';
 import { checkDatabase, scheduled as runScheduledChecks } from './src/ops.js';
 import { detectPerson, matchEngineInfo, probeMatchProviders, rankMatches, rankSightingMatches } from './src/match.js';
 import { createFaceIndex } from '../shared/face-index.js';
+import { privacySecrets } from '../shared/privacy.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -53,7 +54,8 @@ function json(payload, status = 200) {
  */
 function buildDeps(env, store, ctx) {
   const auth = createAuth(env, store);
-  const auditPublicRateLimit = createAuditPublicRateLimit(store);
+  const secrets = privacySecrets(env);
+  const auditPublicRateLimit = createAuditPublicRateLimit(store, secrets.rateLimitAuditSalt);
 
   return {
     // Storage
@@ -87,6 +89,8 @@ function buildDeps(env, store, ctx) {
     verifyAuditChain: store.verifyAuditChain,
     savePhoto: store.savePhoto,
     readPhoto: store.readPhoto,
+    deletePhoto: store.deletePhoto,
+    rewriteActivity: store.rewriteActivity,
     photoMimeType: store.photoMimeType,
 
     // Postgres is the only storage mode the Worker has.
@@ -138,10 +142,11 @@ function buildDeps(env, store, ctx) {
       grievanceStatusLimit: env.KHOZO_GRIEVANCE_STATUS_LIMIT,
       smsGatewayUrl: env.KHOZO_SMS_GATEWAY_URL,
       smsApiKey: env.KHOZO_SMS_API_KEY,
-      exportSigning: {
-        keyId: env.KHOZO_EXPORT_SIGNING_KEY_ID,
-        key: env.KHOZO_EXPORT_SIGNING_KEY,
-      },
+      // The export-signing key, the Aadhaar fingerprint key and the
+      // rate-limit audit salt: each set explicitly, or derived from the JWT
+      // secret, never a constant from this repository (shared/privacy.js).
+      exportSigning: secrets.exportSigning,
+      fieldHashKey: secrets.fieldHashKey,
     },
     ctx,
   };

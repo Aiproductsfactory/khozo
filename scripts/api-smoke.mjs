@@ -1215,6 +1215,112 @@ async function twoWayMatchingChecks({ superAdmin, sjpu, cwc, dlsa, ngo, parent, 
 }
 
 /**
+ * The DPIA's personal-data gaps, closed (docs/governance/dpia.md section 7):
+ *
+ *   G1   anonymising a case deletes its photograph's bytes and clears the
+ *        profile, notes, FIR number and contacts; the activity feed stops
+ *        naming the person
+ *   G2   an Aadhaar number is stored masked with a keyed fingerprint, and the
+ *        fingerprint still catches a second registration of the same child
+ *   G4   the permanent audit log names cases by id
+ *   G15  an imported register photo records its basis, not a consent
+ *   G23  a CCI desk sees a case without the family's phone, e-mail or address
+ */
+async function privacyGapChecks({ superAdmin, sjpu, cci }) {
+  const mumbai = { state: 'Maharashtra', district: 'Mumbai' };
+  const caseForm = (fields, { photo = null, basis = 'consent' } = {}) => {
+    const form = new FormData();
+    addDeclaration(form, 'Smoke Privacy Declarant');
+    for (const [key, value] of Object.entries({ ...mumbai, gender: 'Female', age: '13', ...fields })) form.set(key, value);
+    if (photo) {
+      if (basis === 'consent') form.set('photoConsent', 'true');
+      else form.set('photoBasis', basis);
+      form.set('photo', photo);
+    }
+    return form;
+  };
+
+  // G2: the number is never stored, and still catches a duplicate.
+  const aadhaarCase = await request('POST', '/reports', {
+    token: sjpu.token,
+    form: caseForm({ childName: 'Meera Aadhaar Smoke', childAadhar: '432187651098', parentPhone: '9000003301', identificationMark: 'Crescent scar on the left wrist' }),
+  });
+  assert(aadhaarCase.report.childAadhar === 'XXXX XXXX 1098', `an Aadhaar number is stored masked: ${aadhaarCase.report.childAadhar}`);
+  assert(!('childAadharHash' in aadhaarCase.report), 'the Aadhaar fingerprint is never sent to a client');
+  const storedJson = fs.readFileSync(path.join(dataDir, 'db.json'), 'utf8');
+  assert(!storedJson.includes('432187651098'), 'the whole Aadhaar number is not in the store');
+  const second = await expectStatus(409, () => request('POST', '/reports', {
+    token: sjpu.token,
+    form: caseForm({ childName: 'M. Kumari', childAadhar: '432187651098', parentPhone: '9000003302', age: '14' }),
+  }), 'a second registration with the same Aadhaar number');
+  assert(second.duplicateCandidates?.some((c) => c.reportId === aadhaarCase.report.id), 'the fingerprint finds the first registration');
+  const notSame = await request('POST', '/reports', {
+    token: sjpu.token,
+    form: caseForm({ childName: 'Unrelated Boy Smoke', childAadhar: '999988881098', parentPhone: '9000003303', age: '6', gender: 'Male' }),
+  });
+  assert(notSame.report.id, 'a number sharing only the last four digits is not a duplicate');
+
+  // Soft identifiers are searchable.
+  const byMark = await request('GET', `/reports?q=${encodeURIComponent('crescent scar')}`, { token: sjpu.token });
+  assert(byMark.reports.some((r) => r.id === aadhaarCase.report.id), 'an identification mark finds the case');
+
+  // G23: a CCI desk sees the case, not the family's contacts.
+  const cciView = await request('GET', `/reports/${aadhaarCase.report.id}`, { token: cci.token });
+  assert(cciView.report.parentPhone === null && cciView.report.address === null && cciView.report.familyContactWithheld, `a CCI desk does not see family contacts: ${JSON.stringify({ phone: cciView.report.parentPhone })}`);
+  const sjpuView = await request('GET', `/reports/${aadhaarCase.report.id}`, { token: sjpu.token });
+  assert(sjpuView.report.parentPhone === '9000003301', 'the police still see the family contact');
+  const cciList = await request('GET', '/reports', { token: cci.token });
+  assert(cciList.reports.length > 0 && !cciList.reports.some((r) => r.parentPhone || r.parentEmail || r.address), 'a CCI desk list carries no family contact');
+
+  // G15: a register photo is not a consent.
+  const imported = await request('POST', '/reports', {
+    token: sjpu.token,
+    form: caseForm({ childName: 'Register Photo Smoke', parentPhone: '9000003304', age: '10', allowDuplicate: 'true' }, { photo: tinyPngFile(), basis: 'department_register' }),
+  });
+  assert(imported.report.photoBasis === 'department_register' && imported.report.photoConsent === false, `a register photo records its basis: ${JSON.stringify({ basis: imported.report.photoBasis, consent: imported.report.photoConsent })}`);
+
+  // G1 and G4: anonymising deletes the photo and every identifying field.
+  const doomed = await request('POST', '/reports', {
+    token: sjpu.token,
+    form: caseForm({
+      childName: 'Zarina Anonymise Smoke', parentPhone: '9000003305', age: '11', allowDuplicate: 'true',
+      address: '14 Smoke Lane, Dharavi', identificationMark: 'Mole under the right eye', circumstances: 'Left with a man offering work',
+    }, { photo: tinyPngFile() }),
+  });
+  const photoPath = path.join(dataDir, 'uploads', doomed.report.photoFile);
+  assert(fs.existsSync(photoPath), 'precondition: the case photo is stored');
+  const firNo = doomed.report.firNo;
+  await request('POST', `/reports/${doomed.report.id}/notes`, { token: sjpu.token, body: { note: 'Smoke note naming Zarina and her uncle' } });
+  await request('POST', `/dashboard/privacy/retention/report/${doomed.report.id}`, {
+    token: superAdmin.token,
+    body: { decision: 'anonymize', approvalReference: 'SMOKE-G1-ORDER', approvalType: 'privacy_officer' },
+  });
+  assert(!fs.existsSync(photoPath), 'anonymising deletes the photograph itself');
+  const after = (await request('GET', `/reports/${doomed.report.id}`, { token: superAdmin.token })).report;
+  const afterJson = JSON.stringify(after);
+  for (const text of ['Zarina', 'Dharavi', 'Mole under', 'offering work', '9000003305', 'her uncle', firNo].filter(Boolean)) {
+    assert(!afterJson.includes(text), `an anonymised case keeps nothing identifying: found "${text}"`);
+  }
+  assert(after.firNo === null && after.photoFile === null && after.identificationProfile === null, 'the FIR number, photo and profile are cleared');
+  assert(after.gender === 'Female' && Number(after.age) === 11 && after.district, 'statistics survive anonymisation');
+  const activity = (await request('GET', '/dashboard/activity', { token: superAdmin.token })).activity;
+  assert(!JSON.stringify(activity).includes('Zarina Anonymise Smoke'), 'the activity feed stops naming an anonymised person');
+  const audit = (await request('GET', '/dashboard/audit', { token: superAdmin.token })).audit;
+  assert(!JSON.stringify(audit).includes('Zarina') && !JSON.stringify(audit).includes('Meera Aadhaar'), 'the audit log names cases by id, never by name');
+
+  // G3: the retention schedule, planned and (with an order) applied.
+  const plan = await request('POST', '/dashboard/privacy/retention-sweep', { token: superAdmin.token, body: {} });
+  assert(plan.applied === false && typeof plan.summary?.sightingsToAnonymise === 'number' && Array.isArray(plan.plan?.cases?.review), `a dry run returns the plan: ${JSON.stringify(plan.summary)}`);
+  await expectStatus(400, () => request('POST', '/dashboard/privacy/retention-sweep', { token: superAdmin.token, body: { apply: true } }), 'applying the retention schedule without an order');
+  await expectStatus(403, () => request('POST', '/dashboard/privacy/retention-sweep', { token: sjpu.token, body: {} }), 'a district desk running the retention schedule');
+  const applied = await request('POST', '/dashboard/privacy/retention-sweep', { token: superAdmin.token, body: { apply: true, approvalReference: 'SMOKE-RETENTION-1' } });
+  assert(
+    applied.applied === true && applied.done.sightingsAnonymised === applied.summary.sightingsToAnonymise && applied.done.casesAnonymised === applied.summary.casesToAnonymise,
+    `an applied sweep does what its plan said: ${JSON.stringify({ summary: applied.summary, done: applied.done })}`
+  );
+}
+
+/**
  * Strict input: a write route refuses a field sent with the wrong shape
  * (`Invalid value for <field>`) instead of storing it. The scenario this
  * prevents: a public sighting whose location is a JSON object, stored as one,
@@ -3243,7 +3349,11 @@ async function run() {
     body: { currentPassword: created.initialPassword, newPassword: newProvisionedPassword },
   });
   assert(changedProvisioned.user.mustChangePassword === false, 'password change should clear forced-change flag');
-  await request('GET', '/dashboard/stats', { token: provisionedLogin.token });
+  // A password change signs out every other session; this one carries on
+  // with the token it is handed back.
+  assert(typeof changedProvisioned.token === 'string' && changedProvisioned.token !== provisionedLogin.token, 'password change should return a fresh token');
+  await expectStatus(401, () => request('GET', '/dashboard/stats', { token: provisionedLogin.token }), 'token issued before a password change');
+  await request('GET', '/dashboard/stats', { token: changedProvisioned.token });
   await expectStatus(401, () => request('POST', '/auth/login', {
     body: { email: 'smoke.cci.provision@khozo.org', password: created.initialPassword },
   }), 'temporary password after password change');
@@ -3251,6 +3361,10 @@ async function run() {
     body: { email: 'smoke.cci.provision@khozo.org', password: newProvisionedPassword },
   });
   assert(provisionedRelogin.user.mustChangePassword === false, 'new password login should not require password change');
+  // Signing out everywhere ends every session, the caller's too.
+  await request('POST', '/auth/logout-all', { token: provisionedRelogin.token });
+  await expectStatus(401, () => request('GET', '/auth/me', { token: provisionedRelogin.token }), 'token after signing out everywhere');
+  await expectStatus(401, () => request('GET', '/auth/me', { token: changedProvisioned.token }), 'other session after signing out everywhere');
   const goaPolice = await request('POST', '/dashboard/network/users', {
     token: superAdmin.token,
     body: {
@@ -3708,6 +3822,7 @@ async function run() {
   await twoWayMatchingChecks({ superAdmin, sjpu, cwc, dlsa, ngo: await login('ngo@khozo.org'), parent, fake: fakeAarakshak });
   await candidateAndPhotoChecks({ superAdmin, admin, sjpu, cwc, parent, fake: fakeAarakshak });
   await strictInputChecks({ superAdmin, sjpu });
+  await privacyGapChecks({ superAdmin, sjpu, cci: await login('cci@khozo.org') });
 
   console.log(`API smoke checks passed (${runtimeName} runtime).`);
 }

@@ -97,7 +97,7 @@ export default function OutboxScreen() {
         <EmptyState
           icon="checkmark-done-outline"
           title="Everything has been sent"
-          message="Reports you submit without a connection are saved here until they upload."
+          message="Reports you submit without a connection are saved here until they upload, for up to 72 hours."
         />
       ) : (
         <View style={{ gap: theme.spacing.lg }}>
@@ -107,8 +107,8 @@ export default function OutboxScreen() {
             title={`${pendingCount} waiting${blockedCount ? ` · ${blockedCount} need attention` : ''}`}
             message={
               online
-                ? 'Khozo retries automatically whenever the app opens or the connection returns.'
-                : 'You are offline. Reports stay safely on this phone until you reconnect.'
+                ? 'Khozo retries automatically whenever the app opens or the connection returns. A report not sent within 72 hours is removed from this phone.'
+                : 'You are offline. Reports stay on this phone for up to 72 hours until you reconnect. If a child is in danger now, call 112 or 1098.'
             }
           />
 

@@ -38,6 +38,7 @@ import * as store from '../server/src/store.js';
 import { isPostgres } from '../server/src/db.js';
 import { detectPerson, matchEngineInfo, probeMatchProviders, rankMatches, rankSightingMatches } from '../server/src/match.js';
 import { createFaceIndex } from '../shared/face-index.js';
+import { privacySecrets } from '../shared/privacy.js';
 
 const PORT = Number(process.env.PORT || 4500);
 
@@ -52,6 +53,7 @@ const MOUNTS = [
 
 function buildDeps(env) {
   const auth = createAuth(env, store);
+  const secrets = privacySecrets(env);
 
   return {
     listReports: store.listReports,
@@ -81,6 +83,8 @@ function buildDeps(env) {
     verifyAuditChain: store.verifyAuditChain,
     savePhoto: store.savePhoto,
     readPhoto: store.readPhoto,
+    deletePhoto: store.deletePhoto,
+    rewriteActivity: store.rewriteActivity,
     photoMimeType: store.photoMimeType,
     isPostgres,
 
@@ -91,7 +95,7 @@ function buildDeps(env) {
     passwordChangeRequired: auth.passwordChangeRequired,
     requireRole: auth.requireRole,
 
-    auditPublicRateLimit: createAuditPublicRateLimit(store),
+    auditPublicRateLimit: createAuditPublicRateLimit(store, secrets.rateLimitAuditSalt),
     clientIp,
     fixedWindowRateLimit,
 
@@ -117,10 +121,8 @@ function buildDeps(env) {
       grievanceStatusLimit: env.KHOZO_GRIEVANCE_STATUS_LIMIT,
       smsGatewayUrl: env.KHOZO_SMS_GATEWAY_URL,
       smsApiKey: env.KHOZO_SMS_API_KEY,
-      exportSigning: {
-        keyId: env.KHOZO_EXPORT_SIGNING_KEY_ID,
-        key: env.KHOZO_EXPORT_SIGNING_KEY,
-      },
+      exportSigning: secrets.exportSigning,
+      fieldHashKey: secrets.fieldHashKey,
     },
   };
 }

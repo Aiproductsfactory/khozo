@@ -4,13 +4,14 @@ import { Router } from 'express';
 
 import registerDashboardRoutes from '../../../shared/routes/dashboard.js';
 import { createFaceIndex } from '../../../shared/face-index.js';
+import { privacySecrets } from '../../../shared/privacy.js';
 import {
   listReports, listFoundReports, listActivity, listUsers,
   listAudit, verifyAuditChain, updateFoundReport, updateReport,
   addActivity, addAudit, addUser, findUserByEmail,
   listNotifications, markNotificationsRead, addNotification,
   findReport, findFoundReport,
-  readPhoto,
+  readPhoto, deletePhoto, rewriteActivity,
 } from '../store.js';
 import { isPostgres } from '../db.js';
 import { authRequired, passwordChangeRequired, publicUser, requireRole } from '../auth.js';
@@ -23,6 +24,7 @@ export default registerDashboardRoutes(Router(), {
   addActivity, addAudit, addUser, findUserByEmail,
   listNotifications, markNotificationsRead,
   readPhoto, probeMatchProviders,
+  deletePhoto, rewriteActivity,
   // The re-match batch (shared/routes/matching-admin.js) runs the forward
   // search, links, and alerts a newly linked case's officers.
   findReport, findFoundReport, addNotification,
@@ -37,9 +39,9 @@ export default registerDashboardRoutes(Router(), {
     directoryLimit: process.env.KHOZO_DIRECTORY_LIMIT,
     smsGatewayUrl: process.env.KHOZO_SMS_GATEWAY_URL,
     smsApiKey: process.env.KHOZO_SMS_API_KEY,
-    exportSigning: {
-      keyId: process.env.KHOZO_EXPORT_SIGNING_KEY_ID,
-      key: process.env.KHOZO_EXPORT_SIGNING_KEY,
-    },
+    // Set explicitly, or derived from the JWT secret; never a constant from
+    // this repository (shared/privacy.js).
+    exportSigning: privacySecrets(process.env).exportSigning,
+    fieldHashKey: privacySecrets(process.env).fieldHashKey,
   },
 });

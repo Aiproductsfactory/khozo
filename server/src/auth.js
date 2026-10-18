@@ -34,7 +34,16 @@ export const ROLE_RANK = {
 };
 
 export function signToken(user) {
-  return jwt.sign({ sub: user.id, role: user.role }, SECRET, { expiresIn: TOKEN_TTL });
+  return jwt.sign({ sub: user.id, role: user.role, tv: Number(user.tokenVersion || 0) }, SECRET, { expiresIn: TOKEN_TTL });
+}
+
+/**
+ * Whether a token is still current for its user: a password change (or "sign
+ * out everywhere") bumps the user's token version (DPIA G9). Mirrors
+ * worker/src/http/express-compat.js.
+ */
+function tokenIsCurrent(payload, user) {
+  return Number(payload?.tv || 0) === Number(user?.tokenVersion || 0);
 }
 
 export function publicUser(u) {
@@ -52,6 +61,7 @@ export function authRequired(req, res, next) {
     const payload = jwt.verify(token, SECRET);
     const user = findUserById(payload.sub);
     if (!user) return res.status(401).json({ error: 'User no longer exists' });
+    if (!tokenIsCurrent(payload, user)) return res.status(401).json({ error: 'This session was signed out. Sign in again.' });
     req.user = user;
     next();
   } catch {
@@ -66,7 +76,7 @@ export function optionalAuth(req, res, next) {
   try {
     const payload = jwt.verify(token, SECRET);
     const user = findUserById(payload.sub);
-    if (user) req.user = user;
+    if (user && tokenIsCurrent(payload, user)) req.user = user;
   } catch {
     // Ignore token errors for optional auth
   }

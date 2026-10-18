@@ -800,6 +800,23 @@ export function addActivity(entry) {
   persistRow('activity', row);
 }
 
+/**
+ * Rewrites activity rows in place: `fn(row)` returns the fields to change, or
+ * null. Used when a record is anonymised, so the feed stops naming the person
+ * (shared/routes/dashboard.js). Returns how many rows changed.
+ */
+export function rewriteActivity(fn) {
+  let changed = 0;
+  for (const row of db.activity) {
+    const patch = fn(row);
+    if (!patch) continue;
+    Object.assign(row, patch);
+    persistRow('activity', row);
+    changed += 1;
+  }
+  return changed;
+}
+
 // --- Operational audit log ---
 export const listAudit = () => db.audit;
 export function verifyAuditChain(rows = db.audit) {

@@ -77,7 +77,7 @@
   "Edit details": "विवरण संपादित करें",
   "Upload child image": "बच्चे की फ़ोटो अपलोड करें",
   "A clear, front-facing face photo works best.": "साफ़, सामने से लिया गया चेहरे का फ़ोटो सबसे अच्छा रहता है।",
-  "I confirm this photo may be used for missing-child investigation, police/CWC review, and face-match search. Photo metadata will be retained for the case lifecycle.": "मैं पुष्टि करता/करती हूँ कि इस फ़ोटो का उपयोग लापता बच्चे की जाँच, पुलिस/CWC समीक्षा और चेहरा-मिलान खोज के लिए किया जा सकता है। फ़ोटो का मेटाडेटा मामले की पूरी अवधि तक सुरक्षित रखा जाएगा।",
+  "I confirm this photo may be used for missing-child investigation, police/CWC review, and face-match search. The photo is kept for 10 years from registration, or longer while the case is open.": "मैं पुष्टि करता/करती हूँ कि इस फ़ोटो का उपयोग लापता बच्चे की जाँच, पुलिस/CWC समीक्षा और चेहरा-मिलान खोज के लिए किया जा सकता है। फ़ोटो पंजीकरण से 10 वर्ष तक रखी जाएगी, और मामला खुला रहने पर उससे अधिक समय तक।",
   "Child name": "बच्चे का नाम",
   "Child Aadhar no.": "बच्चे का आधार नंबर",
   "Gender": "लिंग",
