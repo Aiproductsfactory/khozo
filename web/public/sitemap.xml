@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The public pages, in every interface language (?lang=…, read by
+  web/src/i18n.jsx). No case or person has a page of its own: the public is
+  never shown who is missing (shared/case-domain.js isPublicAppeal).
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
+  <url>
+    <loc>https://khozo.org/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://khozo.org/" />
+    <xhtml:link rel="alternate" hreflang="gu" href="https://khozo.org/?lang=gu" />
+    <xhtml:link rel="alternate" hreflang="hi" href="https://khozo.org/?lang=hi" />
+    <xhtml:link rel="alternate" hreflang="mr" href="https://khozo.org/?lang=mr" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://khozo.org/" />
+  </url>
+  <url>
+    <loc>https://khozo.org/report</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://khozo.org/report" />
+    <xhtml:link rel="alternate" hreflang="gu" href="https://khozo.org/report?lang=gu" />
+    <xhtml:link rel="alternate" hreflang="hi" href="https://khozo.org/report?lang=hi" />
+    <xhtml:link rel="alternate" hreflang="mr" href="https://khozo.org/report?lang=mr" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://khozo.org/report" />
+  </url>
+  <url>
+    <loc>https://khozo.org/track-case</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://khozo.org/track-case" />
+    <xhtml:link rel="alternate" hreflang="gu" href="https://khozo.org/track-case?lang=gu" />
+    <xhtml:link rel="alternate" hreflang="hi" href="https://khozo.org/track-case?lang=hi" />
+    <xhtml:link rel="alternate" hreflang="mr" href="https://khozo.org/track-case?lang=mr" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://khozo.org/track-case" />
+  </url>
+  <url>
+    <loc>https://khozo.org/track-sighting</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://khozo.org/track-sighting" />
+    <xhtml:link rel="alternate" hreflang="gu" href="https://khozo.org/track-sighting?lang=gu" />
+    <xhtml:link rel="alternate" hreflang="hi" href="https://khozo.org/track-sighting?lang=hi" />
+    <xhtml:link rel="alternate" hreflang="mr" href="https://khozo.org/track-sighting?lang=mr" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://khozo.org/track-sighting" />
+  </url>
+  <url>
+    <loc>https://khozo.org/services</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://khozo.org/services" />
+    <xhtml:link rel="alternate" hreflang="gu" href="https://khozo.org/services?lang=gu" />
+    <xhtml:link rel="alternate" hreflang="hi" href="https://khozo.org/services?lang=hi" />
+    <xhtml:link rel="alternate" hreflang="mr" href="https://khozo.org/services?lang=mr" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://khozo.org/services" />
+  </url>
+  <url>
+    <loc>https://khozo.org/register</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://khozo.org/register" />
+    <xhtml:link rel="alternate" hreflang="gu" href="https://khozo.org/register?lang=gu" />
+    <xhtml:link rel="alternate" hreflang="hi" href="https://khozo.org/register?lang=hi" />
+    <xhtml:link rel="alternate" hreflang="mr" href="https://khozo.org/register?lang=mr" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://khozo.org/register" />
+  </url>
+  <url>
+    <loc>https://khozo.org/grievance</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.4</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://khozo.org/grievance" />
+    <xhtml:link rel="alternate" hreflang="gu" href="https://khozo.org/grievance?lang=gu" />
+    <xhtml:link rel="alternate" hreflang="hi" href="https://khozo.org/grievance?lang=hi" />
+    <xhtml:link rel="alternate" hreflang="mr" href="https://khozo.org/grievance?lang=mr" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://khozo.org/grievance" />
+  </url>
+  <url>
+    <loc>https://khozo.org/bulletins</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.4</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://khozo.org/bulletins" />
+    <xhtml:link rel="alternate" hreflang="gu" href="https://khozo.org/bulletins?lang=gu" />
+    <xhtml:link rel="alternate" hreflang="hi" href="https://khozo.org/bulletins?lang=hi" />
+    <xhtml:link rel="alternate" hreflang="mr" href="https://khozo.org/bulletins?lang=mr" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://khozo.org/bulletins" />
+  </url>
+</urlset>

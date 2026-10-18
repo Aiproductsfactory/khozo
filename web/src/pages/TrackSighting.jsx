@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api.js';
-import { Logo } from '../components.jsx';
 import { categoryLabel, fmtDate } from '../lib.jsx';
-import { LanguageSwitcher, msg, useT } from '../i18n.jsx';
+import { msg, useT } from '../i18n.jsx';
+import { PublicFooter, PublicHeader, usePageMeta } from '../PublicChrome.jsx';
 import { forgetReceipt, listReceipts } from '../myReports.js';
 import ReceiptActions from '../ReceiptActions.jsx';
 import InstallPrompt from '../InstallPrompt.jsx';
@@ -40,6 +40,7 @@ function StageTrack({ stage }) {
 }
 
 export default function TrackSighting() {
+  usePageMeta({ title: msg('Track a report'), description: msg('Check what has happened to a sighting you sent to Khozo, with your receipt number.') });
   const t = useT();
   const [search] = useSearchParams();
   const [receipt, setReceipt] = useState(() => search.get('receipt') || '');
@@ -86,19 +87,10 @@ export default function TrackSighting() {
   const stage = STAGES.find((s) => s.id === status?.stage) || STAGES[0];
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="border-b border-black/5 bg-white">
-        <div className="mx-auto flex max-w-3xl items-center justify-between gap-2 px-4 py-3 sm:gap-3 sm:px-6 sm:py-4">
-          <Logo />
-          <div className="flex items-center gap-1 sm:gap-2">
-            <LanguageSwitcher />
-            <Link to="/report" className="btn-primary hidden sm:inline-flex">{t('Submit sighting')}</Link>
-            <Link to="/" className="btn-ghost">{t('Home')}</Link>
-          </div>
-        </div>
-      </header>
+    <div className="flex min-h-screen flex-col bg-[#f6f8f5]">
+      <PublicHeader />
 
-      <main className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-10">
+      <main className="mx-auto w-full flex-1 max-w-3xl px-4 py-6 sm:px-6 sm:py-10">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-khozo">{t('Receipt lookup')}</p>
           <h1 className="mt-1 text-3xl font-bold text-ink">{t('Track a report I made')}</h1>
@@ -206,6 +198,7 @@ export default function TrackSighting() {
           <Link to="/track-case" className="font-semibold text-khozo hover:underline">{t('Track my case')}</Link>
         </p>
       </main>
+      <PublicFooter />
     </div>
   );
 }

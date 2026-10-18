@@ -35,26 +35,27 @@ export const PATTERN_ROLES = ['super_admin', 'admin', 'crime_bureau', 'state_nod
 /**
  * Sidebar entries, grouped so a long list reads as a few short ones.
  *
- * Every item carries its own icon. Previously only five names were mapped and
+ * Every item carries its own icon, named here and drawn by NavIcon.jsx.
+ * Previously only five names were mapped and
  * the rest fell through to a generic blue diamond, so eight of thirteen entries
  * were visually identical and the sidebar could only be read by its text.
  */
 export const DASHBOARD_NAV = [
-  { to: '/app', end: true, label: msg('Overview'), short: msg('Overview'), icon: '📊', group: 'Casework', roles: [...OPERATIONAL_ROLES, 'parent', 'ngo'] },
-  { to: '/app/cases', label: msg('Cases & FIRs'), short: msg('Cases'), icon: '📁', group: 'Casework', roles: [...OPERATIONAL_ROLES, 'parent', 'ngo'] },
-  { to: '/app/register', label: msg('Register child / FIR'), short: msg('New case'), icon: '➕', group: 'Casework', roles: CASE_CREATE_ROLES },
-  { to: '/app/bulk-import', label: msg('Bulk import'), icon: '📥', group: 'Casework', roles: BULK_IMPORT_ROLES },
-  { to: '/app/matches', label: msg('Matches'), short: msg('Matches'), icon: '🧬', group: 'Review', roles: OPERATIONAL_ROLES },
-  { to: '/app/sightings', label: msg('Sightings'), short: msg('Sightings'), icon: '📷', group: 'Review', roles: OPERATIONAL_ROLES },
-  { to: '/app/cci-register', label: msg('CCI register'), icon: '🏠', group: 'Review', roles: CCI_REGISTER_ROLES },
-  { to: '/app/grievances', label: msg('Grievances'), icon: '💬', group: 'Review', roles: OPERATIONAL_ROLES },
-  { to: '/app/patterns', label: msg('Trafficking patterns'), icon: '🕸️', group: 'Oversight', roles: PATTERN_ROLES },
-  { to: '/app/mis', label: msg('MIS report'), icon: '📈', group: 'Oversight', roles: OPERATIONAL_ROLES },
-  { to: '/app/audit', label: msg('Audit log'), icon: '🔒', group: 'Oversight', roles: OPERATIONAL_ROLES },
-  { to: '/app/privacy', label: msg('Privacy review'), icon: '🛡️', group: 'Oversight', roles: OPERATIONAL_ROLES },
-  { to: '/app/fraud', label: msg('Public abuse'), icon: '🚩', group: 'Oversight', roles: ABUSE_REVIEW_ROLES },
-  { to: '/app/network', label: msg('Network'), icon: '🌐', group: 'Administration', roles: NETWORK_ROLES },
-  { to: '/app/simulations', label: msg('Simulations & tests'), icon: '🧪', group: 'Administration', roles: ['super_admin', 'admin'] },
+  { to: '/app', end: true, label: msg('Overview'), short: msg('Overview'), icon: 'overview', group: 'Casework', roles: [...OPERATIONAL_ROLES, 'parent', 'ngo'] },
+  { to: '/app/cases', label: msg('Cases & FIRs'), short: msg('Cases'), icon: 'cases', group: 'Casework', roles: [...OPERATIONAL_ROLES, 'parent', 'ngo'] },
+  { to: '/app/register', label: msg('Register child / FIR'), short: msg('New case'), icon: 'register', group: 'Casework', roles: CASE_CREATE_ROLES },
+  { to: '/app/bulk-import', label: msg('Bulk import'), icon: 'import', group: 'Casework', roles: BULK_IMPORT_ROLES },
+  { to: '/app/matches', label: msg('Matches'), short: msg('Matches'), icon: 'matches', group: 'Review', roles: OPERATIONAL_ROLES },
+  { to: '/app/sightings', label: msg('Sightings'), short: msg('Sightings'), icon: 'sightings', group: 'Review', roles: OPERATIONAL_ROLES },
+  { to: '/app/cci-register', label: msg('CCI register'), icon: 'cci', group: 'Review', roles: CCI_REGISTER_ROLES },
+  { to: '/app/grievances', label: msg('Grievances'), icon: 'grievances', group: 'Review', roles: OPERATIONAL_ROLES },
+  { to: '/app/patterns', label: msg('Trafficking patterns'), icon: 'patterns', group: 'Oversight', roles: PATTERN_ROLES },
+  { to: '/app/mis', label: msg('MIS report'), icon: 'mis', group: 'Oversight', roles: OPERATIONAL_ROLES },
+  { to: '/app/audit', label: msg('Audit log'), icon: 'audit', group: 'Oversight', roles: OPERATIONAL_ROLES },
+  { to: '/app/privacy', label: msg('Privacy review'), icon: 'privacy', group: 'Oversight', roles: OPERATIONAL_ROLES },
+  { to: '/app/fraud', label: msg('Public abuse'), icon: 'fraud', group: 'Oversight', roles: ABUSE_REVIEW_ROLES },
+  { to: '/app/network', label: msg('Network'), icon: 'network', group: 'Administration', roles: NETWORK_ROLES },
+  { to: '/app/simulations', label: msg('Simulations & tests'), icon: 'simulations', group: 'Administration', roles: ['super_admin', 'admin'] },
 ];
 
 /**

@@ -1,6 +1,6 @@
-import { Link } from 'react-router-dom';
-import { Logo, PublicActions } from '../components.jsx';
-import { LanguageSwitcher, useT } from '../i18n.jsx';
+import { PublicActions } from '../components.jsx';
+import { useT, msg } from '../i18n.jsx';
+import { PublicFooter, PublicHeader, usePageMeta } from '../PublicChrome.jsx';
 
 /*
  * /child/:id was the shareable page for one missing child. Case pages are no
@@ -12,20 +12,13 @@ import { LanguageSwitcher, useT } from '../i18n.jsx';
  * server, and nothing about any person is fetched or rendered here.
  */
 export default function ChildCase() {
+  usePageMeta({ title: msg('Case pages are not public'), noindex: true });
   const t = useT();
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="border-b border-black/5 bg-white">
-        <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 py-4 sm:px-6">
-          <Logo />
-          <div className="flex items-center gap-2">
-            <LanguageSwitcher />
-            <Link to="/" className="btn-ghost">{t('Home')}</Link>
-          </div>
-        </div>
-      </header>
+    <div className="flex min-h-screen flex-col bg-[#f6f8f5]">
+      <PublicHeader />
 
-      <main className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-10">
+      <main className="mx-auto w-full flex-1 max-w-3xl px-4 py-6 sm:px-6 sm:py-10">
         <div className="rounded-2xl border border-black/5 bg-white p-6 sm:p-8">
           <h1 className="text-2xl font-bold text-ink">{t('Case pages are not public')}</h1>
           <p className="mt-3 text-gray-600">
@@ -42,6 +35,7 @@ export default function ChildCase() {
           {t('If a child appears to be in immediate danger, call {childline} or {police} first.', { childline: '1098', police: '112' })}
         </p>
       </main>
+      <PublicFooter />
     </div>
   );
 }

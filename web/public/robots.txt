@@ -1,0 +1,9 @@
+# Khozo never publishes the name or photograph of a missing person, so there
+# is nothing about any person here to index. The officer console and the API
+# are private; old /child/* case links and the sign-in pages carry noindex.
+User-agent: *
+Allow: /
+Disallow: /app
+Disallow: /api/
+
+Sitemap: https://khozo.org/sitemap.xml

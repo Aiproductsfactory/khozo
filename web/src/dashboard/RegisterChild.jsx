@@ -7,6 +7,7 @@ import { genderLabel, isAdultCategory, PERSON_CATEGORY_OPTIONS, PhoneLink } from
 import { preparePhoto } from '../photoPrep.js';
 import DistrictPicker from '../DistrictPicker.jsx';
 import { DASHBOARD_ROUTE_ROLES } from './routes.js';
+import NavIcon from './NavIcon.jsx';
 
 // What each "Who is missing?" choice is called in the page title.
 const REGISTER_TITLES = {
@@ -389,10 +390,10 @@ export default function RegisterChild() {
             <input ref={fileRef} type="file" accept="image/*" onChange={onFile} className="hidden" />
             <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
               <button type="button" className="btn-ghost" onClick={() => cameraRef.current?.click()}>
-                <span aria-hidden="true">📷</span> {t('Take a photo')}
+                <NavIcon name="sightings" className="h-4 w-4 shrink-0" /> {t('Take a photo')}
               </button>
               <button type="button" className="btn-ghost" onClick={() => fileRef.current?.click()}>
-                <span aria-hidden="true">🖼️</span> {adult ? t('Upload photo') : t('Upload child image')}
+                <NavIcon name="upload" className="h-4 w-4 shrink-0" /> {adult ? t('Upload photo') : t('Upload child image')}
               </button>
             </div>
             <p className="mt-1 text-xs text-gray-400">{t('A clear, front-facing face photo works best.')}</p>

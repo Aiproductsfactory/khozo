@@ -16,6 +16,8 @@ import { ActionMessage, ActionToast, useAction } from './useAction.jsx';
 import { ConfirmMatchDialog, FamilyContactList, FamilyContactPanel, ReopenCasePanel, faceIndexFlag, photoCheckFlag } from './Reunite.jsx';
 import { preparePhoto } from '../photoPrep.js';
 import { RISK_BADGES, riskReasonLabel } from './riskLabels.js';
+import { CASE_CREATE_ROLES } from './routes.js';
+import NavIcon from './NavIcon.jsx';
 
 /** "Trafficking risk: high" on a case row, when the case was raised. */
 function RiskBadge({ risk, className = '' }) {
@@ -311,6 +313,22 @@ function toMs(value) {
   return Number.isFinite(ms) ? ms : 0;
 }
 
+/*
+ * How the register can be ordered. Newest registered stays the default; the
+ * longest missing is how a review of stale cases starts, and the most recently
+ * missing is where the first hours are still being spent.
+ */
+const missingAt = (r) => toMs(r.dateOfMissing || r.createdAt);
+const SORTS = {
+  registered: { label: msg('Newest registered'), compare: (a, b) => toMs(b.createdAt) - toMs(a.createdAt) },
+  missing_recent: { label: msg('Missing most recently'), compare: (a, b) => missingAt(b) - missingAt(a) },
+  missing_longest: { label: msg('Missing longest'), compare: (a, b) => missingAt(a) - missingAt(b) },
+};
+
+// Rows drawn at a time. A state register runs to thousands of cases, and each
+// row's photograph is a request of its own: all of them at once froze a phone.
+const PAGE_SIZE = 50;
+
 // The deck's "Basic Table": the operational register of children, scoped by role.
 export default function Cases() {
   const t = useT();
@@ -332,6 +350,11 @@ export default function Cases() {
   const [familyPhoneHint, setFamilyPhoneHint] = useState({ id: '', phone: '' });
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
+  const [sort, setSort] = useState('registered');
+  // Only the cases with a possible match waiting for an officer's decision.
+  const [matchOnly, setMatchOnly] = useState(false);
+  const [limit, setLimit] = useState(PAGE_SIZE);
+  const loadRun = useRef(0);
   // A link can open the list filtered (/app/cases?status=intake_pending, from
   // the Overview's "Intakes to verify").
   const [status, setStatus] = useState(() => {
@@ -516,6 +539,7 @@ export default function Cases() {
         if (districtFilter && r.district !== districtFilter) return false;
         if (genderFilter && r.gender !== genderFilter) return false;
         if (categoryFilter && personCategoryOf(r) !== categoryFilter) return false;
+        if (matchOnly && !r.pendingMatch) return false;
         if (from || to) {
           const when = new Date(r.dateOfMissing || r.createdAt || 0).getTime();
           if (!Number.isFinite(when)) return false;
@@ -525,9 +549,13 @@ export default function Cases() {
         return true;
       })
       .slice()
-      .sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
-  }, [rows, stateFilter, districtFilter, genderFilter, categoryFilter, fromDate, toDate]);
-  const activeFilters = [stateFilter, districtFilter, genderFilter, categoryFilter, fromDate, toDate].filter(Boolean).length;
+      .sort((SORTS[sort] || SORTS.registered).compare);
+  }, [rows, stateFilter, districtFilter, genderFilter, categoryFilter, fromDate, toDate, sort, matchOnly]);
+  const pageRows = visibleRows.slice(0, limit);
+  const matchWaiting = useMemo(() => rows.filter((r) => r.pendingMatch).length, [rows]);
+  // A new search or filter starts again from the top of the list.
+  useEffect(() => setLimit(PAGE_SIZE), [rows, stateFilter, districtFilter, genderFilter, categoryFilter, fromDate, toDate, sort, matchOnly]);
+  const activeFilters = [stateFilter, districtFilter, genderFilter, categoryFilter, fromDate, toDate, matchOnly].filter(Boolean).length;
   const canWorkflow = WORKFLOW_ROLES.includes(user.role);
   const canAssignCase = CASE_ASSIGN_ROLES.includes(user.role);
   const canRecordInvestigationChecklist = INVESTIGATION_CHECKLIST_ROLES.includes(user.role);
@@ -562,12 +590,15 @@ export default function Cases() {
   // The register itself. A failure is said out loud: an empty table and a
   // table that could not load must not look the same.
   const load = () => {
+    const run = ++loadRun.current;
     const params = new URLSearchParams();
     if (status) params.set('status', status);
     if (q) params.set('q', q);
     return api.get(`/reports?${params}`)
       .then((d) => {
         const fresh = asList(d?.reports).filter((r) => r && typeof r === 'object' && r.id);
+        // A slower reply to an earlier search must not replace a newer one.
+        if (run !== loadRun.current) return fresh;
         setRows(fresh);
         setLoadError('');
         // The open case keeps the list's view of its unconfirmed sighting.
@@ -579,11 +610,16 @@ export default function Cases() {
         return fresh;
       })
       .catch((e) => {
-        setLoadError(txt(e?.message) || 'Request failed');
+        if (run === loadRun.current) setLoadError(txt(e?.message) || 'Request failed');
         return null;
       });
   };
-  useEffect(() => { load(); }, [status]);
+  // The search runs as the officer types, a moment after the last key, rather
+  // than only on Enter; the status filter applies at once.
+  useEffect(() => {
+    const id = setTimeout(load, q ? 300 : 0);
+    return () => clearTimeout(id);
+  }, [status, q]);
 
   // Arriving from an alert or a sighting card (/app/cases?id=…) opens that
   // case rather than leaving the officer to find it in the list.
@@ -1007,27 +1043,42 @@ export default function Cases() {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="text-2xl font-bold">{t('Cases & FIRs')}</h2>
           <p className="text-sm text-gray-500">
             {rows.length === 1 ? t('1 record in your scope') : t('{n} records in your scope', { n: rows.length })}
           </p>
         </div>
-        <div className="grid w-full grid-cols-[minmax(0,1fr)_auto] gap-2 sm:flex sm:w-auto sm:flex-wrap">
-          <form role="search" className="col-span-2 sm:col-span-1" onSubmit={(e) => { e.preventDefault(); load(); }}>
+        {CASE_CREATE_ROLES.includes(user.role) && (
+          <Link to="/app/register" className="btn-primary hidden sm:inline-flex">
+            <NavIcon name="plus" className="h-4 w-4 shrink-0" /> {t('Register a missing person')}
+          </Link>
+        )}
+      </div>
+
+      {/*
+        One toolbar: search and status on the first row, then area, gender and
+        date, applied to the rows already in hand. A caseload is searched by
+        "girls, this district, last fortnight" far more often than by name.
+        On a phone the second row folds away behind one button.
+      */}
+      <div className="card p-3 sm:p-4">
+        <div className="flex flex-wrap gap-2 sm:flex-nowrap sm:gap-3">
+          <form role="search" className="relative min-w-0 basis-full sm:flex-1 sm:basis-auto" onSubmit={(e) => { e.preventDefault(); load(); }}>
+            <NavIcon name="search" className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-gray-400" />
             <input
               type="search"
               enterKeyHint="search"
               autoComplete="off"
-              className="field w-full sm:w-56"
+              className="field field-icon"
               placeholder={t('Search name, FIR, place...')}
               aria-label={t('Search name, FIR, place...')}
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
           </form>
-          <select className="field w-full sm:w-40" value={status} onChange={(e) => setStatus(e.target.value)} aria-label={t('Status')}>
+          <select className="field min-w-0 flex-1 sm:w-48 sm:flex-none" value={status} onChange={(e) => setStatus(e.target.value)} aria-label={t('Status')}>
             <option value="">{t('All statuses')}</option>
             <option value="intake_pending">{t('Intake pending')}</option>
             <option value="missing">{t('Missing')}</option>
@@ -1035,7 +1086,6 @@ export default function Cases() {
             <option value="found">{t('Found')}</option>
             <option value="closed">{t('Closed')}</option>
           </select>
-          {/* On a phone the area/date filters fold away behind one button. */}
           <button
             type="button"
             onClick={() => setFiltersOpen((v) => !v)}
@@ -1044,6 +1094,77 @@ export default function Cases() {
           >
             {activeFilters ? t('Filters ({n})', { n: activeFilters }) : t('Filters')}
           </button>
+        </div>
+
+        <div className={`mt-3 grid-cols-2 gap-3 border-t border-black/5 pt-3 sm:grid sm:grid-cols-3 xl:grid-cols-6 ${filtersOpen ? 'grid' : 'hidden'}`}>
+          <div className="min-w-0">
+            <label className="label">{t('State')}</label>
+            <select className="field" value={stateFilter} onChange={(e) => setStateFilter(e.target.value)}>
+              <option value="">{t('Any state')}</option>
+              {facets.states.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div className="min-w-0">
+            <label className="label">{t('District')}</label>
+            <select className="field" value={districtFilter} onChange={(e) => setDistrictFilter(e.target.value)}>
+              <option value="">{t('Any district')}</option>
+              {facets.districts.map((d) => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </div>
+          <div className="min-w-0">
+            <label className="label">{t('Gender')}</label>
+            <select className="field" value={genderFilter} onChange={(e) => setGenderFilter(e.target.value)}>
+              <option value="">{t('Any')}</option>
+              <option value="Male">{t('Male')}</option>
+              <option value="Female">{t('Female')}</option>
+              <option value="Other">{t('Other')}</option>
+            </select>
+          </div>
+          <div className="min-w-0">
+            <label className="label">{t('Who is missing')}</label>
+            <select className="field" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+              <option value="">{t('Anyone')}</option>
+              {PERSON_CATEGORY_OPTIONS.map((option) => <option key={option.id} value={option.id}>{t(option.label)}</option>)}
+            </select>
+          </div>
+          <div className="min-w-0">
+            <label className="label">{t('Missing from')}</label>
+            <input type="date" className="field" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+          </div>
+          <div className="min-w-0">
+            <label className="label">{t('Missing to')}</label>
+            <input type="date" className="field" value={toDate} onChange={(e) => setToDate(e.target.value)} />
+          </div>
+        </div>
+
+        {/*
+          The cases waiting on an officer's decision, a tap away, and the order
+          to read the register in. "Possible match" is the engine's proposal,
+          never an identity: the toggle finds the cases to check, not answers.
+        */}
+        <div className={`mt-3 flex-wrap items-center gap-x-4 gap-y-2 border-t border-black/5 pt-3 ${filtersOpen ? 'flex' : 'hidden sm:flex'}`}>
+          <label className={`inline-flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm font-medium ring-1 ${matchOnly ? 'bg-amber-50 text-amber-900 ring-amber-300' : 'text-gray-600 ring-black/10 hover:bg-gray-50'}`}>
+            <input type="checkbox" checked={matchOnly} onChange={(e) => setMatchOnly(e.target.checked)} />
+            {t('Possible match waiting ({n})', { n: matchWaiting })}
+          </label>
+          <label className="inline-flex items-center gap-2 text-sm text-gray-600">
+            <span className="shrink-0">{t('Sort')}</span>
+            <select className="field min-w-0 sm:w-52" value={sort} onChange={(e) => setSort(e.target.value)}>
+              {Object.entries(SORTS).map(([key, option]) => <option key={key} value={key}>{t(option.label)}</option>)}
+            </select>
+          </label>
+          <p className="text-xs font-medium text-gray-500 sm:ml-auto">
+            {t('{shown} of {total} shown', { shown: visibleRows.length, total: rows.length })}
+          </p>
+          {activeFilters > 0 && (
+            <button
+              type="button"
+              onClick={() => { setStateFilter(''); setDistrictFilter(''); setGenderFilter(''); setCategoryFilter(''); setFromDate(''); setToDate(''); setMatchOnly(false); }}
+              className="px-2 text-xs font-semibold text-khozo-dark hover:underline"
+            >
+              {t('Clear filters')}
+            </button>
+          )}
         </div>
       </div>
 
@@ -1055,72 +1176,12 @@ export default function Cases() {
       )}
 
       {/*
-        Area, gender and date, applied to the rows already in hand. A caseload
-        is searched by "girls, this district, last fortnight" far more often
-        than by name, and there was no way to ask that.
-      */}
-      <div className={`card grid-cols-2 items-end gap-3 p-4 sm:flex sm:flex-wrap ${filtersOpen ? 'grid' : 'hidden'}`}>
-        <div>
-          <label className="label">{t('State')}</label>
-          <select className="field w-full sm:w-44" value={stateFilter} onChange={(e) => setStateFilter(e.target.value)}>
-            <option value="">{t('Any state')}</option>
-            {facets.states.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="label">{t('District')}</label>
-          <select className="field w-full sm:w-44" value={districtFilter} onChange={(e) => setDistrictFilter(e.target.value)}>
-            <option value="">{t('Any district')}</option>
-            {facets.districts.map((d) => <option key={d} value={d}>{d}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="label">{t('Gender')}</label>
-          <select className="field w-full sm:w-32" value={genderFilter} onChange={(e) => setGenderFilter(e.target.value)}>
-            <option value="">{t('Any')}</option>
-            <option value="Male">{t('Male')}</option>
-            <option value="Female">{t('Female')}</option>
-            <option value="Other">{t('Other')}</option>
-          </select>
-        </div>
-        <div>
-          <label className="label">{t('Who is missing')}</label>
-          <select className="field w-full sm:w-36" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
-            <option value="">{t('Anyone')}</option>
-            {PERSON_CATEGORY_OPTIONS.map((option) => <option key={option.id} value={option.id}>{t(option.label)}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="label">{t('Missing from')}</label>
-          <input type="date" className="field w-full sm:w-40" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
-        </div>
-        <div>
-          <label className="label">{t('Missing to')}</label>
-          <input type="date" className="field w-full sm:w-40" value={toDate} onChange={(e) => setToDate(e.target.value)} />
-        </div>
-        <div className="col-span-2 flex items-center justify-between gap-3 sm:ml-auto sm:justify-start">
-          <p className="text-xs font-medium text-gray-500">
-            {t('{shown} of {total} shown', { shown: visibleRows.length, total: rows.length })}
-          </p>
-          {(stateFilter || districtFilter || genderFilter || categoryFilter || fromDate || toDate) && (
-            <button
-              type="button"
-              onClick={() => { setStateFilter(''); setDistrictFilter(''); setGenderFilter(''); setCategoryFilter(''); setFromDate(''); setToDate(''); }}
-              className="px-2 text-xs font-semibold text-khozo hover:underline"
-            >
-              {t('Clear filters')}
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/*
         On a phone each case is a card: who, their status and any match
         waiting, then the facts an officer scans for. The wide register below
         is the same list for a desk screen.
       */}
       <ul className="space-y-3 sm:hidden">
-        {visibleRows.map((r) => (
+        {pageRows.map((r) => (
           <li key={r.id} className="card overflow-hidden">
             <button type="button" className="flex w-full items-start gap-3 p-4 text-left" onClick={() => setSelected(r)}>
               <Avatar name={d(r.childName)} src={r.photoUrl} size={52} />
@@ -1142,7 +1203,7 @@ export default function Cases() {
                 to={`/app/matches?id=${encodeURIComponent(r.pendingMatch.foundReportId)}`}
                 className="mx-4 -mt-1 mb-3 flex min-h-11 items-center rounded-xl bg-amber-100 px-3 py-2 text-sm font-semibold text-amber-800 ring-1 ring-amber-200"
               >
-                {t('Matched — pending verification · {pct}%', { pct: Math.round((Number(r.pendingMatch.score) || 0) * 100) })}
+                {t('Possible match · {pct}% similar · not verified', { pct: Math.round((Number(r.pendingMatch.score) || 0) * 100) })}
                 {r.pendingMatch.corroborated ? ` · ${t('two engines')}` : ''}
                 {r.pendingMatch.notChecked ? ` · ${t('not checked by a second engine')}` : ''}
               </Link>
@@ -1179,95 +1240,127 @@ export default function Cases() {
             </dl>
           </li>
         ))}
-        {rows.length === 0 && (
+        {visibleRows.length === 0 && (
           <li className="card px-4 py-10 text-center text-gray-400">{t('No records found.')}</li>
         )}
       </ul>
 
+      {/*
+        The desk register. Eight columns where there were ten: the found
+        location sits under the status it belongs to, and the place under the
+        date the person went missing. Workflow and source give way below a
+        wide screen; both are in the case panel. A click anywhere on a row
+        opens the case; the name stays a button for the keyboard. On a narrow
+        desk screen the table scrolls sideways and the action stays pinned.
+      */}
       <div className="card hidden overflow-hidden sm:block">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px] text-sm">
+          <table className="w-full min-w-[760px] text-sm">
             <thead>
-              <tr className="border-b border-black/5 bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
+              <tr className="whitespace-nowrap border-b border-black/5 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                 <th className="px-4 py-3">{t('Missing person')}</th>
-                <th className="px-4 py-3">{t('FIR no.')}</th>
                 <th className="px-4 py-3">{t('Status')}</th>
-                <th className="px-4 py-3">{t('Workflow')}</th>
-                <th className="px-4 py-3">{t('Found location')}</th>
-                <th className="px-4 py-3">{t('Parent / contact')}</th>
-                <th className="px-4 py-3">{t('Address')}</th>
+                <th className="px-4 py-3">{t('FIR no.')}</th>
                 <th className="px-4 py-3">{t('Missing since')}</th>
-                <th className="px-4 py-3">{t('Source')}</th>
-                {canAct && <th className="px-4 py-3 text-right">{t('Actions')}</th>}
+                <th className="px-4 py-3">{t('Parent / contact')}</th>
+                <th className="hidden px-4 py-3 xl:table-cell">{t('Workflow')}</th>
+                <th className="hidden px-4 py-3 xl:table-cell">{t('Source')}</th>
+                {canAct && <th className="sticky right-0 bg-slate-50 px-4 py-3 text-right shadow-[-6px_0_6px_-6px_rgb(0_0_0/0.15)]">{t('Actions')}</th>}
               </tr>
             </thead>
             <tbody>
-              {visibleRows.map((r) => (
-                <tr key={r.id} className="border-b border-black/5 last:border-0 hover:bg-gray-50/60">
-                  <td className="px-4 py-3">
+              {pageRows.map((r) => (
+                <tr
+                  key={r.id}
+                  onClick={(e) => { if (!e.target.closest('a, button')) setSelected(r); }}
+                  className="group cursor-pointer border-b border-black/5 align-top transition-colors last:border-0 hover:bg-[#f7fbf1]"
+                >
+                  <td className="min-w-[13rem] px-4 py-3">
                     <button className="flex items-center gap-3 text-left" onClick={() => setSelected(r)}>
-                      <Avatar name={d(r.childName)} src={r.photoUrl} size={38} />
-                      <div>
-                        <p className="font-semibold capitalize">{d(r.childName)}</p>
-                        <p className="flex flex-wrap items-center gap-1.5 text-xs text-gray-400">
+                      <Avatar name={d(r.childName)} src={r.photoUrl} size={40} />
+                      <div className="min-w-0">
+                        <p className="font-semibold capitalize text-gray-900">{d(r.childName)}</p>
+                        <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-gray-500">
                           <CategoryBadge category={personCategoryOf(r)} />
-                          <span>{genderLabel(r.gender, personCategoryOf(r))} / {t('age {age}', { age: txt(r.age) || '-' })}</span>
+                          <span className="whitespace-nowrap">{genderLabel(r.gender, personCategoryOf(r))} / {t('age {age}', { age: txt(r.age) || '-' })}</span>
                         </p>
                       </div>
                     </button>
                   </td>
-                  <td className="px-4 py-3 text-gray-600">{d(r.firNo) || <span className="text-gray-300">-</span>}</td>
-                  <td className="px-4 py-3">
-                    <StatusBadge status={r.status} />
-                    <RiskBadge risk={r.traffickingRisk} className="ml-1" />
+                  <td className="min-w-[11rem] px-4 py-3">
+                    <div className="flex flex-wrap items-center gap-1">
+                      <StatusBadge status={r.status} />
+                      <RiskBadge risk={r.traffickingRisk} />
+                    </div>
                     {/* An unconfirmed match is the most urgent fact about a case and
                         it does not change the case's status; without this line the
                         row reads "Missing" while the Matches queue holds a 71%. */}
                     {r.pendingMatch ? (
                       <Link
                         to={`/app/matches?id=${encodeURIComponent(r.pendingMatch.foundReportId)}`}
-                        className="mt-1 inline-block whitespace-nowrap rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-200 hover:bg-amber-200"
+                        className="mt-1.5 inline-block max-w-[15rem] rounded-lg bg-amber-100 px-2 py-1 text-xs font-semibold leading-snug text-amber-800 ring-1 ring-amber-200 hover:bg-amber-200"
                       >
-                        {t('Matched — pending verification · {pct}%', { pct: Math.round((Number(r.pendingMatch.score) || 0) * 100) })}
+                        {t('Possible match · {pct}% similar · not verified', { pct: Math.round((Number(r.pendingMatch.score) || 0) * 100) })}
                         {r.pendingMatch.corroborated ? ` · ${t('two engines')}` : ''}
                         {r.pendingMatch.notChecked ? ` · ${t('not checked by a second engine')}` : ''}
                       </Link>
                     ) : null}
+                    {d(r.foundLocation) && (
+                      <p className="mt-1 max-w-[15rem] text-xs text-gray-500">
+                        <span className="font-medium text-gray-600">{t('Found location')}:</span> {d(r.foundLocation)}
+                      </p>
+                    )}
                     <div><PhotoCheckChip report={r} /></div>
                   </td>
-                  <td className="px-4 py-3 text-gray-600">{txt(r.workflowStatus) || '-'}</td>
-                  <td className="px-4 py-3 text-gray-600">{d(r.foundLocation) || '-'}</td>
+                  <td className="max-w-[11rem] px-4 py-3 text-gray-700">{d(r.firNo) || <span className="text-gray-300">-</span>}</td>
                   <td className="px-4 py-3">
-                    <p className="text-gray-700">{d(r.parentName) || '-'}</p>
-                    <p className="text-xs text-gray-400"><PhoneLink phone={r.parentPhone} /></p>
+                    <p className="whitespace-nowrap font-medium text-gray-800">{fmtDate(r.dateOfMissing)}</p>
+                    <p className="mt-0.5 max-w-[12rem] text-xs text-gray-500">{d.places(r.district, r.state) || d(r.address) || '-'}</p>
                   </td>
-                  <td className="px-4 py-3 text-gray-600">{d.places(r.district, r.state) || d(r.address) || '-'}</td>
-                  <td className="px-4 py-3 text-gray-600">{fmtDate(r.dateOfMissing)}</td>
-                  <td className="px-4 py-3"><span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs">{roleLabel(r.registeredByRole)}</span></td>
+                  <td className="max-w-[14rem] px-4 py-3">
+                    <p className="text-gray-700">{d(r.parentName) || '-'}</p>
+                    <p className="text-xs"><PhoneLink phone={r.parentPhone} /></p>
+                  </td>
+                  <td className="hidden px-4 py-3 text-gray-600 xl:table-cell">{txt(r.workflowStatus) || <span className="text-gray-300">-</span>}</td>
+                  <td className="hidden px-4 py-3 xl:table-cell"><span className="inline-block whitespace-nowrap rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">{roleLabel(r.registeredByRole)}</span></td>
                   {canAct && (
-                    <td className="px-4 py-3 text-right">
-                      {r.status === 'found' && r.familyInformedAt ? (
-                        <button onClick={() => setSelected(r)} className="text-xs font-medium text-gray-400 hover:underline">
-                          {t('Family informed')}
-                        </button>
-                      ) : r.status === 'found' && !isAdultCase(r) ? (
-                        <button onClick={() => setSelected(r)} className="text-xs font-medium text-khozo hover:underline">
-                          {t('Call the family')}
-                        </button>
-                      ) : (
-                        <button onClick={() => setSelected(r)} className="text-xs font-medium text-khozo hover:underline">{t('Review')}</button>
-                      )}
+                    <td className="sticky right-0 whitespace-nowrap bg-white px-4 py-3 text-right shadow-[-6px_0_6px_-6px_rgb(0_0_0/0.15)] transition-colors group-hover:bg-[#f7fbf1]">
+                      <button
+                        onClick={() => setSelected(r)}
+                        className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold ring-1 transition-colors ${
+                          r.status === 'found' && r.familyInformedAt
+                            ? 'text-gray-500 ring-gray-200 hover:bg-gray-50'
+                            : 'text-khozo-dark ring-khozo/30 hover:bg-khozo-light'
+                        }`}
+                      >
+                        {r.status === 'found' && r.familyInformedAt
+                          ? t('Family informed')
+                          : r.status === 'found' && !isAdultCase(r)
+                            ? t('Call the family')
+                            : t('Review')}
+                        <span aria-hidden="true">→</span>
+                      </button>
                     </td>
                   )}
                 </tr>
               ))}
-              {rows.length === 0 && (
-                <tr><td colSpan={canAct ? 10 : 9} className="px-4 py-10 text-center text-gray-400">{t('No records found.')}</td></tr>
+              {visibleRows.length === 0 && (
+                <tr><td colSpan={canAct ? 8 : 7} className="px-4 py-12 text-center text-gray-400">{t('No records found.')}</td></tr>
               )}
             </tbody>
           </table>
         </div>
       </div>
+
+      {/* The rest of a long register, fifty at a time. */}
+      {visibleRows.length > limit && (
+        <div className="flex flex-col items-center gap-2 py-2">
+          <button type="button" className="btn-ghost" onClick={() => setLimit((n) => n + PAGE_SIZE)}>
+            {t('Show {n} more', { n: Math.min(PAGE_SIZE, visibleRows.length - limit) })}
+          </button>
+          <p className="text-xs text-gray-500">{t('{shown} of {total} shown', { shown: pageRows.length, total: visibleRows.length })}</p>
+        </div>
+      )}
 
       {/*
         The case opens as a panel on a desk screen and as a full-screen sheet
@@ -1281,7 +1374,7 @@ export default function Cases() {
             role="dialog"
             aria-modal="true"
             aria-label={d(selected.childName) || selected.id}
-            className="animate-sheet-in h-full w-full max-w-md overflow-y-auto overscroll-contain bg-white shadow-xl sm:animate-none"
+            className="animate-sheet-in h-full w-full max-w-lg overflow-y-auto overscroll-contain bg-white shadow-xl sm:animate-none"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="sticky top-0 z-10 flex items-center gap-1 border-b border-black/5 bg-white/95 px-2 py-1 backdrop-blur sm:hidden">
@@ -1300,51 +1393,76 @@ export default function Cases() {
             </div>
             <div className="p-4 sm:p-6">
             <ErrorBoundary resetKey={selected.id}>
+            {/*
+              The photograph first and large enough to compare a face with:
+              it is what an officer checks a person against. Then the record
+              in four groups — who, when and where, family, the case itself —
+              where it was one grid of twenty equal fields. A blank stays
+              visible, muted: "no FIR number" is itself something to act on.
+            */}
             <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <Avatar name={d(selected.childName)} src={selected.photoUrl} size={56} />
-                <div>
-                  <h3 className="text-xl font-bold capitalize">{d(selected.childName)}</h3>
-                  <div className="flex flex-wrap items-center gap-1.5">
+              <div className="flex min-w-0 items-start gap-4">
+                <Avatar name={d(selected.childName)} src={selected.photoUrl} size={96} />
+                <div className="min-w-0 pt-1">
+                  <h3 className="text-xl font-bold capitalize leading-tight">{d(selected.childName)}</h3>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                     <CategoryBadge category={personCategoryOf(selected)} />
                     <StatusBadge status={selected.status} />
                     <RiskBadge risk={selected.traffickingRisk} />
                   </div>
+                  <p className="mt-2 text-sm text-gray-500">
+                    {t('Missing since')} {fmtDate(selected.dateOfMissing)}
+                  </p>
                 </div>
               </div>
-              <button onClick={() => setSelected(null)} className="hidden text-gray-400 hover:text-ink sm:inline">{t('Close')}</button>
+              <button onClick={() => setSelected(null)} className="hidden rounded-lg px-2 py-1 text-sm font-medium text-gray-500 hover:bg-gray-100 hover:text-ink sm:inline">{t('Close')}</button>
             </div>
 
-            <dl className="mt-6 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+            <div className="mt-6 space-y-5">
               {[
-                // The only reference the family can use on the public Track my case page.
-                [t('Case ID'), <span className="font-mono text-xs">{selected.id}</span>],
-                [t('FIR no.'), d(selected.firNo) || '-'],
-                [t('Aadhar'), txt(selected.childAadhar) || '-'],
-                [t('Gender'), genderLabel(selected.gender, personCategoryOf(selected)) || '-'],
-                [t('Age'), txt(selected.age) || '-'],
-                [t('Height'), txt(selected.height) ? `${txt(selected.height)} cm` : '-'],
-                [t('Weight'), txt(selected.weight) ? `${txt(selected.weight)} kg` : '-'],
-                [t('Missing since'), fmtDate(selected.dateOfMissing)],
-                [t('Match score'), Number(selected.matchScore) ? `${Math.round(Number(selected.matchScore) * 100)}%` : '-'],
-                [adultCase ? t('Family contact') : t('Parent'), d(selected.parentName) || '-'],
-                [t('Contact'), txt(selected.parentPhone)
-                  ? <PhoneLink phone={selected.parentPhone} />
-                  : selected.familyContactWithheld ? <span className="text-xs font-normal text-gray-500">{t('Withheld: contact the family through the police or CWC')}</span> : '-'],
-                [t('Location'), d.places(selected.district, selected.state) || '-'],
-                [t('Address'), d(selected.address) || '-'],
-                [t('Found at'), d(selected.foundLocation) || '-'],
-                [t('Workflow'), txt(selected.workflowStatus) || '-'],
-                [t('Assigned to'), txt(selected.assignedToName) ? `${txt(selected.assignedToName)} (${roleLabel(selected.assignedToRole)})` : '-'],
-                [t('Declaration'), selected.declaration?.accepted ? `${txt(selected.declaration.signerName) || t('Signer')} / ${txt(selected.declaration.methodLabel) || t('Accepted')}` : '-'],
-                [t('Closure'), txt(selected.closure?.label) || '-'],
-              ].map(([k, v]) => (
-                <div key={k}>
-                  <dt className="text-xs uppercase tracking-wide text-gray-400">{k}</dt>
-                  <dd className="font-medium">{v}</dd>
-                </div>
+                [t('Identity'), [
+                  [t('Gender'), genderLabel(selected.gender, personCategoryOf(selected)) || '-'],
+                  [t('Age'), txt(selected.age) || '-'],
+                  [t('Height'), txt(selected.height) ? `${txt(selected.height)} cm` : '-'],
+                  [t('Weight'), txt(selected.weight) ? `${txt(selected.weight)} kg` : '-'],
+                  [t('Aadhar'), txt(selected.childAadhar) || '-'],
+                ]],
+                [t('When and where'), [
+                  [t('Missing since'), fmtDate(selected.dateOfMissing)],
+                  [t('Location'), d.places(selected.district, selected.state) || '-'],
+                  [t('Address'), d(selected.address) || '-'],
+                  [t('Found at'), d(selected.foundLocation) || '-'],
+                ]],
+                [t('Family'), [
+                  [adultCase ? t('Family contact') : t('Parent'), d(selected.parentName) || '-'],
+                  [t('Contact'), txt(selected.parentPhone)
+                    ? <PhoneLink phone={selected.parentPhone} />
+                    : selected.familyContactWithheld ? <span className="text-xs font-normal text-gray-500">{t('Withheld: contact the family through the police or CWC')}</span> : '-'],
+                ]],
+                [t('Case record'), [
+                  // The only reference the family can use on the public Track my case page.
+                  [t('Case ID'), <span className="font-mono text-xs">{selected.id}</span>],
+                  [t('FIR no.'), d(selected.firNo) || '-'],
+                  [t('Workflow'), txt(selected.workflowStatus) || '-'],
+                  [t('Assigned to'), txt(selected.assignedToName) ? `${txt(selected.assignedToName)} (${roleLabel(selected.assignedToRole)})` : '-'],
+                  [t('Match score'), Number(selected.matchScore) ? `${Math.round(Number(selected.matchScore) * 100)}%` : '-'],
+                  [t('Declaration'), selected.declaration?.accepted ? `${txt(selected.declaration.signerName) || t('Signer')} / ${txt(selected.declaration.methodLabel) || t('Accepted')}` : '-'],
+                  [t('Closure'), txt(selected.closure?.label) || '-'],
+                ]],
+              ].map(([title, rows]) => (
+                <section key={title}>
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500">{title}</h4>
+                  <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl bg-gray-50/80 p-3 text-sm ring-1 ring-black/5">
+                    {rows.map(([k, v]) => (
+                      <div key={k} className="min-w-0">
+                        <dt className="text-xs text-gray-500">{k}</dt>
+                        <dd className={`break-words font-medium ${v === '-' ? 'text-gray-300' : 'text-ink'}`}>{v}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </section>
               ))}
-            </dl>
+            </div>
 
             {RISK_BADGES[selected.traffickingRisk?.level] && (
               <div className="mt-6 rounded-xl border border-red-100 bg-red-50/40 p-4">
@@ -1389,7 +1507,7 @@ export default function Cases() {
                     <input
                       type="file"
                       accept="image/jpeg,image/png,image/webp"
-                      className="mt-3 block w-full text-xs"
+                      className="mt-3 block min-h-11 w-full text-sm text-gray-600 file:mr-3 file:min-h-11 file:cursor-pointer file:rounded-lg file:border-0 file:bg-gray-100 file:px-3 file:text-sm file:font-semibold file:text-ink hover:file:bg-gray-200"
                       onChange={(e) => setPhotoReplace({ caseId: selected.id, file: e.target.files?.[0] || null, consent: photoReplace.caseId === selected.id && photoReplace.consent })}
                     />
                     {!selected.photoConsent && (

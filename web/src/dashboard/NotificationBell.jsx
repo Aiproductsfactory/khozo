@@ -86,9 +86,11 @@ export default function NotificationBell({ onConnectionChange }) {
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-label={unread === 1 ? t('1 unread alert') : unread ? t('{n} unread alerts', { n: unread }) : t('Alerts')}
-        className="relative rounded-full p-2.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-all duration-200 focus:outline-none ring-2 ring-transparent focus:ring-indigo-100"
+        className="relative grid h-10 w-10 place-items-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-khozo/40 sm:h-11 sm:w-11"
       >
-        <span className="text-lg leading-none">🔔</span>
+        <svg aria-hidden="true" viewBox="0 0 24 24" className="h-[22px] w-[22px]" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M6 9a6 6 0 1 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15 6 9z" /><path d="M10 20a2.2 2.2 0 0 0 4 0" />
+        </svg>
         {unread > 0 && (
           <span className="absolute -top-0.5 -right-0.5 grid h-5 min-w-[1.25rem] place-items-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white ring-2 ring-white">
             {unread > 99 ? '99+' : unread}
@@ -105,7 +107,7 @@ export default function NotificationBell({ onConnectionChange }) {
           <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2 sm:py-3">
             <p className="text-sm font-bold text-slate-900">{t('Alerts')}</p>
             {unread > 0 && (
-              <button onClick={markAllRead} className="px-2 text-xs font-semibold text-indigo-600 hover:underline">
+              <button onClick={markAllRead} className="px-2 text-xs font-semibold text-khozo-dark hover:underline">
                 {t('Mark all read')}
               </button>
             )}
@@ -127,7 +129,7 @@ export default function NotificationBell({ onConnectionChange }) {
               >
                 <span
                   className={`mt-1 h-2 w-2 shrink-0 rounded-full ${
-                    item.priority === 'high' ? 'bg-rose-500' : item.readAt ? 'bg-slate-300' : 'bg-indigo-500'
+                    item.priority === 'high' ? 'bg-rose-500' : item.readAt ? 'bg-slate-300' : 'bg-khozo'
                   }`}
                 />
                 <span className="min-w-0">
@@ -136,7 +138,7 @@ export default function NotificationBell({ onConnectionChange }) {
                   <span className="mt-1 flex items-center gap-2 text-[11px] text-slate-400">
                     {timeAgo(item.ts)}
                     {item.inJurisdiction && (
-                      <span className="rounded-full bg-indigo-50 px-1.5 py-0.5 font-semibold text-indigo-600">
+                      <span className="rounded-full bg-khozo-light px-1.5 py-0.5 font-semibold text-khozo-dark">
                         {t('Your jurisdiction')}
                       </span>
                     )}

@@ -33,6 +33,36 @@
     <meta name="description" content="Seen a child who may be missing? Send a photo from your phone in under a minute — free, no login. An officer checks every report before any family is contacted." />
     <title>Khozo — Help a missing child return home</title>
     <!--
+      Who runs Khozo and what it is, for search engines. Deliberately no
+      SearchAction: the site has no public search of people, by design.
+    -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "https://khozo.org/#org",
+            "name": "Khozo",
+            "alternateName": ["खोज़ो", "ખોઝો"],
+            "url": "https://khozo.org/",
+            "logo": "https://khozo.org/icons/icon.svg",
+            "description": "Khozo helps reunite missing children, women and other missing persons with their families in India. Anyone can send a photo of someone who seems lost; a police officer checks every report before any family is contacted.",
+            "parentOrganization": { "@type": "EducationalOrganization", "name": "Aegis School of Data Science & AI" },
+            "areaServed": { "@type": "Country", "name": "India" }
+          },
+          {
+            "@type": "WebSite",
+            "@id": "https://khozo.org/#site",
+            "url": "https://khozo.org/",
+            "name": "Khozo",
+            "publisher": { "@id": "https://khozo.org/#org" },
+            "inLanguage": ["en-IN", "gu-IN", "hi-IN", "mr-IN"]
+          }
+        ]
+      }
+    </script>
+    <!--
       Share preview for WhatsApp, Facebook, LinkedIn and X. Without these a
       shared link showed only the bare domain. Absolute URLs, because crawlers
       do not resolve relative ones; the image is 1200x630 and well under the

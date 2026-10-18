@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth.jsx';
 import { Logo } from '../components.jsx';
 import { LanguageSwitcher, msg, useT } from '../i18n.jsx';
+import { usePageMeta } from '../PublicChrome.jsx';
 
 const ROLES = [
   { id: 'parent', t: msg('Parent / Public'), d: msg('Report a missing child or a child you spotted.') },
@@ -11,6 +12,7 @@ const ROLES = [
 
 export default function Register() {
   const t = useT();
+  usePageMeta({ title: msg('Create your Khozo account'), description: msg('Families and NGOs register a missing person with a photo; an officer verifies the case before matching begins. Agencies request access here too.') });
   const { register, startOtp } = useAuth();
   const nav = useNavigate();
   const [role, setRole] = useState('parent');

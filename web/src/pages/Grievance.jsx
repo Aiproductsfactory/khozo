@@ -1,9 +1,8 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
 import { api } from '../api.js';
-import { Logo } from '../components.jsx';
 import { fmtDate } from '../lib.jsx';
-import { LanguageSwitcher, msg, useT } from '../i18n.jsx';
+import { msg, useT } from '../i18n.jsx';
+import { PublicFooter, PublicHeader, usePageMeta } from '../PublicChrome.jsx';
 
 const TYPES = [
   { id: 'missing_child_support', label: msg('Missing child support') },
@@ -29,6 +28,7 @@ const SERVER_LABELS = [msg('Submitted'), msg('Under review'), msg('Referred'), m
 const DEFAULT_MESSAGE = msg('Your grievance is recorded and queued for review.');
 
 export default function Grievance() {
+  usePageMeta({ title: msg('Raise a grievance'), description: msg('Raise a complaint about how a missing-person case or a sighting was handled, and follow its status.') });
   const t = useT();
   const [mode, setMode] = useState('new');
   const [form, setForm] = useState({
@@ -83,19 +83,10 @@ export default function Grievance() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="border-b border-black/5 bg-white">
-        <div className="mx-auto flex max-w-5xl items-center justify-between gap-2 px-4 py-3 sm:flex-wrap sm:gap-3 sm:px-6 sm:py-5">
-          <Logo />
-          <div className="flex items-center gap-1 sm:flex-wrap sm:gap-2">
-            <LanguageSwitcher />
-            <Link to="/report" className="btn-primary hidden sm:inline-flex">{t('Submit sighting')}</Link>
-            <Link to="/" className="btn-ghost">{t('Home')}</Link>
-          </div>
-        </div>
-      </header>
+    <div className="flex min-h-screen flex-col bg-[#f6f8f5]">
+      <PublicHeader />
 
-      <main className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-10">
+      <main className="mx-auto w-full flex-1 max-w-5xl px-4 py-6 sm:px-6 sm:py-10">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-khozo">{t('Grievance / feedback')}</p>
@@ -192,6 +183,7 @@ export default function Grievance() {
           </section>
         )}
       </main>
+      <PublicFooter />
     </div>
   );
 }

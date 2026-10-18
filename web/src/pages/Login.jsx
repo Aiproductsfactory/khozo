@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth.jsx';
 import { Logo } from '../components.jsx';
 import { LanguageSwitcher, msg, useT } from '../i18n.jsx';
+import { PublicIcon, usePageMeta } from '../PublicChrome.jsx';
 
 const ALL_DEMO = [
   { role: msg('Super Admin'), email: 'superadmin@khozo.org' },
@@ -35,6 +36,7 @@ const DEMO = import.meta.env.DEV ? ALL_DEMO : ALL_DEMO.filter((d) => PUBLIC_DEMO
 
 export default function Login() {
   const t = useT();
+  usePageMeta({ title: msg('Log in'), noindex: true });
   const { login } = useAuth();
   const nav = useNavigate();
   const [email, setEmail] = useState('');
@@ -63,13 +65,27 @@ export default function Login() {
 
   return (
     <div className="grid min-h-screen lg:grid-cols-2">
-      <div className="khozo-mesh relative hidden flex-col justify-between p-12 text-white lg:flex">
+      {/*
+        What an officer signing in is about to be trusted with, said plainly,
+        on the same dark ground as the public pages' safeguards section. It
+        was a green mesh gradient with a line about every login bringing a
+        child closer to home.
+      */}
+      <div className="relative hidden flex-col justify-between bg-ink p-12 text-white lg:flex">
         <Logo light />
-        <div>
-          <h1 className="text-4xl font-bold leading-tight">{t('Welcome back.')}</h1>
-          <p className="mt-4 max-w-md text-white/85">
-            {t('Every login brings a missing child one step closer to home. Sign in to your Khozo dashboard.')}
-          </p>
+        <div className="max-w-md">
+          <h1 className="text-4xl font-bold leading-tight tracking-tight">{t('Welcome back.')}</h1>
+          <dl className="mt-8 space-y-5">
+            {[
+              [msg('Seen only by those responsible'), msg('A district desk sees its own district’s cases, and a state desk its state’s. A parent or NGO sees only what they reported.')],
+              [msg('An auditable record'), msg('Every action on a case — who looked, who confirmed, when a family was contacted — is written to a tamper-evident audit chain the Department can verify later.')],
+            ].map(([title, body]) => (
+              <div key={title} className="border-l-2 border-lime-300/60 pl-4">
+                <dt className="font-semibold text-lime-300">{t(title)}</dt>
+                <dd className="mt-1 text-sm leading-relaxed text-white/70">{t(body)}</dd>
+              </div>
+            ))}
+          </dl>
         </div>
         <p className="text-sm text-white/70"><a href="https://aiproductsfactory.com" target="_blank" rel="noopener noreferrer" title={t('Visit AI Products factory website')} className="font-semibold text-lime-200 underline hover:text-white transition-colors">AI Products factory</a> · {t('AI for Social Good')}</p>
       </div>
@@ -94,7 +110,7 @@ export default function Login() {
               <label className="label">{t('Password')}</label>
               <input className="field" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" required />
             </div>
-            <button className="btn-primary w-full py-3" disabled={busy}>
+            <button className="btn-primary w-full" disabled={busy}>
               {busy ? t('Signing in…') : t('Log in')}
             </button>
           </form>
@@ -109,6 +125,16 @@ export default function Login() {
               ))}
             </div>
           </div>
+
+          {/* A citizen who tapped "log in" by mistake: reporting needs no account. */}
+          <Link to="/report" className="mt-6 flex items-center gap-3 rounded-xl p-4 ring-1 ring-black/10 transition hover:ring-khozo/40">
+            <PublicIcon.camera className="h-5 w-5 shrink-0 text-khozo" />
+            <span className="min-w-0 flex-1 text-sm">
+              <span className="block font-semibold text-ink">{t('Seen someone who seems lost?')}</span>
+              <span className="block text-gray-500">{t('You do not need an account to send a photo.')}</span>
+            </span>
+            <PublicIcon.arrow className="h-4 w-4 shrink-0 text-gray-400" />
+          </Link>
 
           <p className="mt-6 text-sm text-gray-500">
             {t('New here?')}{' '}

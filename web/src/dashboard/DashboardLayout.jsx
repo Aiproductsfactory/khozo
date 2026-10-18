@@ -3,26 +3,35 @@ import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-do
 import { useAuth } from '../auth.jsx';
 import { ErrorBoundary, Logo, PageLoading } from '../components.jsx';
 import { roleLabel, roleTagline, Avatar } from '../lib.jsx';
-import { useT, LanguageSwitcher } from '../i18n.jsx';
+import { useT, LanguageSwitcher, msg } from '../i18n.jsx';
+import { usePageMeta } from '../PublicChrome.jsx';
 import { DASHBOARD_BOTTOM_NAV, DASHBOARD_NAV, DASHBOARD_NAV_GROUPS } from './routes.js';
 import NotificationBell from './NotificationBell.jsx';
+import NavIcon from './NavIcon.jsx';
 import InstallPrompt from '../InstallPrompt.jsx';
 import { useBackClose } from '../useBackClose.js';
 
-/** Role and district, at the top of the sidebar and of the phone menu. */
+/**
+ * Role and jurisdiction, at the top of the sidebar and of the phone menu, in
+ * the dark-and-lime of the public pages' Aarakshak band. It was an indigo
+ * gradient with a "Live AI" badge that was shown whatever the engines were
+ * doing — a status that asserts nothing, like the "System Synced" the header
+ * used to carry. A state desk read "National Level"; it now reads its state.
+ */
 function JurisdictionCard({ user }) {
   const t = useT();
+  const j = user.jurisdiction || {};
+  const place = [j.station, j.district].filter(Boolean).join(', ') || j.state || t('National Level');
   return (
-    <div className="mx-4 mb-6 mt-2 shrink-0 rounded-2xl bg-gradient-to-br from-indigo-600 to-violet-700 p-4 shadow-lg shadow-indigo-600/20 text-white relative overflow-hidden">
-      <div className="absolute top-0 right-0 -mr-4 -mt-4 w-24 h-24 rounded-full bg-white opacity-10 blur-xl"></div>
-      <div className="flex items-center justify-between relative z-10">
-        <span className="text-[10px] font-black uppercase tracking-widest text-indigo-200">{t('ACTIVE JURISDICTION')}</span>
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-white/20 backdrop-blur-md px-2 py-0.5 text-[10px] font-bold text-white border border-white/30">
-          {t('Live AI')}
-        </span>
-      </div>
-      <p className="mt-2 text-sm font-extrabold tracking-wide relative z-10 drop-shadow-sm">{roleLabel(user.role)}</p>
-      <p className="text-xs text-indigo-200 mt-0.5 font-medium">{user.jurisdiction?.district || t('National Level')}</p>
+    <div className="mx-4 mb-5 mt-1 shrink-0 rounded-2xl bg-ink p-4 text-white">
+      <p className="text-[10px] font-bold uppercase tracking-widest text-lime-300">{t('ACTIVE JURISDICTION')}</p>
+      <p className="mt-1.5 truncate text-sm font-bold">{roleLabel(user.role)}</p>
+      <p className="mt-0.5 flex items-center gap-1.5 text-xs text-white/65">
+        <svg aria-hidden="true" viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 21s7-5.6 7-11a7 7 0 1 0-14 0c0 5.4 7 11 7 11z" /><circle cx="12" cy="10" r="2.6" />
+        </svg>
+        <span className="truncate">{place}</span>
+      </p>
     </div>
   );
 }
@@ -34,28 +43,28 @@ function NavGroups({ items }) {
     const groupItems = items.filter((n) => n.group === group);
     if (!groupItems.length) return null;
     return (
-      <div key={group} className="mb-5">
-        <p className="px-4 pb-1.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">{t(group)}</p>
-        <div className="space-y-1">
+      <div key={group} className="mb-4">
+        <p className="px-3 pb-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">{t(group)}</p>
+        <div className="space-y-0.5">
           {groupItems.map((n) => (
             <NavLink
               key={n.to}
               to={n.to}
               end={n.end}
               className={({ isActive }) =>
-                `group relative flex min-h-11 items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors lg:min-h-0 ${
+                `group relative flex min-h-11 items-center gap-3 rounded-xl px-3 py-2 text-sm font-semibold transition-colors lg:min-h-10 ${
                   isActive
-                    ? 'bg-indigo-50 text-indigo-700'
-                    : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
+                    ? 'bg-khozo-light text-khozo-dark'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
                 }`
               }
             >
               {({ isActive }) => (
                 <>
                   {isActive && (
-                    <span className="absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-md bg-indigo-600" />
+                    <span className="absolute -left-3 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-md bg-khozo" />
                   )}
-                  <span className="w-5 shrink-0 text-center text-base leading-none">{n.icon}</span>
+                  <NavIcon name={n.icon} className={`h-5 w-5 shrink-0 ${isActive ? 'text-khozo' : 'text-slate-400 group-hover:text-slate-600'}`} />
                   <span className="truncate">{t(n.label)}</span>
                 </>
               )}
@@ -69,6 +78,8 @@ function NavGroups({ items }) {
 
 export default function DashboardLayout() {
   const t = useT();
+  // The console is never a search result.
+  usePageMeta({ title: msg('Console'), noindex: true });
   const { user, logout } = useAuth();
   const nav = useNavigate();
   const { pathname } = useLocation();
@@ -130,17 +141,15 @@ export default function DashboardLayout() {
   };
 
   return (
-    <div className="flex min-h-screen bg-[#f1f5f9] font-sans selection:bg-indigo-500 selection:text-white">
-      {/* Premium Glassy Sidebar */}
-      <aside className="sticky top-0 hidden h-screen w-72 flex-col bg-white shadow-[4px_0_24px_rgba(0,0,0,0.02)] border-r border-slate-200/60 lg:flex z-30">
-        <div className="px-6 py-6">
+    <div className="flex min-h-screen bg-[#f3f5f2] font-sans selection:bg-khozo selection:text-white">
+      <aside className="sticky top-0 z-30 hidden h-screen w-64 shrink-0 flex-col border-r border-slate-200/70 bg-white lg:flex">
+        <div className="px-5 pb-4 pt-5">
           <Logo to="/app" />
         </div>
 
         <JurisdictionCard user={user} />
 
-        {/* Navigation items with elegant hover states */}
-        <nav className="flex-1 overflow-y-auto px-4 pb-6 scrollbar-hide">
+        <nav aria-label={t('Main navigation')} className="flex-1 overflow-y-auto px-4 pb-6 scrollbar-hide">
           <NavGroups items={items} />
         </nav>
       </aside>
@@ -195,8 +204,7 @@ export default function DashboardLayout() {
 
       {/* Main Content Area */}
       <div className="flex min-w-0 flex-1 flex-col relative z-20">
-        {/* Top Header with Glassmorphism */}
-        <header className="sticky top-0 z-40 flex items-center justify-between gap-2 border-b border-slate-200/50 bg-white/90 px-3 py-2 backdrop-blur-xl supports-[backdrop-filter]:bg-white/70 sm:gap-4 sm:px-6 sm:py-4">
+        <header className="sticky top-0 z-40 flex items-center justify-between gap-2 border-b border-slate-200/70 bg-white/90 px-3 py-2 backdrop-blur-xl supports-[backdrop-filter]:bg-white/75 sm:gap-4 sm:px-6 sm:py-3 lg:px-8">
           <div className="flex min-w-0 items-center gap-1.5">
             <button
               type="button"
@@ -211,23 +219,23 @@ export default function DashboardLayout() {
               </svg>
             </button>
             <div className="min-w-0">
-              <h1 className="truncate text-base font-black tracking-tight text-slate-900 drop-shadow-sm sm:text-xl">
+              <h1 className="truncate text-base font-extrabold tracking-tight text-slate-900 sm:text-lg">
                 {/* On a phone the role alone: "… Console" only pushed it into an ellipsis. */}
                 <span className="sm:hidden">{roleLabel(user.role)}</span>
                 <span className="hidden sm:inline">{t('{role} Console', { role: roleLabel(user.role) })}</span>
               </h1>
-              <p className="mt-0.5 hidden truncate text-sm font-medium text-slate-500 sm:block">{roleTagline(user.role)}</p>
+              <p className="hidden truncate text-sm text-slate-500 sm:block">{roleTagline(user.role)}</p>
             </div>
           </div>
 
-          <div className="flex shrink-0 items-center gap-1.5 sm:gap-5">
+          <div className="flex shrink-0 items-center gap-1.5 sm:gap-3 lg:gap-4">
             {/*
               Reflects whether the last alert poll actually reached the API. It
               previously read "System Synced" unconditionally, which is the one
               thing a status indicator must never do.
             */}
             <div
-              className={`hidden md:flex items-center gap-2 rounded-full px-3 py-1.5 border shadow-sm ${
+              className={`hidden xl:flex items-center gap-2 rounded-full px-3 py-1.5 border ${
                 connected
                   ? 'bg-emerald-50 border-emerald-100'
                   : 'bg-amber-50 border-amber-100'
@@ -240,7 +248,7 @@ export default function DashboardLayout() {
             </div>
             {/* On a phone the dot alone says the same; the words are in the alert poll's title. */}
             {!connected && (
-              <span className="h-2.5 w-2.5 rounded-full bg-amber-500 md:hidden" role="status" aria-label={t('Reconnecting…')} title={t('Reconnecting…')} />
+              <span className="h-2.5 w-2.5 rounded-full bg-amber-500 xl:hidden" role="status" aria-label={t('Reconnecting…')} title={t('Reconnecting…')} />
             )}
 
             {/* On a phone the language is chosen from the menu, where there is room. */}
@@ -265,12 +273,12 @@ export default function DashboardLayout() {
                 onClick={() => setProfileOpen(!profileOpen)}
                 aria-label={t('Account menu')}
                 aria-expanded={profileOpen}
-                className="flex items-center gap-2 rounded-full bg-white p-1 pr-2 hover:bg-slate-50 border border-slate-200 shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500/20 sm:gap-3 sm:pr-3"
+                className="flex items-center gap-2 rounded-full border border-slate-200 bg-white p-1 pr-2 transition-colors hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-khozo/40 sm:gap-3 sm:pr-3"
               >
                 <Avatar name={user.name} size={34} />
-                <div className="hidden text-left sm:block">
-                  <p className="text-sm font-bold text-slate-900 leading-none">{user.name}</p>
-                  <p className="text-[11px] font-semibold text-slate-500 mt-0.5 uppercase tracking-wide">{user.org || t('Khozo Admin')}</p>
+                <div className="hidden max-w-[12rem] text-left sm:block">
+                  <p className="truncate text-sm font-bold leading-tight text-slate-900">{user.name}</p>
+                  <p className="truncate text-xs text-slate-500">{user.org || t('Khozo Admin')}</p>
                 </div>
                 <svg className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${profileOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -327,17 +335,21 @@ export default function DashboardLayout() {
         </header>
 
         {/* Main Content Body. The bottom padding clears the phone's bottom bar. */}
-        <main className="min-w-0 max-w-full flex-1 px-4 pb-28 pt-4 sm:px-6 sm:pt-6 lg:p-10">
-          {/*
-            One section failing to render shows a notice here, inside the
-            console, and the sidebar stays usable. Moving to another section
-            clears it.
-          */}
-          <ErrorBoundary resetKey={pathname}>
-            <Suspense fallback={<PageLoading />}>
-              <Outlet />
-            </Suspense>
-          </ErrorBoundary>
+        {/* On a very wide screen the work stays at a width the eye can track
+            across, rather than a table row the width of the monitor. */}
+        <main className="min-w-0 max-w-full flex-1 px-4 pb-28 pt-4 sm:px-6 sm:pt-6 lg:px-8 lg:pb-10 lg:pt-8">
+          <div className="mx-auto w-full max-w-[1500px]">
+            {/*
+              One section failing to render shows a notice here, inside the
+              console, and the sidebar stays usable. Moving to another section
+              clears it.
+            */}
+            <ErrorBoundary resetKey={pathname}>
+              <Suspense fallback={<PageLoading />}>
+                <Outlet />
+              </Suspense>
+            </ErrorBoundary>
+          </div>
         </main>
 
         {/* The phone's bottom bar: the role's most used sections, then the full menu. */}
@@ -355,13 +367,15 @@ export default function DashboardLayout() {
                 end={n.end}
                 className={({ isActive }) =>
                   `flex min-h-14 min-w-0 flex-auto flex-col items-center justify-center gap-0.5 px-1 py-1.5 text-xs font-semibold ${
-                    isActive ? 'text-indigo-700' : 'text-slate-500'
+                    isActive ? 'text-khozo-dark' : 'text-slate-500'
                   }`
                 }
               >
                 {({ isActive }) => (
                   <>
-                    <span aria-hidden="true" className={`grid h-7 w-12 place-items-center rounded-full text-lg leading-none ${isActive ? 'bg-indigo-100' : ''}`}>{n.icon}</span>
+                    <span aria-hidden="true" className={`grid h-7 w-12 place-items-center rounded-full transition-colors ${isActive ? 'bg-khozo-light text-khozo' : ''}`}>
+                      <NavIcon name={n.icon} className="h-[22px] w-[22px]" />
+                    </span>
                     <span className="max-w-full truncate leading-tight">{t(n.short || n.label)}</span>
                   </>
                 )}
@@ -374,9 +388,7 @@ export default function DashboardLayout() {
               className="flex min-h-14 min-w-0 flex-auto flex-col items-center justify-center gap-0.5 px-1 py-1.5 text-xs font-semibold text-slate-500"
             >
               <span aria-hidden="true" className="grid h-7 w-12 place-items-center rounded-full">
-                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <path d="M4 7h16M4 12h16M4 17h16" />
-                </svg>
+                <NavIcon name="menu" className="h-[22px] w-[22px]" />
               </span>
               <span className="max-w-full truncate leading-tight">{t('Menu')}</span>
             </button>

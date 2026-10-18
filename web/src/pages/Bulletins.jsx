@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { api } from '../api.js';
-import { Logo, PublicActions } from '../components.jsx';
-import { currentLocale, LanguageSwitcher, msg, useT } from '../i18n.jsx';
+import { PublicActions } from '../components.jsx';
+import { currentLocale, msg, useT } from '../i18n.jsx';
+import { PublicFooter, PublicHeader, usePageMeta } from '../PublicChrome.jsx';
 
 /*
  * /bulletins used to be a public gallery and name search of missing children.
@@ -41,6 +41,7 @@ function useSummary() {
 }
 
 export default function Bulletins() {
+  usePageMeta({ title: msg('How we protect privacy'), description: msg('Why Khozo never shows the name or photo of a missing person, and what you can do instead.') });
   const t = useT();
   const summary = useSummary();
   const counts = summary
@@ -48,18 +49,10 @@ export default function Bulletins() {
     : [];
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="border-b border-black/5 bg-white">
-        <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3 px-4 py-4 sm:px-6">
-          <Logo />
-          <div className="flex items-center gap-2">
-            <LanguageSwitcher />
-            <Link to="/" className="btn-ghost">{t('Home')}</Link>
-          </div>
-        </div>
-      </header>
+    <div className="flex min-h-screen flex-col bg-[#f6f8f5]">
+      <PublicHeader />
 
-      <main className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-10">
+      <main className="mx-auto w-full flex-1 max-w-3xl px-4 py-6 sm:px-6 sm:py-10">
         <p className="text-xs font-semibold uppercase tracking-wide text-khozo">{t('Privacy rule')}</p>
         <h1 className="mt-1 text-3xl font-bold text-ink">{t('Khozo has no public gallery')}</h1>
         <p className="mt-3 text-gray-600">
@@ -98,6 +91,7 @@ export default function Bulletins() {
           {t('If a child appears to be in immediate danger, call {childline} or {police} first.', { childline: '1098', police: '112' })}
         </p>
       </main>
+      <PublicFooter />
     </div>
   );
 }

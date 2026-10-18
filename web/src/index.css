@@ -78,7 +78,6 @@ body {
 .btn-dark:hover { background: #000; }
 
 .field {
-  width: 100%;
   border-radius: 0.75rem;
   border: 1px solid #e5e7eb;
   background: #fff;
@@ -90,6 +89,17 @@ body {
 .field:focus {
   border-color: var(--color-khozo);
   box-shadow: 0 0 0 3px rgb(103 164 38 / 0.25);
+}
+/* A field fills its box unless the markup gives it a width. The rule sits in
+   the components layer so `sm:w-44` and friends win: unlayered, it beat every
+   width utility, and the case register's search box and filters were all
+   stretched or squeezed to whatever their row left over. */
+@layer components {
+  .field { width: 100%; }
+}
+/* A field with an icon drawn inside it on the left (a search box). */
+.field.field-icon {
+  padding-left: 2.5rem;
 }
 
 .label {
@@ -307,10 +317,20 @@ body {
   from { transform: translateX(-100%); }
   to { transform: none; }
 }
+@keyframes khozo-drawer-in-right {
+  from { transform: translateX(100%); }
+  to { transform: none; }
+}
+@keyframes khozo-rise {
+  from { transform: translateY(100%); }
+  to { transform: none; }
+}
 .animate-sheet-in { animation: khozo-sheet-in 0.18s ease-out; }
 .animate-drawer-in { animation: khozo-drawer-in 0.2s ease-out; }
+.animate-drawer-in-right { animation: khozo-drawer-in-right 0.22s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.animate-rise { animation: khozo-rise 0.22s cubic-bezier(0.2, 0.8, 0.2, 1); }
 @media (prefers-reduced-motion: reduce) {
-  .animate-sheet-in, .animate-drawer-in { animation: none; }
+  .animate-sheet-in, .animate-drawer-in, .animate-drawer-in-right, .animate-rise { animation: none; }
 }
 
 .scrollbar-hide { scrollbar-width: none; }

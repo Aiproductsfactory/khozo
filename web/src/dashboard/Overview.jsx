@@ -7,6 +7,7 @@ import {
 import { api } from '../api.js';
 import { useAuth } from '../auth.jsx';
 import { StatCard } from '../components.jsx';
+import NavIcon from './NavIcon.jsx';
 import { asList, categoryLabel, timeAgo, txt } from '../lib.jsx';
 import { currentLocale, msg, useT } from '../i18n.jsx';
 import { PHONE_QUERY, useMediaQuery } from '../useMediaQuery.js';
@@ -240,8 +241,8 @@ export default function Overview() {
           <p className="text-sm text-gray-500">{t(h.sub)} · {t('Scope:')} <span className="font-medium text-khozo">{scope}</span></p>
         </div>
         <div className={`grid w-full gap-2 sm:flex sm:w-auto ${showOps ? 'grid-cols-2' : 'grid-cols-1'}`}>
-          <Link to="/app/register" className="btn-primary text-center">➕ {t('Register a missing person')}</Link>
-          {showOps && <Link to="/app/matches" className="btn-ghost text-center">🔍 {t('Review sightings')}</Link>}
+          <Link to="/app/register" className="btn-primary text-center"><NavIcon name="plus" className="h-4 w-4 shrink-0" /> {t('Register a missing person')}</Link>
+          {showOps && <Link to="/app/matches" className="btn-ghost text-center"><NavIcon name="search" className="h-4 w-4 shrink-0" /> {t('Review sightings')}</Link>}
         </div>
       </div>
 
@@ -257,14 +258,14 @@ export default function Overview() {
           label={hasAdults ? t('People still missing') : t('Children still missing')}
           value={count(cards.totalMissing)}
           accent="red"
-          icon="🔴"
+          icon={<NavIcon name="missing" />}
           sub={t('{n} of them under review', { n: Number(asList(stats.statusSplit).find((s) => s?.name === 'Under review')?.value) || 0 })}
         />
         <StatCard
           label={t('Reunited or closed')}
           value={count(cards.totalFound)}
           accent="khozo"
-          icon="🏠"
+          icon={<NavIcon name="cci" />}
           sub={
             (Number(cards.totalMissing) || 0) + (Number(cards.totalFound) || 0) === 0
               ? t('No cases recorded yet')
@@ -275,7 +276,7 @@ export default function Overview() {
           label={t('Sightings awaiting review')}
           value={count(cards.pendingMatches)}
           accent="amber"
-          icon="🔍"
+          icon={<NavIcon name="search" />}
           sub={
             Number(followups?.totals?.pendingSightings)
               ? t('{n} waiting more than 2 days', { n: Number(followups.totals.pendingSightings) })
@@ -286,7 +287,7 @@ export default function Overview() {
           label={t('Needs your attention')}
           value={count(followups?.totals?.alerts)}
           accent="blue"
-          icon="⚠️"
+          icon={<NavIcon name="alert" />}
           sub={Number(followups?.totals?.high) ? t('{n} high priority', { n: Number(followups.totals.high) }) : t('Nothing overdue')}
         />
       </div>
@@ -310,17 +311,19 @@ export default function Overview() {
         <div className="card p-5">
           <h3 className="font-semibold">{t('Waiting on you')}</h3>
           <p className="text-xs text-gray-500">{t('Scoped to {scope}', { scope })}</p>
-          <div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-3">
+          {/* Two to a row on a phone: three left "Cases with no recent note"
+              four lines tall in a 90 px column. */}
+          <div className={`mt-4 grid grid-cols-2 gap-2 sm:gap-3 ${work.length >= 4 ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
             {work.map((item) => (
               <Link
                 key={item.label}
                 to={item.to}
-                className="group min-w-0 rounded-xl border border-slate-200 bg-slate-50/70 p-3 transition hover:border-indigo-200 hover:bg-indigo-50/50 sm:p-4"
+                className="group flex min-w-0 flex-col rounded-xl border border-slate-200 bg-slate-50/70 p-3 transition hover:border-khozo/40 hover:bg-khozo-light/50 sm:p-4"
               >
                 <p className={`text-2xl font-extrabold sm:text-3xl ${item.value > 0 ? 'text-slate-900' : 'text-slate-300'}`}>
                   {Number(item.value).toLocaleString('en-IN')}
                 </p>
-                <p className="mt-1 text-sm font-medium text-slate-600 group-hover:text-indigo-700">{t(item.label)}</p>
+                <p className="mt-1 text-sm font-medium text-slate-600 group-hover:text-khozo-dark">{t(item.label)}</p>
               </Link>
             ))}
           </div>
@@ -517,8 +520,8 @@ export default function Overview() {
           <ul className="mt-4 space-y-3">
             {activity.filter((a) => a && typeof a === 'object').map((a, i) => (
               <li key={txt(a.id) || i} className="flex gap-3">
-                <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-khozo-light text-sm">
-                  {({ check: '✅', upload: '📤', plus: '➕', eye: '👁️', sms: '✉️' })[a.icon] || '•'}
+                <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-khozo-light text-khozo-dark">
+                  <NavIcon name={({ check: 'check', upload: 'upload', plus: 'plus', eye: 'eye', sms: 'mail' })[a.icon] || 'check'} className="h-4 w-4" />
                 </span>
                 <div className="min-w-0 text-sm">
                   <p><span className="font-medium">{txt(a.actor)}</span> {txt(a.action)}</p>

@@ -2,7 +2,6 @@ import { useEffect, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
 import DistrictPicker from '../DistrictPicker.jsx';
-import { Logo } from '../components.jsx';
 import { genderLabel, isAdultCategory, PERSON_CATEGORY_OPTIONS } from '../lib.jsx';
 import {
   clearQueuedSighting,
@@ -18,8 +17,8 @@ import { formatBytes, preparePhoto } from '../photoPrep.js';
 import { saveReceipt } from '../myReports.js';
 import ReceiptActions from '../ReceiptActions.jsx';
 import InstallPrompt from '../InstallPrompt.jsx';
-import { useAuth } from '../auth.jsx';
-import { currentLocale, LanguageSwitcher, msg, useT } from '../i18n.jsx';
+import { currentLocale, msg, useT } from '../i18n.jsx';
+import { PublicHeader, PublicIcon, ShareKhozo, usePageMeta } from '../PublicChrome.jsx';
 
 const ID_PROOF_TYPES = [
   { id: '', label: msg('Not provided') },
@@ -37,7 +36,7 @@ const ID_PROOF_TYPES = [
 const SEEN_COPY = {
   child: {
     title: msg('Spotted a child who may be missing?'),
-    where: msg('Where did you find the child?'),
+    where: msg('Where did you see the child?'),
     note: msg('Anything that helps identify the child'),
     agePlaceholder: msg('e.g. 6'),
     alt: msg('Child'),
@@ -66,6 +65,8 @@ const SEEN_COPY = {
     danger: msg('If the person is in immediate danger, call 112.'),
   },
 };
+
+const STEP_NAMES = [msg('Photo'), msg('Details'), msg('Sent')];
 
 // The age a reporter can enter, matching the server's limits for the category.
 const SEEN_AGE_LIMITS = {
@@ -126,6 +127,7 @@ function buildSightingFormData(form, file) {
 
 export default function Capture() {
   const t = useT();
+  usePageMeta({ title: msg('Report a sighting'), description: msg('Seen a child, woman or person who seems lost? Send a photo or a description from your phone. Free, no login, and checked by a police officer.') });
   const [step, setStep] = useState(1);
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -153,7 +155,6 @@ export default function Capture() {
   // True while the chosen photo is being shrunk on the phone.
   const [preparing, setPreparing] = useState(false);
   const [originalSize, setOriginalSize] = useState(0);
-  const { user } = useAuth() || {};
   const [err, setErr] = useState('');
   const [queued, setQueued] = useState([]);
   // { status: 'locating' | 'photo' | 'device' | 'denied' | 'failed', lat, lng, accuracy }
@@ -169,6 +170,12 @@ export default function Capture() {
   const seen = form.personCategory;
   const copy = SEEN_COPY[seen] || SEEN_COPY.child;
   const ageLimits = SEEN_AGE_LIMITS[seen] || SEEN_AGE_LIMITS.child;
+  // Why the report cannot be sent yet, matching the server's own checks
+  // (shared/routes/reports.js): a photo needs the consent box, and a report
+  // without one needs a place or a note to act on.
+  const blocked = file
+    ? (form.photoConsent ? null : msg('Tick the box above to send the photo.'))
+    : (String(form.note || '').trim() || String(form.foundLocation || '').trim() ? null : msg('Add the place or a note so an officer can act on it.'));
 
   // A guessed age outside the new range is dropped rather than sent and
   // refused; a woman's gender is implied.
@@ -338,26 +345,22 @@ export default function Capture() {
 
   return (
     <div className="min-h-screen bg-[#f6f8f5]">
-      <header className="border-b border-black/5 bg-white">
-        <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 py-4 sm:px-6">
-          <Logo />
-          <div className="flex items-center gap-1 sm:gap-3">
-            <LanguageSwitcher />
-            <Link to={user ? '/app' : '/'} className="inline-flex min-h-11 items-center whitespace-nowrap rounded-lg px-2 text-sm font-semibold text-gray-500 hover:text-ink">
-              {user ? t('Console') : t('Home')}
-            </Link>
-          </div>
-        </div>
-      </header>
+      <PublicHeader />
 
-      <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-10">
-        <div className="mb-6 flex items-center gap-2 sm:mb-8">
-          {[1, 2, 3].map((s) => (
-            <div key={s} className={`h-1.5 flex-1 rounded-full ${step >= s ? 'bg-khozo' : 'bg-gray-200'}`} />
+      <div className="mx-auto max-w-2xl px-4 py-6 sm:px-6 sm:py-10">
+        {/* Where the reporter is in three steps, named, not only drawn. */}
+        <ol aria-label={t('Steps')} className="mb-6 grid grid-cols-3 gap-2 sm:mb-8">
+          {STEP_NAMES.map((name, i) => (
+            <li key={name} aria-current={step === i + 1 ? 'step' : undefined}>
+              <div className={`h-1.5 rounded-full transition-colors ${step >= i + 1 ? 'bg-khozo' : 'bg-gray-200'}`} />
+              <p className={`mt-1.5 text-xs font-semibold ${step >= i + 1 ? 'text-khozo-dark' : 'text-gray-400'}`}>
+                {i + 1}. {t(name)}
+              </p>
+            </li>
           ))}
-        </div>
+        </ol>
 
-        {err && <div className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{t(err)}</div>}
+        {err && <div role="alert" className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-red-100">{t(err)}</div>}
 
         {queued.length > 0 && (
           <div className="mb-4 card p-4">
@@ -388,9 +391,9 @@ export default function Capture() {
         )}
 
         {step === 1 && (
-          <div className="card p-5 text-center sm:p-8">
-            <h1 className="text-2xl font-bold">{t(copy.title)}</h1>
-            <p className="mt-2 text-gray-500">
+          <div className="card p-5 sm:p-8">
+            <h1 className="text-balance text-2xl font-bold tracking-tight text-ink sm:text-3xl">{t(copy.title)}</h1>
+            <p className="mt-2 text-gray-600">
               {isAdultCategory(seen)
                 ? t('Capture a photo when it is safe, or continue with location details for police review.')
                 : t('Capture a photo when it is safe, or continue with location details for CWC/Childline review.')}
@@ -400,7 +403,7 @@ export default function Capture() {
               always used is one tap shorter than any other; the choice only
               changes the wording, the age range and which desk is told.
             */}
-            <div className="mx-auto mt-6 max-w-md">
+            <div className="mt-6">
               <p className="text-sm font-semibold text-ink">{t('Who did you see?')}</p>
               <div role="radiogroup" aria-label={t('Who did you see?')} className="mt-2 grid grid-cols-3 gap-2">
                 {PERSON_CATEGORY_OPTIONS.map((option) => (
@@ -410,7 +413,7 @@ export default function Capture() {
                     role="radio"
                     aria-checked={seen === option.id}
                     onClick={() => chooseSeen(option.id)}
-                    className={`rounded-xl border px-2 py-2 text-sm font-semibold transition ${
+                    className={`rounded-xl border px-2 py-2.5 text-sm font-semibold transition ${
                       seen === option.id
                         ? 'border-khozo bg-khozo-light text-khozo-dark ring-1 ring-khozo/40'
                         : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
@@ -420,42 +423,44 @@ export default function Capture() {
                   </button>
                 ))}
               </div>
-              <p className="mt-2 text-xs text-gray-500">
+              <p className="mt-2 text-sm text-gray-500">
                 {t('Not sure of their age? Choose the closest — every report reaches a person who reads it.')}
               </p>
             </div>
             {/*
               Two ways in: the camera, opened straight away, for someone looking
               at the child now; and the gallery, for a photo taken a moment ago
-              or sent on by someone else.
+              or sent on by someone else. A large dashed camera box used to sit
+              above these and do the same as the first button.
             */}
-            <div className="mt-6 sm:mt-8">
+            <input ref={cameraRef} type="file" accept="image/*" capture="environment" onChange={onFile} className="hidden" />
+            <input ref={fileRef} type="file" accept="image/*" onChange={onFile} className="hidden" />
+            <div className="mt-7 grid gap-3 sm:grid-cols-2">
               <button
                 type="button"
                 onClick={() => cameraRef.current?.click()}
-                className="mx-auto grid h-36 w-36 place-items-center rounded-2xl border-2 border-dashed border-gray-300 text-gray-400 hover:border-khozo hover:text-khozo sm:h-44 sm:w-44"
-                aria-label={t('Take a photo')}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-khozo px-5 py-3.5 text-base font-semibold text-white transition hover:bg-khozo-dark focus:outline-none focus-visible:ring-2 focus-visible:ring-khozo focus-visible:ring-offset-2 sm:col-span-2"
               >
-                <svg aria-hidden="true" viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h1.6l1.4-2h7l1.4 2h1.6A2.5 2.5 0 0 1 21 8.5v9a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z" />
-                  <circle cx="12" cy="13" r="3.8" />
-                </svg>
+                <PublicIcon.camera className="h-5 w-5" /> {t('Take a photo')}
               </button>
-              <input ref={cameraRef} type="file" accept="image/*" capture="environment" onChange={onFile} className="hidden" />
-              <input ref={fileRef} type="file" accept="image/*" onChange={onFile} className="hidden" />
-              <div className="mx-auto mt-6 grid max-w-md gap-3 sm:grid-cols-2">
-                <button type="button" className="btn-primary" onClick={() => cameraRef.current?.click()}>
-                  <span aria-hidden="true">📷</span> {t('Take a photo')}
-                </button>
-                <button type="button" className="btn-ghost" onClick={() => fileRef.current?.click()}>
-                  <span aria-hidden="true">🖼️</span> {t('Choose from gallery')}
-                </button>
-                <button type="button" data-action="continue-without-photo" className="btn-ghost sm:col-span-2" onClick={() => { setStep(2); locate(null); }}>{t('Continue without photo')}</button>
-              </div>
-              <p className="mt-4 text-sm text-gray-500">
-                <Link to="/track-sighting" className="inline-flex min-h-11 items-center font-semibold text-khozo hover:underline">{t('Track a report I made')}</Link>
-              </p>
+              <button type="button" className="btn-ghost" onClick={() => fileRef.current?.click()}>
+                {t('Choose from gallery')}
+              </button>
+              <button type="button" data-action="continue-without-photo" className="btn-ghost" onClick={() => { setStep(2); locate(null); }}>
+                {t('Continue without photo')}
+              </button>
             </div>
+            <p className="mt-6 flex items-start gap-2.5 text-sm text-gray-600">
+              <PublicIcon.shield className="mt-0.5 h-5 w-5 shrink-0 text-khozo-dark" />
+              <span>{t('Send a photo — free, no login. Khozo never shows you who they are; a police officer checks every report.')}</span>
+            </p>
+            <p className="mt-3 flex items-start gap-2.5 rounded-xl bg-red-50/70 px-3 py-2.5 text-sm text-red-900 ring-1 ring-red-100">
+              <PublicIcon.phone className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{t(copy.danger)}</span>
+            </p>
+            <p className="mt-4 text-sm">
+              <Link to="/track-sighting" className="inline-flex min-h-11 items-center font-semibold text-khozo-dark hover:underline">{t('Track a report I made')}</Link>
+            </p>
           </div>
         )}
 
@@ -487,9 +492,9 @@ export default function Capture() {
               </p>
             )}
             <div className="space-y-4 p-4 sm:p-6">
-              <h2 className="text-lg font-semibold">{t(copy.where)}</h2>
+              <h2 className="text-lg font-bold text-ink">{t(copy.where)}</h2>
               {!file && (
-                <div className="rounded-xl bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                <div className="rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-700 ring-1 ring-slate-200">
                   {t(copy.noPhoto)}
                 </div>
               )}
@@ -499,7 +504,7 @@ export default function Capture() {
                 </div>
               )}
               <div>
-                <label className="label">{t('Found location')}</label>
+                <label className="label">{t('Where you saw them')}</label>
                 <div className="flex gap-2">
                   <input className="field" value={form.foundLocation} onChange={set('foundLocation')} placeholder={t('Area, landmark, city')} autoComplete="off" enterKeyHint="next" />
                   <button
@@ -531,6 +536,8 @@ export default function Capture() {
                   {t('Not sure where you are? Choose “Not sure” and your phone’s location decides which desk is told.')}
                 </p>
               </div>
+              {/* Who was seen: what helps an officer recognise them. */}
+              <h2 className="border-t border-black/5 pt-5 text-lg font-bold text-ink">{t('About the person')}</h2>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <label className="label">{t('Approx. age')}</label>
@@ -546,37 +553,62 @@ export default function Capture() {
                     </select>
                   </div>
                 )}
-                <div>
-                  <label className="label">{t('Your name (optional)')}</label>
-                  <input className="field" value={form.reporterName} onChange={set('reporterName')} autoComplete="name" />
-                </div>
-                <div>
-                  <label className="label">{t('Your phone (optional)')}</label>
-                  <input className="field" type="tel" inputMode="tel" autoComplete="tel" value={form.reporterPhone} onChange={set('reporterPhone')} />
-                </div>
-              </div>
-              <label className="flex gap-3 rounded-xl bg-gray-50 p-3 text-sm text-gray-700">
-                <input type="checkbox" className="mt-1" checked={form.confidentialReporter} onChange={setChecked('confidentialReporter')} />
-                <span>{t('Keep my identity confidential in the review queue.')}</span>
-              </label>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <label className="label">{t('Photo ID proof')}</label>
-                  <select className="field" value={form.idProofType} onChange={set('idProofType')}>
-                    {ID_PROOF_TYPES.map((type) => <option key={type.id} value={type.id}>{t(type.label)}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="label">{t('ID number')}</label>
-                  <input className="field" value={form.idProofNumber} onChange={set('idProofNumber')} placeholder={t('Stored masked')} autoComplete="off" autoCapitalize="characters" />
-                </div>
               </div>
               <div>
                 <label className="label">{t('Note')}</label>
-                <textarea className="field" rows={2} value={form.note} onChange={set('note')} placeholder={t(copy.note)} />
+                <textarea className="field" rows={3} value={form.note} onChange={set('note')} placeholder={t(copy.note)} />
               </div>
+              {/*
+                The sender, all of it optional and folded away. Name, phone and
+                a photo ID used to sit in the middle of the form with the same
+                weight as the place, which read as required — and someone wary
+                of the police could stop there. It opens by itself when any of
+                it has been filled in, so going Back never hides what was typed.
+              */}
+              <details
+                className="group rounded-xl ring-1 ring-black/10 open:bg-gray-50/60"
+                open={Boolean(form.reporterName || form.reporterPhone || form.idProofType || form.idProofNumber || form.confidentialReporter) || undefined}
+              >
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
+                  <span>
+                    <span className="block font-semibold text-ink">{t('Your details (optional)')}</span>
+                    <span className="mt-0.5 block text-sm text-gray-500">{t('Only officers see them. You can leave them out.')}</span>
+                  </span>
+                  <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5 shrink-0 text-gray-400 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="m6 9 6 6 6-6" />
+                  </svg>
+                </summary>
+                <div className="space-y-4 border-t border-black/5 px-4 pb-4 pt-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <label className="label">{t('Your name (optional)')}</label>
+                      <input className="field" value={form.reporterName} onChange={set('reporterName')} autoComplete="name" />
+                    </div>
+                    <div>
+                      <label className="label">{t('Your phone (optional)')}</label>
+                      <input className="field" type="tel" inputMode="tel" autoComplete="tel" value={form.reporterPhone} onChange={set('reporterPhone')} />
+                    </div>
+                  </div>
+                  <label className="flex gap-3 rounded-xl bg-white p-3 text-sm text-gray-700 ring-1 ring-black/5">
+                    <input type="checkbox" className="mt-1" checked={form.confidentialReporter} onChange={setChecked('confidentialReporter')} />
+                    <span>{t('Keep my identity confidential in the review queue.')}</span>
+                  </label>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <label className="label">{t('Photo ID proof')}</label>
+                      <select className="field" value={form.idProofType} onChange={set('idProofType')}>
+                        {ID_PROOF_TYPES.map((type) => <option key={type.id} value={type.id}>{t(type.label)}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="label">{t('ID number')}</label>
+                      <input className="field" value={form.idProofNumber} onChange={set('idProofNumber')} placeholder={t('Stored masked')} autoComplete="off" autoCapitalize="characters" />
+                    </div>
+                  </div>
+                </div>
+              </details>
               {file && (
-                <label className="flex gap-3 rounded-xl bg-gray-50 p-3 text-sm text-gray-700">
+                <label className={`flex gap-3 rounded-xl p-3 text-sm text-gray-800 ring-1 ${form.photoConsent ? 'bg-khozo-light/50 ring-khozo/30' : 'bg-amber-50/70 ring-amber-200'}`}>
                   <input type="checkbox" className="mt-1" checked={form.photoConsent} onChange={setChecked('photoConsent')} required />
                   <span>
                     {t(copy.consent)}
@@ -598,10 +630,15 @@ export default function Capture() {
                     </p>
                   </div>
                 )}
+                {/* Said before sending rather than refused after: the server
+                    turns these away too, but only once the photo has uploaded. */}
+                {!busy && blocked && (
+                  <p className="mb-2 text-sm font-medium text-amber-800">{t(blocked)}</p>
+                )}
                 <div className="flex gap-3 pb-3 sm:justify-between sm:pb-0">
                   <button className="btn-ghost" onClick={() => setStep(1)} disabled={busy}>{t('Back')}</button>
-                  <button className="btn-primary flex-1 sm:flex-none" onClick={submit} disabled={busy || preparing}>
-                    {busy ? t('Submitting...') : preparing ? t('Preparing the photo…') : file ? t('Submit & search matches') : t('Submit text sighting')}
+                  <button className="btn-primary flex-1 sm:flex-none sm:px-8" onClick={submit} disabled={busy || preparing || Boolean(blocked)}>
+                    {busy ? t('Submitting...') : preparing ? t('Preparing the photo…') : t('Send report')}
                   </button>
                 </div>
               </div>
@@ -610,15 +647,17 @@ export default function Capture() {
         )}
 
         {step === 3 && result && (
-          <div className="space-y-6">
-            <div className="card p-6 text-center">
+          <div className="space-y-4">
+            <div className="card p-6 text-center sm:p-8">
               <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-khozo-light text-khozo-dark">
                 <svg aria-hidden="true" viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
               </div>
-              <h2 className="mt-3 text-xl font-bold">{t('Thank you - your report was submitted')}</h2>
-              <p className="mt-2 text-sm font-semibold text-khozo">{t('Receipt ID: {id}', { id: result.foundReport.id })}</p>
+              <h1 className="mt-3 text-2xl font-bold tracking-tight text-ink">{t('Thank you - your report was submitted')}</h1>
+              <p className="mx-auto mt-4 inline-block rounded-xl bg-gray-50 px-4 py-2 font-mono text-base font-semibold text-ink ring-1 ring-black/10">
+                {t('Receipt ID: {id}', { id: result.foundReport.id })}
+              </p>
               <ReceiptActions id={result.foundReport.id} className="mt-3" />
-              <p className="mt-2 text-xs text-gray-500">{t('Saved on this phone: find it again on the tracking page.')}</p>
+              <p className="mt-2 text-sm text-gray-500">{t('Saved on this phone: find it again on the tracking page.')}</p>
               {/*
                 The same receipt for every reporter, whatever the engines found.
                 Telling a stranger "possible match", a score, or a candidate's
@@ -634,22 +673,32 @@ export default function Capture() {
               </p>
             </div>
 
-            <div className="card p-4 text-sm text-gray-600">
-              <p className="font-semibold text-ink">{t('What happens next')}</p>
-              <p className="mt-1">{t('An officer reviews every report. You will not be contacted unless the desk needs more detail from you.')}</p>
-              <p className="mt-2">{t((SEEN_COPY[result.foundReport.personCategory] || copy).danger)}</p>
+            <div className="card p-5 text-gray-600 sm:p-6">
+              <h2 className="font-bold text-ink">{t('What happens next')}</h2>
+              <p className="mt-1.5">{t('An officer reviews every report. You will not be contacted unless the desk needs more detail from you.')}</p>
+              <p className="mt-3 flex items-start gap-2.5 rounded-xl bg-red-50/70 px-3 py-2.5 text-sm text-red-900 ring-1 ring-red-100">
+                <PublicIcon.phone className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{t((SEEN_COPY[result.foundReport.personCategory] || copy).danger)}</span>
+              </p>
               {result.foundReport.retentionUntil && (
-                <p className="mt-2 text-xs text-gray-400">{t('Photo review retention until {date}', { date: new Date(result.foundReport.retentionUntil).toLocaleDateString(currentLocale()) })}</p>
+                <p className="mt-3 text-xs text-gray-400">{t('Photo review retention until {date}', { date: new Date(result.foundReport.retentionUntil).toLocaleDateString(currentLocale()) })}</p>
               )}
             </div>
 
-            <InstallPrompt />
-
             <div className="grid gap-3 sm:flex sm:justify-center">
-              <button className="btn-primary sm:order-3" onClick={() => { setStep(1); setResult(null); setFile(null); setPreview(null); setOriginalSize(0); clearLocation(); }}>{t('Report another')}</button>
-              <Link to={`/track-sighting?receipt=${encodeURIComponent(result.foundReport.id)}`} className="btn-ghost sm:order-2">{t('Track status')}</Link>
-              <Link to="/" className="btn-ghost sm:order-1">{t('Done')}</Link>
+              <Link to={`/track-sighting?receipt=${encodeURIComponent(result.foundReport.id)}`} className="btn-primary sm:order-1">{t('Track status')}</Link>
+              <button className="btn-ghost sm:order-2" onClick={() => { setStep(1); setResult(null); setFile(null); setPreview(null); setOriginalSize(0); clearLocation(); }}>{t('Report another')}</button>
+              <Link to="/" className="btn-ghost sm:order-3">{t('Done')}</Link>
             </div>
+
+            {/* Spreading the word, never the photograph just sent. */}
+            <div className="card p-5 sm:p-6">
+              <h2 className="font-bold text-ink">{t('Help more people know where to send a photo')}</h2>
+              <p className="mt-1.5 text-sm text-gray-600">{t('Share the link to this form, never the photo you took.')}</p>
+              <ShareKhozo compact className="mt-4" />
+            </div>
+
+            <InstallPrompt />
           </div>
         )}
       </div>

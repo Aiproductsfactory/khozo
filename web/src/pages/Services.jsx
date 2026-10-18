@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { api } from '../api.js';
-import { Logo } from '../components.jsx';
 import { asList, ROLE_LABELS, roleLabel, txt } from '../lib.jsx';
-import { useT, msg, LanguageSwitcher } from '../i18n.jsx';
+import { useT, msg } from '../i18n.jsx';
+import { PublicFooter, PublicHeader, usePageMeta } from '../PublicChrome.jsx';
 import { useDisplay } from '../useDisplay.js';
+import DistrictPicker from '../DistrictPicker.jsx';
 
 const ROLE_FILTERS = [
   { value: '', label: msg('All services') },
@@ -79,12 +79,13 @@ const helplines = (value) => asList(value)
   .map((item) => ({ label: txt(item.label), phone: txt(item.phone) }));
 
 export default function Services() {
+  usePageMeta({ title: msg('Find help nearby'), description: msg('Police, child-welfare, anti-trafficking and legal-aid desks for your state and district, and the emergency numbers to call first.') });
   const t = useT();
   const d = useDisplay();
   const [rows, setRows] = useState([]);
   const [emergency, setEmergency] = useState([]);
   const [emergencyPlan, setEmergencyPlan] = useState(null);
-  const [filters, setFilters] = useState({ state: '', district: '', role: '', incidentType: 'missing_child' });
+  const [filters, setFilters] = useState({ state: '', stateCode: '', district: '', districtCode: '', role: '', incidentType: 'missing_child' });
   const [loading, setLoading] = useState(true);
 
   const load = () => {
@@ -117,7 +118,9 @@ export default function Services() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(load, []);
+  // The list follows the filters as they change: a place, a kind of desk or
+  // what happened is a choice from a list, so there is nothing to wait for.
+  useEffect(load, [filters.state, filters.district, filters.role, filters.incidentType]);
 
   const grouped = useMemo(() => {
     const map = new Map();
@@ -138,20 +141,10 @@ export default function Services() {
   const placeLabel = (key) => (key === STATE_SERVICE ? t(STATE_SERVICE) : d.places(...key.split('\u0000')));
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="border-b border-black/5 bg-white">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-2 px-4 py-3 sm:flex-wrap sm:gap-3 sm:px-6 sm:py-5">
-          <Logo />
-          <div className="flex items-center gap-1 sm:flex-wrap sm:gap-2">
-            <LanguageSwitcher />
-            <Link to="/report" className="btn-primary hidden sm:inline-flex">{t('Submit sighting')}</Link>
-            <Link to="/track-sighting" className="btn-ghost hidden sm:inline-flex">{t('Track a report I made')}</Link>
-            <Link to="/" className="btn-ghost">{t('Home')}</Link>
-          </div>
-        </div>
-      </header>
+    <div className="flex min-h-screen flex-col bg-[#f6f8f5]">
+      <PublicHeader />
 
-      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
+      <main className="mx-auto w-full flex-1 max-w-6xl px-4 py-6 sm:px-5 sm:py-10">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-khozo">{t('Child-protection directory')}</p>
@@ -163,21 +156,41 @@ export default function Services() {
               {t('Desks are listed, not people. To reach one, call the helplines below or contact the local administration.')}
             </p>
           </div>
-          <form onSubmit={(e) => { e.preventDefault(); load(); }} className="grid w-full grid-cols-2 gap-2 md:w-auto md:grid-cols-[150px_170px_150px_170px_auto]">
-            <input className="field" autoComplete="address-level1" aria-label={t('State')} value={filters.state} onChange={set('state')} placeholder={t('State')} />
-            <input className="field" autoComplete="address-level2" aria-label={t('District')} value={filters.district} onChange={set('district')} placeholder={t('District')} />
-            <select className="field col-span-2 md:col-span-1" value={filters.role} onChange={set('role')} aria-label={t('All services')}>
-              {ROLE_FILTERS.map((role) => <option key={role.value} value={role.value}>{t(role.label)}</option>)}
-            </select>
-            <select className="field col-span-2 md:col-span-1" value={filters.incidentType} onChange={set('incidentType')}>
-              {INCIDENT_TYPES.map((type) => <option key={type.value} value={type.value}>{t(type.label)}</option>)}
-            </select>
-            <button className="btn-primary col-span-2 md:col-span-1">{t('Search')}</button>
-          </form>
         </div>
 
+        {/*
+          Where, chosen from the gazetteer in the reader's own script, as the
+          sighting form does: a typed "Ahmdabad" found no Ahmedabad desk.
+          Then which kind of desk, and what happened, which picks the
+          emergency numbers below.
+        */}
+        <form
+          onSubmit={(e) => { e.preventDefault(); load(); }}
+          className="mt-6 grid gap-3 rounded-2xl bg-white p-4 ring-1 ring-black/5 sm:p-5 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)] lg:items-end"
+        >
+          <DistrictPicker
+            allowUnsure
+            unsureLabel={t('Any')}
+            value={filters}
+            onChange={(place) => setFilters((f) => ({ ...f, ...place }))}
+            className="grid gap-3 sm:grid-cols-2"
+          />
+          <div>
+            <label htmlFor="svc-role" className="label">{t('All services')}</label>
+            <select id="svc-role" className="field" value={filters.role} onChange={set('role')}>
+              {ROLE_FILTERS.map((role) => <option key={role.value} value={role.value}>{t(role.label)}</option>)}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="svc-incident" className="label">{t('Emergency routing')}</label>
+            <select id="svc-incident" className="field" value={filters.incidentType} onChange={set('incidentType')}>
+              {INCIDENT_TYPES.map((type) => <option key={type.value} value={type.value}>{t(type.label)}</option>)}
+            </select>
+          </div>
+        </form>
+
         <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.9fr)]">
-          <section className="rounded-lg bg-white p-4 ring-1 ring-black/5">
+          <section className="rounded-2xl bg-white p-4 ring-1 ring-black/5 sm:p-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">{t('Emergency routing')}</p>
@@ -211,13 +224,13 @@ export default function Services() {
             </div>
           </section>
 
-          <section className="rounded-lg bg-white p-4 ring-1 ring-black/5">
+          <section className="rounded-2xl bg-white p-4 ring-1 ring-black/5 sm:p-5">
             <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">{t('Local desks for this route')}</p>
             <div className="mt-3 space-y-3">
               {(emergencyPlan?.localDesks || []).slice(0, 4).map((desk, i) => (
                 <div key={deskKey(desk, i)} className="border-b border-black/5 pb-3 last:border-0 last:pb-0">
                   <p className="text-sm font-semibold text-ink">{desk.org || deskRole(desk)}</p>
-                  <p className="text-xs text-gray-500">{[desk.org ? deskRole(desk) : '', deskPlace(desk)].filter(Boolean).join(' · ')}</p>
+                  <p className="text-xs text-gray-500">{[desk.org && deskRole(desk) !== desk.org ? deskRole(desk) : '', deskPlace(desk)].filter(Boolean).join(' · ')}</p>
                 </div>
               ))}
               {!loading && (emergencyPlan?.localDesks || []).length === 0 && (
@@ -231,16 +244,25 @@ export default function Services() {
           {grouped.map(([place, members]) => (
             <section key={place}>
               <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">{placeLabel(place)}</h2>
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {members.map((desk, i) => (
-                  <div key={deskKey(desk, i)} className="rounded-xl bg-white p-4 ring-1 ring-black/5">
-                    <p className="font-semibold text-ink">{desk.org || deskRole(desk)}</p>
-                    {desk.org && <p className="text-xs text-gray-500">{deskRole(desk)}</p>}
-                    <p className="mt-3 text-xs text-gray-500">{deskPlace(desk)}</p>
-                    <p className="mt-2 text-sm font-semibold text-khozo">{t('Contact via local administration')}</p>
-                  </div>
-                ))}
-              </div>
+              {/*
+                A list, not a wall of cards. "Contact via local administration"
+                was printed in link green under every desk, though it links
+                nowhere; the page says it once, above. A desk whose name is its
+                role ("Child Welfare Committee / Child Welfare Committee") is
+                named once.
+              */}
+              <ul className="grid overflow-hidden rounded-2xl bg-white ring-1 ring-black/5 md:grid-cols-2 lg:grid-cols-3">
+                {members.map((desk, i) => {
+                  const name = desk.org || deskRole(desk);
+                  const role = desk.org && deskRole(desk) !== desk.org ? deskRole(desk) : '';
+                  return (
+                    <li key={deskKey(desk, i)} className="border-b border-black/5 p-4 md:border-r">
+                      <p className="font-semibold text-ink">{name}</p>
+                      <p className="mt-0.5 text-sm text-gray-500">{[role, deskPlace(desk)].filter(Boolean).join(' · ')}</p>
+                    </li>
+                  );
+                })}
+              </ul>
             </section>
           ))}
           {!loading && grouped.length === 0 && (
@@ -255,6 +277,7 @@ export default function Services() {
           )}
         </div>
       </main>
+      <PublicFooter />
     </div>
   );
 }

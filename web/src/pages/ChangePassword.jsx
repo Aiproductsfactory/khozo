@@ -2,10 +2,12 @@ import { useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth.jsx';
 import { Logo } from '../components.jsx';
-import { LanguageSwitcher, useT } from '../i18n.jsx';
+import { LanguageSwitcher, msg, useT } from '../i18n.jsx';
+import { usePageMeta } from '../PublicChrome.jsx';
 
 export default function ChangePassword() {
   const t = useT();
+  usePageMeta({ title: msg('Change password'), noindex: true });
   const { user, loading, changePassword, logout } = useAuth();
   const nav = useNavigate();
   const [form, setForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });

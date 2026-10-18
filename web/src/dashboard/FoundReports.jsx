@@ -93,7 +93,8 @@ function when(value) {
  */
 function confidenceBand(score) {
   const value = Number(score) || 0;
-  if (value >= 0.6) return { label: t('Strong'), className: 'text-emerald-600' };
+  // Said as similarity: next to a name, 'Strong' read as 'this is them'.
+  if (value >= 0.6) return { label: t('High similarity'), className: 'text-emerald-600' };
   if (value >= 0.35) return { label: t('Worth reviewing'), className: 'text-amber-600' };
   if (value > 0) return { label: t('Below threshold'), className: 'text-slate-400' };
   return { label: t('No candidate'), className: 'text-slate-300' };
@@ -743,6 +744,10 @@ export default function FoundReports({ view = 'matches' }) {
                       </div>
                     )}
                   </div>
+                  {/* Beside every score, every time: an engine proposes, an officer decides. */}
+                  {matched && (
+                    <p className="mt-2 text-xs font-medium text-slate-500">{t('A similarity score, not a confirmed identity. Verify in person before anyone is contacted.')}</p>
+                  )}
 
                   {matched ? (
                     <>

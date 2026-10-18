@@ -1,5 +1,5 @@
 // Shared formatting + small presentational helpers.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
 import { currentLocale, msg, t, useT } from './i18n.jsx';
 import { txt } from './safeText.js';
@@ -188,7 +188,23 @@ export function Avatar({ name: rawName, src: rawSrc, size = 40 }) {
   const src = txt(rawSrc);
   const initials = (name || '?').split(' ').map((w) => w[0] || '').join('').slice(0, 2).toUpperCase();
   const hue = [...(name || 'x')].reduce((a, c) => a + c.charCodeAt(0), 0) % 360;
+  // A photograph is fetched only once its row is near the screen: a register
+  // of hundreds of cases used to ask for every photo the moment it opened.
+  const holder = useRef(null);
+  const [near, setNear] = useState(() => typeof IntersectionObserver === 'undefined');
   useEffect(() => {
+    if (near || !src || src.startsWith('data:') || !holder.current) return undefined;
+    const io = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) {
+        setNear(true);
+        io.disconnect();
+      }
+    }, { rootMargin: '300px' });
+    io.observe(holder.current);
+    return () => io.disconnect();
+  }, [near, src]);
+  useEffect(() => {
+    if (!near && src && !src.startsWith('data:')) return undefined;
     if (!src || src.startsWith('data:')) {
       setObjectUrl(null);
       return undefined;
@@ -209,14 +225,15 @@ export function Avatar({ name: rawName, src: rawSrc, size = 40 }) {
       alive = false;
       if (nextUrl) URL.revokeObjectURL(nextUrl);
     };
-  }, [src]);
+  }, [src, near]);
   if (src) {
     const resolvedSrc = src.startsWith('data:') ? src : objectUrl;
-    if (resolvedSrc) return <img src={resolvedSrc} alt={name} className="rounded-lg object-cover" style={{ width: size, height: size }} />;
+    if (resolvedSrc) return <img src={resolvedSrc} alt={name} className="shrink-0 rounded-lg object-cover" style={{ width: size, height: size }} />;
   }
   return (
     <div
-      className="grid place-items-center rounded-lg font-semibold text-white"
+      ref={holder}
+      className="grid shrink-0 place-items-center rounded-lg font-semibold text-white"
       style={{ width: size, height: size, background: `hsl(${hue} 45% 55%)`, fontSize: Math.max(14, size * 0.36) }}
     >
       {initials}
@@ -310,7 +327,7 @@ export function MapsLink({ lat, lng, className = '' }) {
       rel="noopener noreferrer"
       className={`inline-flex min-h-11 items-center gap-1.5 rounded-lg bg-sky-50 px-3 text-sm font-semibold text-sky-800 ring-1 ring-sky-200 hover:bg-sky-100 ${className}`}
     >
-      <span aria-hidden="true">📍</span>
+      <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M12 21s7-5.6 7-11a7 7 0 1 0-14 0c0 5.4 7 11 7 11z" /><circle cx="12" cy="10" r="2.6" /></svg>
       {t('Open in Maps')}
     </a>
   );
