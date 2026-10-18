@@ -21,13 +21,16 @@
  *
  * Neither is a finding. Each is a prompt for an officer, worded as one, and
  * the reasons are always shown: an officer must be able to see why a case was
- * raised and disagree. Nothing here is shown to the public, to families, or
- * to welfare desks that do not investigate.
+ * raised and disagree. Nothing here is shown to the public or to families.
+ * Only AHTU and SJPU desks are alerted; the patterns page is for police and
+ * command desks; CCI, SAA, JJB and DLSA desks do not see the prompt on a case
+ * (shared/privacy.js deskCaseView). CWC and DCPU see it, for protection
+ * decisions.
  *
  * Pure: reads records, changes nothing.
  */
 import { familyPhone, nameOverlap, personCategoryOf } from './case-domain.js';
-import { sameDistrictPlace } from './scope.js';
+import { districtKey } from './scope.js';
 import { storedAadhaarFingerprint } from './privacy.js';
 
 export const RISK_MODEL_VERSION = 'trafficking-signals-2026-10';
@@ -93,17 +96,80 @@ const isAdolescent = (r) => {
 };
 
 /**
+ * The cases indexed by what identifies a person (Aadhaar fingerprint, family
+ * phone) and adolescents by district, each worked out once.
+ *
+ * Comparing every case with every other recomputed a fingerprint (an HMAC)
+ * per pair for cases still holding a whole Aadhaar number: a thousand cases
+ * took seconds, two thousand over half a minute. With the index a case is
+ * compared only with the cases that share a fingerprint, a phone or a
+ * district. Build one per request: records change between requests.
+ */
+export function buildPersonIndex(reports = [], { aadhaarKey = null, nonFamilyPhones = null } = {}) {
+  const fingerprints = new Map();
+  const phones = new Map();
+  const districts = new Map();
+  const byFingerprint = new Map();
+  const byPhone = new Map();
+  const adolescentsByDistrict = new Map();
+  const push = (map, key, row) => {
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(row);
+  };
+  const index = {
+    fingerprint(r) {
+      if (!fingerprints.has(r)) fingerprints.set(r, storedAadhaarFingerprint(r, aadhaarKey));
+      return fingerprints.get(r);
+    },
+    phone(r) {
+      if (!phones.has(r)) phones.set(r, familyPhone(r, nonFamilyPhones));
+      return phones.get(r);
+    },
+    district(r) {
+      if (!districts.has(r)) districts.set(r, districtKey(r));
+      return districts.get(r);
+    },
+    byFingerprint,
+    byPhone,
+    adolescentsByDistrict,
+  };
+  for (const r of reports) {
+    if (!r) continue;
+    const fp = index.fingerprint(r);
+    if (fp) push(byFingerprint, fp, r);
+    const phone = index.phone(r);
+    if (phone) push(byPhone, phone, r);
+    if (isAdolescent(r)) push(adolescentsByDistrict, index.district(r), r);
+  }
+  return index;
+}
+
+function samePersonIn(index, a, b) {
+  if (!a || !b || a.id === b.id) return false;
+  const fa = index.fingerprint(a);
+  const fb = index.fingerprint(b);
+  if (fa && fb) return fa === fb;
+  const pa = index.phone(a);
+  const pb = index.phone(b);
+  return Boolean(pa && pb && pa === pb && nameOverlap(a.childName, b.childName) >= 0.6);
+}
+
+/** The other indexed cases that could be the same person as `report`. */
+function personCandidates(index, report) {
+  const out = new Set();
+  const fp = index.fingerprint(report);
+  if (fp) for (const r of index.byFingerprint.get(fp) || []) out.add(r);
+  const phone = index.phone(report);
+  if (phone) for (const r of index.byPhone.get(phone) || []) out.add(r);
+  return [...out].filter((r) => r.id !== report?.id);
+}
+
+/**
  * Whether two cases are the same person: the same Aadhaar fingerprint, or
  * closely matching names with the same family phone.
  */
 export function samePerson(a, b, { aadhaarKey = null, nonFamilyPhones = null } = {}) {
-  if (!a || !b || a.id === b.id) return false;
-  const fa = storedAadhaarFingerprint(a, aadhaarKey);
-  const fb = storedAadhaarFingerprint(b, aadhaarKey);
-  if (fa && fb) return fa === fb;
-  const pa = familyPhone(a, nonFamilyPhones);
-  const pb = familyPhone(b, nonFamilyPhones);
-  return Boolean(pa && pb && pa === pb && nameOverlap(a.childName, b.childName) >= 0.6);
+  return samePersonIn(buildPersonIndex([], { aadhaarKey, nonFamilyPhones }), a, b);
 }
 
 /**
@@ -113,7 +179,8 @@ export function samePerson(a, b, { aadhaarKey = null, nonFamilyPhones = null } =
  * checks. Returns { level, label, score, reasons: [{ code, label }],
  * assessedAt, version }.
  */
-export function assessTraffickingRisk(report, { reports = [], now = Date.now(), aadhaarKey = null, nonFamilyPhones = null } = {}) {
+export function assessTraffickingRisk(report, { reports = [], now = Date.now(), aadhaarKey = null, nonFamilyPhones = null, index = null } = {}) {
+  const people = index || buildPersonIndex(reports, { aadhaarKey, nonFamilyPhones });
   const reasons = [];
   const add = (code, points) => reasons.push({ code, label: RISK_REASONS[code], points });
   const categories = new Set(report?.vulnerabilityProfile?.categories || []);
@@ -140,15 +207,14 @@ export function assessTraffickingRisk(report, { reports = [], now = Date.now(), 
 
   if (report?.vulnerabilityProfile?.producedByType === 'rpf') add('railway', 1);
 
-  const others = reports.filter((r) => r && r.id !== report?.id);
-  if (others.some((r) => samePerson(report, r, { aadhaarKey, nonFamilyPhones }) && (CLOSED.has(r.status) || missingTime(r) < missingTime(report)))) {
+  if (personCandidates(people, report).some((r) => samePersonIn(people, report, r) && (CLOSED.has(r.status) || missingTime(r) < missingTime(report)))) {
     add('previously_missing', 2);
   }
 
   if (isAdolescent(report)) {
     const when = missingTime(report) || now;
-    const nearby = others.filter((r) =>
-      isAdolescent(r) && sameDistrictPlace(r, report) && Math.abs(missingTime(r) - when) <= 30 * DAY_MS);
+    const nearby = (people.adolescentsByDistrict.get(people.district(report)) || [])
+      .filter((r) => r.id !== report?.id && Math.abs(missingTime(r) - when) <= 30 * DAY_MS);
     if (nearby.length >= 2) add('district_cluster', 1);
   }
 
@@ -208,6 +274,7 @@ const GENERIC_PLACE = new Set(['', 'unknown', 'location not specified', 'locatio
  */
 export function detectPatterns({ reports = [], foundReports = [], now = Date.now(), windowDays = 30, aadhaarKey = null, nonFamilyPhones = null } = {}) {
   const live = reports.filter((r) => r && !r.anonymizedAt);
+  const people = buildPersonIndex(live, { aadhaarKey, nonFamilyPhones });
   const since = now - windowDays * DAY_MS;
   const baselineFrom = since - 180 * DAY_MS;
 
@@ -254,7 +321,7 @@ export function detectPatterns({ reports = [], foundReports = [], now = Date.now
   const repeatMissing = [];
   for (const r of live) {
     if (seen.has(r.id)) continue;
-    const group = live.filter((o) => o.id === r.id || samePerson(r, o, { aadhaarKey, nonFamilyPhones }));
+    const group = [r, ...personCandidates(people, r).filter((o) => samePersonIn(people, r, o))];
     if (group.length < 2) continue;
     group.forEach((o) => seen.add(o.id));
     if (!group.some(isOpen)) continue;
@@ -265,16 +332,16 @@ export function detectPatterns({ reports = [], foundReports = [], now = Date.now
   // Siblings missing together are a pattern too.
   const byPhone = new Map();
   for (const r of live.filter(isOpen)) {
-    const phone = familyPhone(r, nonFamilyPhones);
+    const phone = people.phone(r);
     if (!phone) continue;
     if (!byPhone.has(phone)) byPhone.set(phone, []);
     byPhone.get(phone).push(r);
   }
   const sharedContacts = [];
   for (const [phone, group] of byPhone) {
-    const people = group.filter((r, i) => !group.slice(0, i).some((o) => samePerson(r, o, { aadhaarKey, nonFamilyPhones })));
-    if (people.length < 2) continue;
-    sharedContacts.push({ phoneSuffix: phone.replace(/\D/g, '').slice(-4), cases: people.map(caseRef) });
+    const distinct = group.filter((r, i) => !group.slice(0, i).some((o) => samePersonIn(people, r, o)));
+    if (distinct.length < 2) continue;
+    sharedContacts.push({ phoneSuffix: phone.replace(/\D/g, '').slice(-4), cases: distinct.map(caseRef) });
   }
 
   // Movement: where people were reported missing, and where they were seen.

@@ -483,7 +483,7 @@ export function createSightingMatcher(deps) {
         action: 'sighting.forward_matched',
         targetType: 'foundReport',
         targetId: updated.id,
-        summary: `Linked sighting at ${updated.foundLocation} to case ${updated.matchedReportId} for police review`,
+        summary: `Linked sighting ${updated.id} to case ${updated.matchedReportId} for police review`,
         scope: { matchedReportId: updated.matchedReportId, state: updated.state, district: updated.district },
         // Readable by the desks of the newly linked case; which case it
         // pointed at before is not theirs to know.
@@ -659,7 +659,7 @@ export function createSightingMatcher(deps) {
           action: 'sighting.reverse_matched',
           targetType: 'foundReport',
           targetId: sighting.id,
-          summary: `Linked earlier sighting at ${sighting.foundLocation} to case ${report.id} for police review`,
+          summary: `Linked earlier sighting ${sighting.id} to case ${report.id} for police review`,
           scope: { matchedReportId: report.id, state: sighting.state, district: sighting.district },
           metadata: {
             reportId: report.id,

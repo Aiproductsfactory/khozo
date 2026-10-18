@@ -197,8 +197,9 @@ is never removed automatically: review it and record the decision.
   contact numbers, movement between districts and states, and sighting hotspots. Review it
   [weekly]; raise a pattern with the SP / DCP and, for movement across states, the other state's
   AHTU through the nodal officer.
-- Never tell a family, the press or a CWC desk that a case was raised for trafficking risk. Share
-  what a child's protection needs through the formal referral.
+- Never tell a family or the press that a case was raised for trafficking risk. CWC and DCPU
+  desks see the prompt for protection decisions; CCI, adoption, JJB and legal-aid desks do not,
+  so share what a child's care needs through the formal referral.
 
 ## 12. What never to share publicly
 

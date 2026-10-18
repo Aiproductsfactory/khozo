@@ -45,6 +45,21 @@ export default function registerAuthRoutes(router, deps) {
 
 
   
+  /**
+   * A token for `user`, or null after answering 503 when the server cannot
+   * sign one (a deployed Worker without KHOZO_JWT_SECRET refuses to use the
+   * repository's fallback; worker/src/http/express-compat.js).
+   */
+  async function tokenFor(res, user) {
+    try {
+      return await signToken(user);
+    } catch (err) {
+      if (err?.code !== 'JWT_SECRET_MISSING') throw err;
+      res.status(503).json({ error: 'Sign-in is not configured on this server' });
+      return null;
+    }
+  }
+
   const PUBLIC_ROLES = ['parent', 'ngo'];
   const OTP_TTL_MS = 10 * 60 * 1000;
   const registerLimit = fixedWindowRateLimit({
@@ -241,7 +256,9 @@ export default function registerAuthRoutes(router, deps) {
       scope: { state, district },
       metadata: { phoneVerified: true, phoneSuffix: cleanPhone.slice(-4) },
     });
-    res.status(201).json({ token: await signToken(user), user: publicUser(user) });
+    const token = await tokenFor(res, user);
+    if (!token) return;
+    res.status(201).json({ token, user: publicUser(user) });
   });
   
   router.post('/login', loginLimit, async (req, res) => {
@@ -251,6 +268,9 @@ export default function registerAuthRoutes(router, deps) {
     const user = findUserByEmail(email || '');
     if (!user || !bcrypt.compareSync(password || '', user.passwordHash))
       return res.status(401).json({ error: 'Invalid email or password' });
+    // Signed first: a server that cannot sign changes nothing.
+    const token = await tokenFor(res, user);
+    if (!token) return;
     // A hash made at a lower work factor is replaced while the password is
     // in hand; nobody has to reset anything.
     let current = user;
@@ -261,7 +281,7 @@ export default function registerAuthRoutes(router, deps) {
     } catch {
       // An unreadable hash still verified above; leave it as it is.
     }
-    res.json({ token: await signToken(current), user: publicUser(current) });
+    res.json({ token, user: publicUser(current) });
   });
   
   router.get('/me', authRequired, (req, res) => {
@@ -341,7 +361,9 @@ export default function registerAuthRoutes(router, deps) {
       },
       metadata: { forcedChangeCompleted: Boolean(req.user.mustChangePassword), otherSessionsSignedOut: true },
     });
-    res.json({ token: await signToken(user), user: publicUser(user) });
+    const token = await tokenFor(res, user);
+    if (!token) return;
+    res.json({ token, user: publicUser(user) });
   });
 
   // Signs this account out on every device, this one included: for a lost or

@@ -43,5 +43,6 @@ export default registerDashboardRoutes(Router(), {
     // this repository (shared/privacy.js).
     exportSigning: privacySecrets(process.env).exportSigning,
     fieldHashKey: privacySecrets(process.env).fieldHashKey,
+    fieldHashKeyDerived: privacySecrets(process.env).fieldHashKeyDerived,
   },
 });

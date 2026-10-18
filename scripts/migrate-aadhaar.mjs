@@ -8,10 +8,9 @@
  * working across old and new records.
  *
  * The fingerprint key must be the one the deployed API uses, or old and new
- * fingerprints will not match: set KHOZO_FIELD_HASH_KEY to the Worker's value,
- * or, if the Worker has none, KHOZO_JWT_SECRET to the Worker's JWT secret (the
- * key is derived from it). The script refuses to run against a real database
- * with the development secret.
+ * fingerprints will not match: set KHOZO_FIELD_HASH_KEY as a Worker secret
+ * first, then run this with the same value. The readiness report (super admin)
+ * counts whole numbers left and fingerprints made under another key.
  *
  * Lists by default; rewrites only with --apply. Prints case ids and counts,
  * never a number.
@@ -25,7 +24,7 @@ import process from 'node:process';
 import pg from 'pg';
 
 import '../server/src/env.js';
-import { DEV_ROOT_SECRET, aadhaarFields, isFullAadhaar, privacySecrets } from '../shared/privacy.js';
+import { aadhaarFields, isFullAadhaar, privacySecrets } from '../shared/privacy.js';
 
 const apply = process.argv.includes('--apply');
 
@@ -33,8 +32,11 @@ if (!process.env.DATABASE_URL) {
   console.error('DATABASE_URL is not set.');
   process.exit(1);
 }
-if (!process.env.KHOZO_FIELD_HASH_KEY && (!process.env.KHOZO_JWT_SECRET || process.env.KHOZO_JWT_SECRET === DEV_ROOT_SECRET)) {
-  console.error('Set KHOZO_FIELD_HASH_KEY (or KHOZO_JWT_SECRET) to the deployed API\'s value first: fingerprints made with another key will not match new registrations.');
+// An explicit key only. A key derived from the JWT secret would change the
+// day that secret is rotated, and every fingerprint written here would stop
+// matching. Set the same value as a Worker secret first.
+if (!process.env.KHOZO_FIELD_HASH_KEY) {
+  console.error('Set KHOZO_FIELD_HASH_KEY to the value the deployed API uses (npx wrangler secret put KHOZO_FIELD_HASH_KEY) before migrating.');
   process.exit(1);
 }
 

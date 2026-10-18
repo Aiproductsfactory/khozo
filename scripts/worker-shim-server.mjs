@@ -123,6 +123,7 @@ function buildDeps(env) {
       smsApiKey: env.KHOZO_SMS_API_KEY,
       exportSigning: secrets.exportSigning,
       fieldHashKey: secrets.fieldHashKey,
+      fieldHashKeyDerived: secrets.fieldHashKeyDerived,
     },
   };
 }

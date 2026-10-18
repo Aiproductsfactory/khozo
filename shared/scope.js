@@ -95,6 +95,17 @@ function samePlaceDistrict(a, b) {
   return Boolean(a.district) && a.district === b.district;
 }
 
+/**
+ * A string two rows share when they are in the same district by the rules
+ * above (codes where known, normalised names otherwise). For grouping rows
+ * before comparing them; a pair it groups apart can still be compared with
+ * sameDistrictPlace.
+ */
+export function districtKey(row) {
+  const p = placeOf(row);
+  return `${p.stateCode || `n:${p.state || ''}`}|${p.districtCode || `n:${p.district || ''}`}`;
+}
+
 /** Whether two places ({ state, stateCode, ... }) are in the same state. */
 export function sameStatePlace(a, b) {
   return samePlaceState(placeOf(a), placeOf(b));

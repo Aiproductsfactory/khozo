@@ -127,7 +127,9 @@ already holds (`shared/trafficking.js`):
 - **The MIS report measures results**: recovery rate, days to recovery, days to
   the first match candidate, and how long open cases have been missing.
 
-Families and welfare desks never see the prompts, the alerts or the page.
+Families never see any of it. Only AHTU and SJPU desks are alerted, the patterns page is for
+police and command desks, and CCI, adoption, JJB and legal-aid desks do not see the prompt on a
+case.
 
 ## Deploy to Cloudflare Workers
 
@@ -145,7 +147,7 @@ Worker needs a Hyperdrive binding to the Postgres instance (already in
 npx wrangler secret put KHOZO_JWT_SECRET          # required: a deployed Worker refuses tokens without it
 npx wrangler secret put KHOZO_EXPORT_SIGNING_KEY
 npx wrangler secret put AARAKSHAK_API_KEY
-npx wrangler secret put KHOZO_FIELD_HASH_KEY      # optional: keys Aadhaar fingerprints; derived from the JWT secret if unset
+npx wrangler secret put KHOZO_FIELD_HASH_KEY      # set before migrating: keys Aadhaar fingerprints (derived from the JWT secret if unset, which breaks matching if that secret rotates)
 ```
 
 Retention (see `docs/governance/retention-schedule.md`). Leave these unset until the

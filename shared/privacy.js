@@ -19,8 +19,8 @@
  *   deskCaseView
  *       What a desk sees of a case. Welfare institutions that do not contact
  *       families (CCI, SAA, JJB, DLSA) see the case without the guardian's
- *       phone, e-mail and address (DPIA G23); they reach the family through
- *       the police or the CWC. Every desk sees an Aadhaar number masked, which
+ *       phone, e-mail and address (DPIA G23), and without its trafficking-risk
+ *       prompt; they reach the family through the police or the CWC. Every desk sees an Aadhaar number masked, which
  *       also covers records written before numbers stopped being stored.
  *
  *   derivedSecret
@@ -54,6 +54,9 @@ export function privacySecrets(env = {}) {
   const root = env.KHOZO_JWT_SECRET || DEV_ROOT_SECRET;
   return {
     fieldHashKey: env.KHOZO_FIELD_HASH_KEY || derivedSecret(root, 'field-hash'),
+    // A derived key changes when the JWT secret is rotated, which orphans
+    // every stored fingerprint; the readiness report says so.
+    fieldHashKeyDerived: !env.KHOZO_FIELD_HASH_KEY,
     rateLimitAuditSalt: env.KHOZO_RATE_LIMIT_AUDIT_SALT || derivedSecret(root, 'rate-limit-audit'),
     exportSigning: {
       keyId: env.KHOZO_EXPORT_SIGNING_KEY
@@ -85,6 +88,20 @@ export function maskAadhaar(value) {
   return `XXXX XXXX ${digitsOf(value).slice(-4)}`;
 }
 
+const keyIds = new Map();
+
+/**
+ * A short public label for a fingerprint key, stored with each fingerprint,
+ * so fingerprints made under a different key (after the key or the JWT secret
+ * it was derived from changed) can be found instead of silently never
+ * matching. Reveals nothing about the key.
+ */
+export function fieldKeyId(key) {
+  if (!key) return null;
+  if (!keyIds.has(key)) keyIds.set(key, crypto.createHmac('sha256', String(key)).update('khozo:key-id').digest('hex').slice(0, 8));
+  return keyIds.get(key);
+}
+
 /** The keyed fingerprint of a whole number, or null. */
 export function aadhaarFingerprint(value, key) {
   if (!isFullAadhaar(value) || !key) return null;
@@ -93,8 +110,8 @@ export function aadhaarFingerprint(value, key) {
 
 /** The fields a case stores for an Aadhaar number someone typed. */
 export function aadhaarFields(value, key) {
-  if (!isFullAadhaar(value)) return { childAadhar: null, childAadharHash: null };
-  return { childAadhar: maskAadhaar(value), childAadharHash: aadhaarFingerprint(value, key) };
+  if (!isFullAadhaar(value)) return { childAadhar: null, childAadharHash: null, childAadharKeyId: null };
+  return { childAadhar: maskAadhaar(value), childAadharHash: aadhaarFingerprint(value, key), childAadharKeyId: fieldKeyId(key) };
 }
 
 /**
@@ -103,7 +120,12 @@ export function aadhaarFields(value, key) {
  */
 export function storedAadhaarFingerprint(record, key) {
   if (!record) return null;
-  return record.childAadharHash || aadhaarFingerprint(record.childAadhar, key);
+  if (record.childAadharHash) {
+    // Made under another key: it can never match one made under this key.
+    if (record.childAadharKeyId && key && record.childAadharKeyId !== fieldKeyId(key)) return null;
+    return record.childAadharHash;
+  }
+  return aadhaarFingerprint(record.childAadhar, key);
 }
 
 // ------------------------------------------------------------- desk views ---
@@ -119,11 +141,15 @@ export function deskCaseView(user, report) {
   const view = { ...report };
   if ('childAadhar' in view) view.childAadhar = maskAadhaar(view.childAadhar);
   delete view.childAadharHash;
+  delete view.childAadharKeyId;
   if (NO_FAMILY_CONTACT_ROLES.includes(user?.role)) {
     view.parentPhone = null;
     view.parentEmail = null;
     view.address = null;
     view.familyContactWithheld = WITHHELD;
+    // A trafficking-risk prompt is for the desks that investigate
+    // (shared/trafficking.js), not for care, adoption, court or legal aid.
+    delete view.traffickingRisk;
   }
   return view;
 }
@@ -140,6 +166,9 @@ const REPORT_KEEP = new Set([
   'hasIdentificationProfile', 'hasVulnerabilityProfile',
   'privacyReviewStatus', 'anonymizedAt', 'anonymizationApproval', 'faceIndex',
   'workflowStatus', 'traffickingRisk',
+  // When the person was found: the MIS recovery measures (shared/outcomes.js)
+  // still count an anonymised case.
+  'foundAt', 'lastWorkflowAt',
 ]);
 
 /** Sighting fields that say nothing about who was seen or who reported it. */

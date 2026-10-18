@@ -45,13 +45,26 @@ function timeOf(value) {
 const isOpenCase = (report) => Boolean(report) && !report.anonymizedAt && !CLOSED_CASE.has(report.status);
 
 /**
- * Why a sighting past its date is kept, or null when it is not.
- * `casesById` maps case ids to cases.
+ * Why a sighting past its date is kept, and with which case, or null when it
+ * is not: `{ reason, caseId }`. `casesById` maps case ids to cases.
+ *
+ *   confirmed_match              an officer confirmed it matches a case
+ *   linked_to_open_case          a link waiting on an officer, for an open case
+ *   intake_relies_on_sighting_photo
+ *                                a found-child intake opened from it has no
+ *                                photo of its own (intakes made before photos
+ *                                were copied, or a copy that failed) and shows
+ *                                the sighting's: deleting it would leave a
+ *                                child in care with no photograph
  */
 export function sightingEscalation(sighting, casesById) {
-  if (sighting.status === 'matched') return 'confirmed_match';
+  const intake = sighting.formalReportId ? casesById.get(sighting.formalReportId) : null;
+  if (intake && isOpenCase(intake) && !intake.photoFile) {
+    return { reason: 'intake_relies_on_sighting_photo', caseId: intake.id };
+  }
+  if (sighting.status === 'matched' && sighting.matchedReportId) return { reason: 'confirmed_match', caseId: sighting.matchedReportId };
   const linked = sighting.matchedReportId ? casesById.get(sighting.matchedReportId) : null;
-  if (linked && isOpenCase(linked) && sighting.status === 'pending_review') return 'linked_to_open_case';
+  if (linked && isOpenCase(linked) && sighting.status === 'pending_review') return { reason: 'linked_to_open_case', caseId: linked.id };
   return null;
 }
 
@@ -86,12 +99,12 @@ export function planRetention({ reports = [], foundReports = [], now = Date.now(
     // date, or (for a case still open past that date, which is under review)
     // another 180 days. One whose case has itself ended goes with it.
     const escalation = sightingEscalation(f, casesById);
-    const linked = f.matchedReportId ? casesById.get(f.matchedReportId) : null;
+    const linked = escalation ? casesById.get(escalation.caseId) : null;
     const linkedUntil = timeOf(linked?.retentionUntil);
     const caseLives = linked && !linked.anonymizedAt && (isOpenCase(linked) || (linkedUntil != null && linkedUntil > now));
     if (escalation && caseLives) {
       const until = linkedUntil != null && linkedUntil > now ? linked.retentionUntil : new Date(now + 180 * DAY_MS).toISOString();
-      plan.sightings.extend.push({ id: f.id, reason: escalation, caseId: linked.id, until });
+      plan.sightings.extend.push({ id: f.id, reason: escalation.reason, caseId: linked.id, until });
     } else {
       plan.sightings.anonymise.push({ id: f.id, reason: escalation ? 'case_ended' : 'retention_expired' });
     }
@@ -139,10 +152,27 @@ export async function anonymiseCase(deps, report, { now = Date.now(), approval =
     await Promise.resolve(deps.deletePhoto(before.photoFile)).catch(() => false);
   }
   if (typeof deps.rewriteActivity === 'function') {
-    const label = anonymisedLabel('report', report.id);
-    deps.rewriteActivity((row) => (row?.scope?.reportId === report.id ? { target: label } : null));
+    const label = anonymisedLabel('report', before.id);
+    // A parent or NGO who registered the case is named as the actor of its
+    // rows; officers are not data subjects here and stay named.
+    const citizenActor = ['parent', 'ngo'].includes(before.registeredByRole) ? before.registeredById : null;
+    const names = [before.childName, before.parentName].filter((n) => typeof n === 'string' && n.trim().length >= 2);
+    deps.rewriteActivity((row) => {
+      if (row?.scope?.reportId !== before.id) return null;
+      const change = { target: label };
+      if ((citizenActor && row.actorId === citizenActor) || names.includes(row.actor)) change.actor = 'Anonymized';
+      const action = withoutNames(row.action, names);
+      if (action !== row.action) change.action = action;
+      return change;
+    });
   }
   return patch;
+}
+
+/** `text` with each of `names` replaced, for an activity row's wording. */
+function withoutNames(text, names) {
+  if (typeof text !== 'string') return text;
+  return names.reduce((out, name) => out.split(name).join('[removed]'), text);
 }
 
 const GENERIC_PLACES = new Set(['', 'unknown', 'location not specified', 'location under review', 'not specified', 'location removed']);
@@ -159,8 +189,13 @@ export async function anonymiseSighting(deps, sighting, { now = Date.now(), appr
     const label = anonymisedLabel('foundReport', before.id);
     const place = String(before.foundLocation || '').trim();
     const placeIdentifies = Boolean(place) && !GENERIC_PLACES.has(place.toLowerCase());
+    const reporter = [before.reporterName, before.reporterDisplayName]
+      .filter((n) => typeof n === 'string' && n.trim().length >= 2 && !/^(anonymous|confidential|anonymized) citizen$/i.test(n.trim()));
     deps.rewriteActivity((row) => {
-      if (row?.scope?.foundReportId === before.id) return { target: label };
+      if (row?.scope?.foundReportId === before.id) {
+        // The citizen who sent it is the actor of its "uploaded" row.
+        return reporter.includes(row.actor) ? { target: label, actor: 'Anonymized citizen' } : { target: label };
+      }
       // Rows written before they carried the sighting id show its place; the
       // place is removed wherever it appears, never attributed elsewhere.
       if (placeIdentifies && row?.target === place) return { target: 'Location removed' };

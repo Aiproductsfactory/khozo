@@ -14,13 +14,17 @@ import {
   anonymisedSightingPatch,
   derivedSecret,
   deskCaseView,
+  fieldKeyId,
   identityHashWith,
+  storedAadhaarFingerprint,
   maskAadhaar,
   privacySecrets,
 } from '../shared/privacy.js';
 import { planRetention, runRetentionSweep } from '../shared/retention.js';
 import { duplicateScore } from '../shared/case-domain.js';
+import { outcomeMeasures } from '../shared/outcomes.js';
 import { runRetention } from '../worker/src/ops.js';
+import { createAuth } from '../worker/src/http/express-compat.js';
 
 const checks = [];
 const check = (name, ok, detail = '') => {
@@ -62,17 +66,21 @@ const iso = (offsetDays) => new Date(NOW + offsetDays * DAY).toISOString();
   check('the same number scores as a duplicate', duplicateScore(stored, again, { aadhaarKey: key }) >= 0.58);
   check('the same last four digits do not', duplicateScore({ ...stored, childName: 'Zed' }, { ...other, childName: 'Yam' }, { aadhaarKey: key }) < 0.58);
   check('a number stored whole before the rule still matches', duplicateScore(legacy, again, { aadhaarKey: key }) >= 0.58);
+  check('each fingerprint records which key made it', f.childAadharKeyId === fieldKeyId(key) && f.childAadharKeyId.length === 8);
+  check('a fingerprint made under another key is recognised as such, not compared', storedAadhaarFingerprint(stored, 'rotated-key') === null && storedAadhaarFingerprint(stored, key) === stored.childAadharHash);
+  check('a derived fingerprint key is flagged', privacySecrets({ KHOZO_JWT_SECRET: 'x' }).fieldHashKeyDerived === true && privacySecrets({ KHOZO_FIELD_HASH_KEY: 'y' }).fieldHashKeyDerived === false);
 }
 
 // ---- Desk views
 {
-  const report = { id: 'r_1', childAadhar: '432187651098', childAadharHash: 'abc', parentPhone: '9000000001', parentEmail: 'p@example.org', address: '1 Lane' };
+  const report = { id: 'r_1', childAadhar: '432187651098', childAadharHash: 'abc', parentPhone: '9000000001', parentEmail: 'p@example.org', address: '1 Lane', traffickingRisk: { level: 'high' } };
   const cci = deskCaseView({ role: 'cci' }, report);
   const police = deskCaseView({ role: 'police' }, report);
   check('a CCI desk sees no family contact', cci.parentPhone === null && cci.parentEmail === null && cci.address === null && Boolean(cci.familyContactWithheld));
   check('the police see the family contact', police.parentPhone === '9000000001' && police.address === '1 Lane');
   check('every desk sees a legacy Aadhaar number masked', police.childAadhar === 'XXXX XXXX 1098' && cci.childAadhar === 'XXXX XXXX 1098');
   check('no desk receives the fingerprint', !('childAadharHash' in police) && !('childAadharHash' in cci));
+  check('a CCI desk does not see the trafficking-risk prompt; the police do', !('traffickingRisk' in cci) && police.traffickingRisk?.level === 'high');
   check('the stored record is not changed by a view', report.parentPhone === '9000000001' && report.childAadhar === '432187651098');
 }
 
@@ -100,6 +108,9 @@ const iso = (offsetDays) => new Date(NOW + offsetDays * DAY).toISOString();
   check('it keeps why the case closed, not the note', after.closure.reason === 'restored_family' && !after.closure.note);
   check('the date gone missing keeps only its month', after.dateOfMissing === '2026-01-01');
   check('height and weight go', after.height === null && after.weight === null);
+  const foundCase = { id: 'r_f', status: 'found', foundAt: iso(-3), dateOfMissing: iso(-40), createdAt: NOW - 40 * DAY, childName: 'Found Child', state: 'Gujarat', district: 'Surat' };
+  const anonFound = { ...foundCase, ...anonymisedReportPatch(foundCase, { now: NOW }) };
+  check('an anonymised recovered case still counts as recovered', outcomeMeasures({ reports: [anonFound], now: NOW }).recovered === 1);
   const sighting = {
     id: 'f_1', status: 'pending_review', state: 'Gujarat', district: 'Ahmedabad', lat: 23.01, lng: 72.55, foundLocation: 'Kalupur station platform 3',
     reporterName: 'Kiran', reporterPhone: '9111111111', reporterPhoneVisible: '9111111111', idProofNumberMasked: '**1234', note: 'Girl in red, crying',
@@ -117,17 +128,21 @@ const iso = (offsetDays) => new Date(NOW + offsetDays * DAY).toISOString();
 function world() {
   const reports = [
     { id: 'r_open_old', status: 'missing', retentionUntil: iso(-10), photoFile: 'a.jpg' },
-    { id: 'r_closed_old', status: 'closed', retentionUntil: iso(-10), photoFile: 'b.jpg', childName: 'Closed Child' },
+    { id: 'r_closed_old', status: 'closed', retentionUntil: iso(-10), photoFile: 'b.jpg', childName: 'Closed Child', parentName: 'Leela', registeredByRole: 'parent', registeredById: 'u_parent' },
     { id: 'r_closed_new', status: 'closed', retentionUntil: iso(400) },
     { id: 'r_soon', status: 'found', retentionUntil: iso(10) },
     { id: 'r_done', status: 'closed', retentionUntil: iso(-50), anonymizedAt: iso(-40) },
+    { id: 'r_intake_nophoto', status: 'under_review', caseOrigin: 'found_child_intake', retentionUntil: iso(3000), photoFile: null },
+    { id: 'r_intake_photo', status: 'under_review', caseOrigin: 'found_child_intake', retentionUntil: iso(3000), photoFile: 'ri.jpg' },
   ];
   const foundReports = [
-    { id: 'f_plain', status: 'referred_cwc', retentionUntil: iso(-1), photoFile: 'fp.jpg', foundLocation: 'Platform 3, Kalupur' },
+    { id: 'f_plain', status: 'referred_cwc', retentionUntil: iso(-1), photoFile: 'fp.jpg', foundLocation: 'Platform 3, Kalupur', reporterName: 'Kiran Desai' },
     { id: 'f_linked', status: 'pending_review', matchedReportId: 'r_open_old', retentionUntil: iso(-1), photoFile: 'fl.jpg' },
     { id: 'f_confirmed_open', status: 'matched', matchedReportId: 'r_closed_new', retentionUntil: iso(-1) },
     { id: 'f_confirmed_gone', status: 'matched', matchedReportId: 'r_closed_old', retentionUntil: iso(-1) },
     { id: 'f_fresh', status: 'pending_review', retentionUntil: iso(100) },
+    { id: 'f_intake_only_photo', status: 'formalized_case', formalReportId: 'r_intake_nophoto', retentionUntil: iso(-1), photoFile: 'fi.jpg' },
+    { id: 'f_intake_copied', status: 'formalized_case', formalReportId: 'r_intake_photo', retentionUntil: iso(-1), photoFile: 'fc.jpg' },
   ];
   return { reports, foundReports };
 }
@@ -141,6 +156,8 @@ function world() {
   check('a closed case past its date is due', ids(plan.cases.anonymise) === 'r_closed_old');
   check('an open case past its date is never due, only reviewed', ids(plan.cases.review) === 'r_open_old');
   check('records due within 30 days are counted', plan.dueSoon.cases === 1);
+  check('a sighting whose found-child case shows its photo is kept with that case', plan.sightings.extend.some((x) => x.id === 'f_intake_only_photo' && x.reason === 'intake_relies_on_sighting_photo' && x.caseId === 'r_intake_nophoto'));
+  check('a sighting whose found-child case has its own photo is not', plan.sightings.anonymise.some((x) => x.id === 'f_intake_copied'));
   check('an anonymised record is left alone', !JSON.stringify(plan).includes('r_done'));
 }
 
@@ -151,6 +168,8 @@ function memoryDeps() {
   const audit = [];
   const activity = [
     { id: 'a1', target: 'Closed Child', scope: { reportId: 'r_closed_old' } },
+    { id: 'a4', actor: 'Parent Account', actorId: 'u_parent', action: "SMS alert sent to Closed Child's mother Leela", target: 'Closed Child', scope: { reportId: 'r_closed_old' } },
+    { id: 'a5', actor: 'Kiran Desai', target: 'Platform 3, Kalupur', scope: { foundReportId: 'f_plain' } },
     { id: 'a2', target: 'Platform 3, Kalupur', scope: { state: 'Gujarat' } },
     { id: 'a3', target: 'Someone else', scope: { reportId: 'r_open_old' } },
   ];
@@ -172,12 +191,16 @@ function memoryDeps() {
   const dry = await runRetentionSweep(deps, { now: NOW, apply: false });
   check('a dry run changes nothing', !dry.applied && deps.deleted.length === 0 && deps.audit.length === 0 && !deps.reports.some((r) => r.anonymizedAt && r.id !== 'r_done'));
   const done = await runRetentionSweep(deps, { now: NOW, apply: true });
-  check('an applied sweep anonymises what is due', done.done.sightingsAnonymised === 2 && done.done.casesAnonymised === 1);
-  check('and deletes their photographs', ['fp.jpg', 'b.jpg'].every((f) => deps.deleted.includes(f)) && !deps.deleted.includes('a.jpg'));
+  check('an applied sweep anonymises what is due', done.done.sightingsAnonymised === 3 && done.done.casesAnonymised === 1);
+  check('and deletes their photographs', ['fp.jpg', 'b.jpg', 'fc.jpg'].every((f) => deps.deleted.includes(f)) && !deps.deleted.includes('a.jpg') && !deps.deleted.includes('fi.jpg'));
   check('an open case is untouched', !deps.reports.find((r) => r.id === 'r_open_old').anonymizedAt);
   check('a kept sighting gets its case’s date', deps.foundReports.find((f) => f.id === 'f_confirmed_open').retentionUntil === iso(400));
-  check('every change is audited by id', deps.audit.length === 5 && deps.audit.every((row) => row.targetId && !JSON.stringify(row).includes('Closed Child')));
-  check('the activity feed is rewritten', deps.activity[0].target === 'Anonymised case r_closed_old' && deps.activity[1].target === 'Location removed' && deps.activity[2].target === 'Someone else');
+  check('every change is audited by id', deps.audit.length === 7 && deps.audit.every((row) => row.targetId && !JSON.stringify(row).includes('Closed Child')));
+  const byId = Object.fromEntries(deps.activity.map((a) => [a.id, a]));
+  check('the activity feed is rewritten', byId.a1.target === 'Anonymised case r_closed_old' && byId.a2.target === 'Location removed' && byId.a3.target === 'Someone else');
+  check('a parent who registered the case is no longer named as its actor', byId.a4.actor === 'Anonymized');
+  check('names inside an activity row’s wording are removed', !byId.a4.action.includes('Closed Child') && !byId.a4.action.includes('Leela'), byId.a4.action);
+  check('the citizen who sent a sighting is no longer named', byId.a5.actor === 'Anonymized citizen' && byId.a5.target === 'Anonymised sighting f_plain');
   const again = await runRetentionSweep(deps, { now: NOW, apply: true });
   check('a second sweep finds nothing more to do', again.done.sightingsAnonymised === 0 && again.done.casesAnonymised === 0 && again.done.sightingsExtended === 0);
 }
@@ -211,6 +234,27 @@ function memoryDeps() {
   check('the changes are flushed', made.flushed());
   check('notifications older than the set period are deleted', queries.some((q) => /delete from public\.notifications/.test(q.sql) && q.params[0] === NOW - 90 * DAY));
   check('activity older than the set period is deleted', queries.some((q) => /delete from public\.activity/.test(q.sql) && q.params[0] === NOW - 730 * DAY));
+}
+
+// ---- A deployed Worker without a JWT secret
+{
+  const users = [{ id: 'u1', role: 'police', tokenVersion: 0 }];
+  const store = { findUserById: (id) => users.find((u) => u.id === id) };
+  const deployed = createAuth({ HYPERDRIVE: {} }, store);
+  let code = null;
+  try { await deployed.signToken(users[0]); } catch (err) { code = err.code; }
+  check('a deployed Worker without KHOZO_JWT_SECRET will not sign a token', code === 'JWT_SECRET_MISSING');
+  const local = createAuth({}, store);
+  const token = await local.signToken(users[0]);
+  let status = null;
+  const res = { status: (n) => { status = n; return { json: () => null }; } };
+  await deployed.authRequired({ headers: { authorization: `Bearer ${token}` } }, res, () => { status = 200; });
+  check('nor accept one signed with the repository fallback', status === 503);
+  await local.authRequired({ headers: { authorization: `Bearer ${token}` } }, res, () => { status = 200; });
+  check('the local shim keeps working', status === 200);
+  users[0].tokenVersion = 1;
+  await local.authRequired({ headers: { authorization: `Bearer ${token}` } }, res, () => { status = 200; });
+  check('a token from before a password change is refused', status === 401);
 }
 
 const failed = checks.filter((c) => !c.ok);

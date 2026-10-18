@@ -32,8 +32,8 @@ import {
   citizenCaseView,
   nonFamilyPhoneSet,
 } from '../case-domain.js';
-import { anonymisedLabel, deskCaseView } from '../privacy.js';
-import { assessTraffickingRisk, detectPatterns } from '../trafficking.js';
+import { anonymisedLabel, deskCaseView, fieldKeyId, isFullAadhaar } from '../privacy.js';
+import { assessTraffickingRisk, buildPersonIndex, detectPatterns } from '../trafficking.js';
 import { outcomeMeasures } from '../outcomes.js';
 import { anonymiseCase, anonymiseSighting, runRetentionSweep } from '../retention.js';
 
@@ -825,9 +825,14 @@ export default function registerDashboardRoutes(router, deps) {
       {
         id: 'export_signing',
         label: 'Signed exports',
-        status: settings.exportSigning?.key ? 'pass' : 'warning',
-        detail: settings.exportSigning?.key ? 'HMAC export signing key configured' : 'Demo HMAC export key in use; replace with managed key for production.',
+        status: !settings.exportSigning?.key ? 'warning' : settings.exportSigning.keyId === 'derived-from-jwt-secret' ? 'warning' : 'pass',
+        detail: !settings.exportSigning?.key
+          ? 'Demo HMAC export key in use; replace with managed key for production.'
+          : settings.exportSigning.keyId === 'derived-from-jwt-secret'
+            ? 'The export key is derived from the JWT secret. Set KHOZO_EXPORT_SIGNING_KEY, or rotating that secret will make every earlier export fail verification.'
+            : 'HMAC export signing key configured',
       },
+      aadhaarCheck(),
       {
         id: 'otp',
         label: 'OTP delivery',
@@ -1116,6 +1121,29 @@ export default function registerDashboardRoutes(router, deps) {
   // The pilot-readiness panel describes the deployment itself - storage, the
   // audit chain, the match providers, abuse monitoring - so it is the national
   // operator's alone.
+  /**
+   * Whether Aadhaar duplicate detection still works across every case
+   * (shared/privacy.js): numbers stored whole before fingerprints, and
+   * fingerprints made under a different key, are counted.
+   */
+  function aadhaarCheck() {
+    const currentKeyId = fieldKeyId(settings.fieldHashKey);
+    const reports = listReports();
+    const whole = reports.filter((r) => isFullAadhaar(r.childAadhar)).length;
+    const otherKey = reports.filter((r) => r.childAadharHash && r.childAadharKeyId && r.childAadharKeyId !== currentKeyId).length;
+    const problems = [
+      whole ? `${whole} case(s) still hold a whole Aadhaar number: run scripts/migrate-aadhaar.mjs` : null,
+      otherKey ? `${otherKey} case(s) have Aadhaar fingerprints made under a different key and no longer match new registrations` : null,
+      settings.fieldHashKeyDerived ? 'the fingerprint key is derived from the JWT secret: set KHOZO_FIELD_HASH_KEY before that secret is ever rotated' : null,
+    ].filter(Boolean);
+    return {
+      id: 'aadhaar_fingerprints',
+      label: 'Aadhaar numbers',
+      status: otherKey ? 'fail' : problems.length ? 'warning' : 'pass',
+      detail: problems.length ? `${problems.join('; ')}.` : 'No whole Aadhaar numbers stored; every fingerprint uses the current key.',
+    };
+  }
+
   router.get('/readiness', requireRole('super_admin'), (req, res) => {
     const checks = readinessChecks(req.user);
     res.json({
@@ -1695,8 +1723,12 @@ export default function registerDashboardRoutes(router, deps) {
   // caller may already see, so nothing crosses a jurisdiction line.
   const PATTERN_ROLES = ['super_admin', 'admin', 'crime_bureau', 'state_nodal', 'police', 'sjpu', 'ahtu', 'dcrb', 'rpf'];
 
+  /** One person index for every case in the request (shared/trafficking.js buildPersonIndex). */
   function riskContext() {
-    return { reports: listReports(), aadhaarKey: settings.fieldHashKey, nonFamilyPhones: nonFamilyPhoneSet(listUsers()) };
+    const reports = listReports();
+    const aadhaarKey = settings.fieldHashKey;
+    const nonFamilyPhones = nonFamilyPhoneSet(listUsers());
+    return { reports, aadhaarKey, nonFamilyPhones, index: buildPersonIndex(reports, { aadhaarKey, nonFamilyPhones }) };
   }
 
   router.get('/patterns', requireRole(...PATTERN_ROLES), (req, res) => {
@@ -2016,6 +2048,13 @@ export default function registerDashboardRoutes(router, deps) {
     if (type === 'foundReport') {
       const found = scopedFound.find((f) => f.id === id);
       if (!found) return res.status(404).json({ error: 'Sighting not found in your scope' });
+      // A found-child intake opened from this sighting with no photo of its
+      // own shows this one; deleting it would leave a child in care with no
+      // photograph (shared/retention.js sightingEscalation).
+      const intake = found.formalReportId ? listReports().find((r) => r.id === found.formalReportId) : null;
+      if (decision === 'anonymize' && intake && !intake.anonymizedAt && !['found', 'closed'].includes(intake.status) && !intake.photoFile) {
+        return res.status(409).json({ error: `Found-child case ${intake.id} shows this sighting's photo. Give that case its own photo, or close it, before anonymising the sighting.` });
+      }
       const hadPhoto = Boolean(found.photoFile);
       const patch = decision === 'extend'
         ? { retentionUntil: nextRetention, privacyReviewStatus: 'retention_extended' }

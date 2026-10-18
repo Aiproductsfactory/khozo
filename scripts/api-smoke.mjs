@@ -1310,6 +1310,14 @@ async function privacyGapChecks({ superAdmin, sjpu, cci }) {
   assert(cciView.report.parentPhone === null && cciView.report.address === null && cciView.report.familyContactWithheld, `a CCI desk does not see family contacts: ${JSON.stringify({ phone: cciView.report.parentPhone })}`);
   const sjpuView = await request('GET', `/reports/${aadhaarCase.report.id}`, { token: sjpu.token });
   assert(sjpuView.report.parentPhone === '9000003301', 'the police still see the family contact');
+  // The sighting queue shows the case a sighting may match; for a CCI desk,
+  // without the family's contacts either.
+  const cciQueue = (await request('GET', '/reports/found/all', { token: cci.token })).foundReports;
+  const shownCases = cciQueue.flatMap((f) => [f.matchedReport, ...(f.matchCandidates || []).map((c) => c.report)]).filter(Boolean);
+  assert(shownCases.length > 0, 'precondition: the CCI sighting queue shows at least one linked case');
+  assert(shownCases.every((c) => c.parentPhone == null && c.parentName == null && c.address == null), 'the CCI sighting queue carries no family contact');
+  const sjpuQueue = (await request('GET', '/reports/found/all', { token: sjpu.token })).foundReports;
+  assert(sjpuQueue.some((f) => f.matchedReport?.parentPhone), 'the police sighting queue still carries the family contact');
   const cciList = await request('GET', '/reports', { token: cci.token });
   assert(cciList.reports.length > 0 && !cciList.reports.some((r) => r.parentPhone || r.parentEmail || r.address), 'a CCI desk list carries no family contact');
 

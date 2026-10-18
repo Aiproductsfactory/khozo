@@ -414,7 +414,7 @@ export default function registerReportRoutes(router, deps) {
         familyInformedAt: contact.at,
         familyContacts: [...(Array.isArray(current.familyContacts) ? current.familyContacts : []), contact],
       });
-      addActivity({ actor: user.name, action: `SMS alert sent to ${report.parentName || 'parent'}`, target: report.childName, icon: 'sms', actorId: user.id, scope });
+      addActivity({ actor: user.name, action: 'SMS alert sent to the family', target: report.childName, icon: 'sms', actorId: user.id, scope });
     }
     addAudit({
       actorId: user.id,
@@ -423,7 +423,7 @@ export default function registerReportRoutes(router, deps) {
       action: outcome.sent ? 'case.sms_sent' : 'case.sms_not_sent',
       targetType: 'report',
       targetId: report.id,
-      summary: outcome.sent ? `SMS alert sent for ${report.childName}` : `No SMS sent for ${report.childName}: ${outcome.reason}`,
+      summary: outcome.sent ? `SMS alert sent for case ${report.id}` : `No SMS sent for case ${report.id}: ${outcome.reason}`,
       scope,
       metadata: {
         trigger,
@@ -1504,9 +1504,12 @@ export default function registerReportRoutes(router, deps) {
    * What the review screen shows of a case a sighting may match: who, the
    * age they would be when the sighting was taken (age at missing plus the
    * years since), sex, when they went missing and how to recognise them, and
-   * whether their photo can be matched at all.
+   * whether their photo can be matched at all. A desk that does not contact
+   * families (shared/privacy.js NO_FAMILY_CONTACT_ROLES) gets no address or
+   * family contact here either (DPIA G23).
    */
-  function caseForReview(report, sighting) {
+  function caseForReview(report, sighting, user = null) {
+    const contactVisible = !NO_FAMILY_CONTACT_ROLES.includes(user?.role);
     return {
       id: report.id,
       personCategory: personCategoryOf(report),
@@ -1515,11 +1518,12 @@ export default function registerReportRoutes(router, deps) {
       expectedAge: expectedAgeAt(report, sighting?.createdAt || Date.now()),
       gender: report.gender,
       dateOfMissing: report.dateOfMissing || null,
-      address: report.address,
+      address: contactVisible ? report.address : null,
       state: report.state,
       district: report.district,
-      parentName: report.parentName,
-      parentPhone: report.parentPhone,
+      parentName: contactVisible ? report.parentName : null,
+      parentPhone: contactVisible ? report.parentPhone : null,
+      familyContactWithheld: contactVisible ? undefined : 'Withheld: contact the family through the police or CWC',
       status: report.status,
       photoUrl: report.photoUrl || (report.photoFile ? `/api/reports/photo/${report.id}` : null),
       photoCheck: report.photoCheck || null,
@@ -1536,11 +1540,11 @@ export default function registerReportRoutes(router, deps) {
    * list would describe records in other districts, and police-only ones to
    * every desk.
    */
-  function reviewerSightingView(f, reportsById) {
+  function reviewerSightingView(f, reportsById, user = null) {
     const matched = f.matchedReportId ? reportsById[f.matchedReportId] : null;
     const candidates = (Array.isArray(f.matchCandidates) ? f.matchCandidates : [])
       .filter((c) => c && reportsById[c.reportId])
-      .map((c) => ({ ...c, report: caseForReview(reportsById[c.reportId], f) }));
+      .map((c) => ({ ...c, report: caseForReview(reportsById[c.reportId], f, user) }));
     return {
       ...f,
       // The cases an officer turned down, only those this desk may open.
@@ -1550,7 +1554,7 @@ export default function registerReportRoutes(router, deps) {
       reporterPhone: f.confidentialReporter ? null : f.reporterPhone || null,
       reporterPhoneVisible: f.confidentialReporter ? null : f.reporterPhone || null,
       matchCandidates: candidates,
-      matchedReport: matched ? caseForReview(matched, f) : null,
+      matchedReport: matched ? caseForReview(matched, f, user) : null,
     };
   }
 
@@ -1558,14 +1562,14 @@ export default function registerReportRoutes(router, deps) {
   function reviewerSightingFor(user, f) {
     if (!f || scopeFoundReports(user, [f], listReports()).length !== 1) return null;
     const reportsById = Object.fromEntries(scopeReports(user, listReports()).map((r) => [r.id, r]));
-    return reviewerSightingView(f, reportsById);
+    return reviewerSightingView(f, reportsById, user);
   }
 
   router.get('/found/all', protectedRoute, requireRole(...REVIEW_ROLES), (req, res) => {
     const scopedFound = scopeFoundReports(req.user, listFoundReports(), listReports());
     const reportsById = Object.fromEntries(scopeReports(req.user, listReports()).map((r) => [r.id, r]));
     res.json({
-      foundReports: scopedFound.map((f) => reviewerSightingView(f, reportsById)),
+      foundReports: scopedFound.map((f) => reviewerSightingView(f, reportsById, req.user)),
     });
   });
 
@@ -1648,12 +1652,12 @@ export default function registerReportRoutes(router, deps) {
         targetType: 'foundReport',
         targetId: f.id,
         summary: decision === 'refer_cwc'
-          ? `Referred sighting at ${f.foundLocation} to 1098/CWC`
+          ? `Referred sighting ${f.id} to 1098/CWC`
           : next
-            ? `Rejected the closest case for the sighting at ${f.foundLocation}; the next candidate is proposed`
+            ? `Rejected the closest case for sighting ${f.id}; the next candidate is proposed`
             : wasReverse
-              ? `Rejected the link between the sighting at ${f.foundLocation} and a newly registered case; the sighting is back where it was`
-              : `Rejected sighting match at ${f.foundLocation}; the sighting is back in its queue`,
+              ? `Rejected the link between sighting ${f.id} and a newly registered case; the sighting is back where it was`
+              : `Rejected the match for sighting ${f.id}; the sighting is back in its queue`,
         scope: { matchedReportId: unlinkedReportId },
         // Which case comes next is recorded on its own row below, scoped to
         // that case: this row is readable by the desks of the case rejected,
@@ -1773,7 +1777,7 @@ export default function registerReportRoutes(router, deps) {
       const adult = isAdultCase(matchedCase);
       return res.json({
         foundReport: findFoundReport(f.id),
-        report: findReport(matchedCase.id),
+        report: deskCaseView(req.user, findReport(matchedCase.id)),
         familyNotified: false,
         familyPhone: adult ? null : familyPhoneOf(matchedCase),
         familyReason: adult ? 'consent_required' : 'not_requested',
@@ -3477,9 +3481,11 @@ export default function registerReportRoutes(router, deps) {
       targetId: r.id,
       summary: `Linked ${externalRecord.label} for case ${r.id}`,
       scope: { state: r.state, district: r.district, reportId: r.id },
+      // The reference stays on the case, which can be anonymised; the
+      // permanent log keeps its last four characters (DPIA G4).
       metadata: {
         idType,
-        externalId,
+        externalIdSuffix: externalId.slice(-4),
         issuingSystem,
         issuedDate: externalRecord.issuedDate,
         remarksLength: remarks.length,
@@ -4269,7 +4275,7 @@ export default function registerReportRoutes(router, deps) {
       targetId: r.id,
       summary: `Verified citizen/NGO intake for case ${r.id}`,
       scope: { state: r.state, district: r.district, reportId: r.id },
-      metadata: { firNo: patch.firNo, noteLength: event.note ? event.note.length : 0 },
+      metadata: { firNoRecorded: Boolean(patch.firNo), firNoSuffix: patch.firNo ? String(patch.firNo).slice(-4) : null, noteLength: event.note ? event.note.length : 0 },
     });
     // Registration skipped the search and the photo check for this intake (it
     // was unverified then); now that an officer has verified it, run both.

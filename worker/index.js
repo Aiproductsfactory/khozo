@@ -147,6 +147,7 @@ function buildDeps(env, store, ctx) {
       // secret, never a constant from this repository (shared/privacy.js).
       exportSigning: secrets.exportSigning,
       fieldHashKey: secrets.fieldHashKey,
+      fieldHashKeyDerived: secrets.fieldHashKeyDerived,
     },
     ctx,
   };
