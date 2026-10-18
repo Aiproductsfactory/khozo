@@ -12,11 +12,21 @@
  * first, then run this with the same value. The readiness report (super admin)
  * counts whole numbers left and fingerprints made under another key.
  *
- * Lists by default; rewrites only with --apply. Prints case ids and counts,
- * never a number.
+ * Run it only after the code that reads fingerprints is deployed. The code
+ * before it compares Aadhaar values as plain text, so it would read two
+ * masked "XXXX XXXX 1234" values as the same child and raise false duplicate
+ * warnings. --apply therefore also needs --confirm-deployed.
  *
- *   node scripts/migrate-aadhaar.mjs           # how many cases hold a whole number
- *   node scripts/migrate-aadhaar.mjs --apply   # rewrite them
+ * Counts by default, which needs no key and changes nothing. Prints case ids
+ * and counts, never a number.
+ *
+ *   node scripts/migrate-aadhaar.mjs                                # how many cases hold a whole number
+ *   node scripts/migrate-aadhaar.mjs --apply --confirm-deployed     # rewrite them
+ *
+ * In PowerShell, set the variables first:
+ *
+ *   $env:DATABASE_URL = "postgres://..."
+ *   $env:KHOZO_FIELD_HASH_KEY = "<the Worker's KHOZO_FIELD_HASH_KEY>"
  */
 
 import process from 'node:process';
@@ -32,15 +42,21 @@ if (!process.env.DATABASE_URL) {
   console.error('DATABASE_URL is not set.');
   process.exit(1);
 }
-// An explicit key only. A key derived from the JWT secret would change the
-// day that secret is rotated, and every fingerprint written here would stop
-// matching. Set the same value as a Worker secret first.
-if (!process.env.KHOZO_FIELD_HASH_KEY) {
-  console.error('Set KHOZO_FIELD_HASH_KEY to the value the deployed API uses (npx wrangler secret put KHOZO_FIELD_HASH_KEY) before migrating.');
-  process.exit(1);
+if (apply) {
+  if (!process.argv.includes('--confirm-deployed')) {
+    console.error('Rewrite only after the code that reads Aadhaar fingerprints is deployed (branch dpia-and-trafficking-fixes or later). The code before it would read masked numbers as duplicates. When it is live, add --confirm-deployed.');
+    process.exit(1);
+  }
+  // An explicit key only. A key derived from the JWT secret would change the
+  // day that secret is rotated, and every fingerprint written here would stop
+  // matching. Set the same value as a Worker secret first.
+  if (!process.env.KHOZO_FIELD_HASH_KEY) {
+    console.error('Set KHOZO_FIELD_HASH_KEY to the value the deployed API uses (npx wrangler secret put KHOZO_FIELD_HASH_KEY) before rewriting.');
+    process.exit(1);
+  }
 }
 
-const key = privacySecrets(process.env).fieldHashKey;
+const key = apply ? privacySecrets(process.env).fieldHashKey : null;
 const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 await client.connect();
 
@@ -52,7 +68,9 @@ try {
   if (whole.length > 50) console.log(`  … and ${whole.length - 50} more`);
 
   if (!apply) {
-    console.log('\nNothing changed. Run with --apply to rewrite them.');
+    console.log(whole.length
+      ? '\nNothing changed. After the new code is deployed, rewrite them with --apply --confirm-deployed.'
+      : '\nNothing to migrate.');
   } else {
     await client.query('begin');
     for (const row of whole) {

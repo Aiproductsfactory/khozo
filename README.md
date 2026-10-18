@@ -160,11 +160,15 @@ npx wrangler secret put KHOZO_ACTIVITY_RETENTION_DAYS        # e.g. 730
 ```
 
 Cases registered before Aadhaar numbers stopped being stored still hold them whole.
-After deploying, rewrite them with the deployed key:
+Count them at any time; rewrite them only after this code is deployed, with the
+Worker's `KHOZO_FIELD_HASH_KEY` (PowerShell shown; in bash, prefix the command
+with `DATABASE_URL=... KHOZO_FIELD_HASH_KEY=...`):
 
-```bash
-KHOZO_FIELD_HASH_KEY=... node scripts/migrate-aadhaar.mjs           # count
-KHOZO_FIELD_HASH_KEY=... node scripts/migrate-aadhaar.mjs --apply   # rewrite
+```powershell
+$env:DATABASE_URL = "postgres://..."                               # the production database
+node scripts/migrate-aadhaar.mjs                                   # count only, needs no key
+$env:KHOZO_FIELD_HASH_KEY = "<the Worker's KHOZO_FIELD_HASH_KEY>"
+node scripts/migrate-aadhaar.mjs --apply --confirm-deployed        # rewrite
 ```
 
 **Hyperdrive query caching must stay off.** With it on, a sighting is written to
