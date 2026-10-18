@@ -15,6 +15,7 @@ import { nanoid } from 'nanoid';
 
 import { POLICE_ROLES, canAccessReport, isPoliceOnly, sameDistrict, sameState, sameStatePlace, scopeFoundReports, scopeReports } from '../scope.js';
 import { resolveSightingLocation, reverseGeocode } from '../geocode.js';
+import { sightingScreenVerdict } from '../face-screen.js';
 import { canonicalPlace, placeFields } from '../geo/index.js';
 import { expectedAgeAt, isForwardPoolCase, isFoundChildIntake, isRematchEligible, isReverseMatchCandidate, wasLinkRejected } from '../match-pool.js';
 import { createSightingMatcher, engineRecordOf, engineSummary, evidenceOf, isReverseLinked } from '../sighting-matching.js';
@@ -1344,8 +1345,10 @@ export default function registerReportRoutes(router, deps) {
       screening: {
         ...screening,
         // A text-only report has no photo to screen and is a person's account of
-        // seeing a child, so it alerts on its own terms.
-        raisesAlert: !req.file || screening.verdict === 'person',
+        // seeing a child, so it alerts on its own terms. A photo alerts only
+        // when it clearly shows a person: a small face in the background of a
+        // photo of something else does not (shared/face-screen.js).
+        raisesAlert: !req.file || sightingScreenVerdict(screening) === 'person',
       },
       locationSource: locationScope.source || 'reporter',
       // The street address of the phone's coordinates, for the officers who
@@ -1385,13 +1388,18 @@ export default function registerReportRoutes(router, deps) {
       // that nobody read.
       const reported = reportedLocationOf(fr);
       const where = placeText(fr.foundLocation, reported);
+      const verdict = sightingScreenVerdict(fr.screening);
       notifyAuthorities({
         kind: 'sighting_screening',
-        title: fr.screening.verdict === 'no_person' ? 'Upload with no person in it' : 'Unscreened upload',
+        title: verdict === 'no_person'
+          ? 'Upload with no person in it'
+          : verdict === 'unclear_face' ? 'Upload with no clear person in it' : 'Unscreened upload',
         body:
-          fr.screening.verdict === 'no_person'
+          verdict === 'no_person'
             ? `An upload at ${where} contained no recognisable person. Queued for your review.`
-            : `An upload at ${where} could not be screened — no detection provider answered. Queued for your review.`,
+            : verdict === 'unclear_face'
+              ? `An upload at ${where} showed no clear person — only a small or unclear face. Queued for your review.`
+              : `An upload at ${where} could not be screened — no detection provider answered. Queued for your review.`,
         priority: 'normal',
         roles: ['super_admin'],
         exclude: caseOfficerIds,
@@ -2177,6 +2185,47 @@ export default function registerReportRoutes(router, deps) {
     if (!geoAddress) return res.status(502).json({ error: 'The address could not be found. Open the location in Maps instead.' });
     updateFoundReport(f.id, { geoAddress });
     res.json({ geoAddress });
+  });
+
+  /**
+   * An officer's own reading of a sighting photo — "no person in this photo",
+   * or "there is a person" — recorded over the face screen's. A detector
+   * that found a passer-by in the background of a photo of a signboard is
+   * corrected by the person looking at it, and the correction is audited.
+   * `verdict: null` withdraws it, and the screen's reading stands again.
+   */
+  router.post('/found/:id/screening', protectedRoute, requireRole(...REVIEW_ROLES), (req, res) => {
+    const f = findFoundReport(req.params.id);
+    if (!f) return res.status(404).json({ error: 'Found report not found' });
+    if (scopeFoundReports(req.user, [f], listReports()).length !== 1) {
+      return res.status(403).json({ error: 'Found report is outside your jurisdiction' });
+    }
+    if (!f.photoFile && !f.photoUrl) return res.status(409).json({ error: 'This sighting has no photo' });
+    const verdict = req.body?.verdict ?? null;
+    if (verdict !== null && verdict !== 'no_person' && verdict !== 'person') {
+      return res.status(400).json({ error: 'Say whether the photo shows a person' });
+    }
+    const screening = { ...(f.screening || {}) };
+    if (verdict) {
+      screening.officer = { verdict, at: new Date().toISOString(), byId: req.user.id, byName: req.user.name, byRole: req.user.role };
+    } else {
+      delete screening.officer;
+    }
+    updateFoundReport(f.id, { screening });
+    addAudit({
+      actorId: req.user.id,
+      actorName: req.user.name,
+      actorRole: req.user.role,
+      action: verdict ? 'sighting.screening_corrected' : 'sighting.screening_correction_withdrawn',
+      targetType: 'foundReport',
+      targetId: f.id,
+      summary: verdict
+        ? `Recorded that sighting ${f.id}'s photo ${verdict === 'no_person' ? 'shows no person' : 'shows a person'}`
+        : `Withdrew the correction on sighting ${f.id}'s photo`,
+      scope: { state: f.state || null, district: f.district || null, foundReportId: f.id },
+      metadata: { verdict, engineVerdict: f.screening?.verdict || null },
+    });
+    res.json({ foundReport: reviewerSightingFor(req.user, findFoundReport(f.id)) });
   });
 
   router.post('/found/:id/place', protectedRoute, requireRole(...PLACEMENT_ROLES), async (req, res) => {

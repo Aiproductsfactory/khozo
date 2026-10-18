@@ -10,6 +10,7 @@ import { useBackClose } from '../useBackClose.js';
 import { ActionMessage, ActionToast, useAction } from './useAction.jsx';
 import { ConfirmMatchDialog, EngineScores, MatchEvidence, currentCandidate, photoCheckFlag, telHref } from './Reunite.jsx';
 import { POLICE_ROLES } from '../../../shared/scope.js';
+import { sightingScreenVerdict } from '../../../shared/face-screen.js';
 
 // Who may search a sighting again (POST /reports/found/:id/rematch): police
 // roles. Who may place a sighting in a district (POST /found/:id/place): the
@@ -111,16 +112,31 @@ function isCoordinateText(value) {
 /** What the intake screen found, for the reviewer who has to weigh it. */
 function screeningNote(screening) {
   if (!screening) return null;
-  if (screening.verdict === 'person') {
-    // Said as what the engine reported: it has read a face into a reflection
-    // in a glass door. The officer's own eyes decide.
-    const faces = Number(screening.faces) || 1;
+  const verdict = sightingScreenVerdict(screening);
+  // An officer looked and said what is in the photo: that is the answer.
+  if (screening.officer?.verdict) {
     return {
-      label: faces === 1
-        ? t('The face engine found 1 face — check the photo yourself')
-        : t('The face engine found {n} faces — check the photo yourself', { n: faces }),
+      label: screening.officer.verdict === 'no_person'
+        ? t('No person in this photo — recorded by {name}', { name: txt(screening.officer.byName) || t('an officer') })
+        : t('A person in this photo — confirmed by {name}', { name: txt(screening.officer.byName) || t('an officer') }),
       className: 'bg-slate-100 text-slate-700',
     };
+  }
+  // The engine's evidence, said as evidence: a face it found clearly, and how
+  // clearly. Never "a person was detected" — an officer's eyes decide that.
+  if (verdict === 'person') {
+    const q = Number(screening.quality);
+    return {
+      label: screening.quality != null && Number.isFinite(q)
+        ? t('Clear face found · engine quality {q}%', { q: Math.round(q * 100) })
+        : t('Clear face found'),
+      className: 'bg-slate-100 text-slate-700',
+    };
+  }
+  // The engine's only face was small or unclear — typically a passer-by far
+  // behind whatever the photo is of. Not called a person (shared/face-screen.js).
+  if (verdict === 'unclear_face') {
+    return { label: t('No clear person in the photo — screened out of the general alert'), className: 'bg-amber-50 text-amber-700' };
   }
   if (screening.verdict === 'no_person') {
     return { label: t('No person detected — screened out of the general alert'), className: 'bg-amber-50 text-amber-700' };
@@ -152,6 +168,11 @@ export default function FoundReports({ view = 'matches' }) {
   // The sighting whose photograph is open full size.
   const [viewing, setViewing] = useState(null);
   useBackClose(Boolean(viewing), () => setViewing(null));
+  // An officer's own reading of a photo, recorded over the face screen's.
+  const recordScreening = (f, verdict) => action.run(`screening-${f.id}`, async () => {
+    const data = await api.post(`/reports/found/${f.id}/screening`, { verdict });
+    if (data?.foundReport) setRows((list) => list.map((row) => (row.id === f.id ? data.foundReport : row)));
+  }, verdict ? msg('Recorded: no person in this photo.') : msg('Your correction was withdrawn.'));
   // Street addresses looked up for sightings sent before they were kept.
   const [addressLookup, setAddressLookup] = useState({});
   const lookUpAddress = async (f) => {
@@ -692,7 +713,7 @@ export default function FoundReports({ view = 'matches' }) {
                 <div className="h-24 w-24 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-100 sm:h-28 sm:w-28">
                   {/* A text report has no photo to hold back: it falls through
                       to "No photo — text report". */}
-                  {f.screening && !['person', 'no_photo'].includes(f.screening.verdict) && !revealed[f.id] ? (
+                  {f.screening && !['person', 'no_photo'].includes(sightingScreenVerdict(f.screening)) && !revealed[f.id] ? (
                     <button
                       onClick={() => setRevealed((r) => ({ ...r, [f.id]: true }))}
                       className="grid h-full w-full place-items-center gap-1 px-2 text-center hover:bg-slate-200"
@@ -701,7 +722,9 @@ export default function FoundReports({ view = 'matches' }) {
                         <path d="M3 3l18 18M10.6 5.1A9.7 9.7 0 0 1 12 5c5 0 9 4.5 10 7a13 13 0 0 1-3.2 4.3M6.2 6.6C4.1 8 2.6 10 2 12c1 2.5 5 7 10 7a9.6 9.6 0 0 0 4.6-1.2" />
                       </svg>
                       <span className="text-[10px] font-semibold text-slate-500">
-                        {f.screening.verdict === 'no_person' ? t('No person detected') : t('Not screened')}
+                        {sightingScreenVerdict(f.screening) === 'no_person'
+                          ? t('No person detected')
+                          : sightingScreenVerdict(f.screening) === 'unclear_face' ? t('No clear person') : t('Not screened')}
                       </span>
                       <span className="text-[10px] text-indigo-600 underline">{t('Show anyway')}</span>
                     </button>
@@ -778,10 +801,39 @@ export default function FoundReports({ view = 'matches' }) {
                   {coordsOf(f) && <MapsLink lat={f.lat} lng={f.lng} />}
                   {txt(f.note) && <p className="text-sm italic text-slate-600">“{d(f.note)}”</p>}
                   {screen && (
-                    <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${screen.className}`}>
-                      {screen.label}
+                    <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${screen.className}`}>
+                        {screen.label}
+                      </span>
+                      {/*
+                        The officer corrects the machine. One tap records "no
+                        person in this photo" (audited); the sighting leaves
+                        the reverse search and the card stops claiming a face.
+                      */}
+                      {(f.photoFile || f.photoUrl) && !f.anonymizedAt && (
+                        f.screening?.officer?.verdict ? (
+                          <button
+                            type="button"
+                            onClick={() => recordScreening(f, null)}
+                            disabled={action.pending}
+                            className="inline-flex min-h-11 items-center text-xs font-semibold text-slate-500 underline underline-offset-2 hover:text-ink disabled:opacity-60 sm:min-h-0"
+                          >
+                            {t('Undo')}
+                          </button>
+                        ) : sightingScreenVerdict(f.screening) !== 'no_person' && (
+                          <button
+                            type="button"
+                            onClick={() => recordScreening(f, 'no_person')}
+                            disabled={action.pending}
+                            className="inline-flex min-h-11 items-center text-xs font-semibold text-khozo-dark underline underline-offset-2 hover:text-ink disabled:opacity-60 sm:min-h-0"
+                          >
+                            {t('No person in this photo')}
+                          </button>
+                        )
+                      )}
                     </span>
                   )}
+                  <ActionMessage action={action} id={`screening-${f.id}`} />
                 </div>
 
                 <div className="col-span-2 shrink-0 rounded-xl border border-slate-200 bg-slate-50/70 p-4 lg:w-96">

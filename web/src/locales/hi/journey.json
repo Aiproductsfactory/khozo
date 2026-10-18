@@ -88,5 +88,18 @@
   "Looking up the address…": "पता खोजा जा रहा है…",
   "Show the street address": "गली का पता दिखाएँ",
   "This sighting has no location to look up": "इस सूचना में खोजने के लिए कोई स्थान नहीं है",
-  "The address could not be found. Open the location in Maps instead.": "पता नहीं मिला। इसके बजाय स्थान Maps में खोलें।"
+  "The address could not be found. Open the location in Maps instead.": "पता नहीं मिला। इसके बजाय स्थान Maps में खोलें।",
+  "No person in this photo — recorded by {name}": "इस फ़ोटो में कोई व्यक्ति नहीं — {name} द्वारा दर्ज",
+  "an officer": "एक अधिकारी",
+  "A person in this photo — confirmed by {name}": "इस फ़ोटो में व्यक्ति है — {name} द्वारा पुष्टि",
+  "Clear face found · engine quality {q}%": "साफ़ चेहरा मिला · इंजन गुणवत्ता {q}%",
+  "Clear face found": "साफ़ चेहरा मिला",
+  "No clear person in the photo — screened out of the general alert": "फ़ोटो में कोई साफ़ व्यक्ति नहीं — सामान्य अलर्ट से बाहर रखा गया",
+  "Recorded: no person in this photo.": "दर्ज किया गया: इस फ़ोटो में कोई व्यक्ति नहीं।",
+  "Your correction was withdrawn.": "आपका सुधार वापस ले लिया गया।",
+  "No clear person": "कोई साफ़ व्यक्ति नहीं",
+  "Undo": "पूर्ववत करें",
+  "No person in this photo": "इस फ़ोटो में कोई व्यक्ति नहीं",
+  "This sighting has no photo": "इस सूचना में कोई फ़ोटो नहीं है",
+  "Say whether the photo shows a person": "बताएँ कि फ़ोटो में व्यक्ति है या नहीं"
 }

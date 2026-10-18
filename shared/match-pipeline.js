@@ -33,6 +33,7 @@
  *   { status: 'no_answer' | 'unsupported_format' | 'too_large' | 'not_configured' | 'not_asked', detail? }
  */
 import { DISAGREEMENT_GAP, MAX_MATCH_CANDIDATES, thresholdsOf } from './match-config.js';
+import { isWeakFace } from './face-screen.js';
 
 export const ENGINES = {
   aarakshak: {
@@ -399,7 +400,7 @@ export async function screenPhoto(photoBuf, { aarakshak, rekognition }) {
   if (aarakshak.ready) {
     const probe = answer(await aarakshak.compare(photoBuf, photoBuf));
     if (probe.status === 'answered' && (probe.sourceFaces || 0) > 0) {
-      return {
+      const found = {
         verdict: 'person',
         faces: probe.sourceFaces,
         quality: probe.sourceQuality ?? null,
@@ -407,6 +408,21 @@ export async function screenPhoto(photoBuf, { aarakshak, rekognition }) {
         provider: ENGINES.aarakshak.provider,
         checkedAt,
       };
+      if (!isWeakFace(found)) return { ...found, clearFace: true };
+      // Aarakshak's only face is one it calls small or unclear — often a
+      // passer-by in the background of a photo of something else. A second
+      // engine, when there is one, decides whether the photo shows a person;
+      // without one, it does not count as one (shared/face-screen.js).
+      if (rekognition.ready) {
+        const second = answer(await rekognition.compare(photoBuf, photoBuf));
+        const faces = second.status === 'answered' ? Math.max(second.targetFaces || 0, second.sourceFaces || 0) : 0;
+        return {
+          ...found,
+          clearFace: faces > 0,
+          secondEngine: { provider: ENGINES.rekognition.provider, status: second.status, faces },
+        };
+      }
+      return { ...found, clearFace: false };
     }
     if (probe.status === 'answered' || probe.status === 'no_face') aarakshakLooked = probe;
   }

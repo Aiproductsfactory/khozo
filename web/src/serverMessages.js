@@ -116,4 +116,8 @@ export const SERVER_MESSAGES = [
   // Looking up a sighting's street address (POST /api/reports/found/:id/address).
   msg('This sighting has no location to look up'),
   msg('The address could not be found. Open the location in Maps instead.'),
+
+  // An officer's correction of a photo's face screen (POST /api/reports/found/:id/screening).
+  msg('This sighting has no photo'),
+  msg('Say whether the photo shows a person'),
 ];

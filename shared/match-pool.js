@@ -24,6 +24,7 @@
 //
 // Pure, and free of Node built-ins, so the console imports expectedAgeAt too.
 import { sameDistrict } from './scope.js';
+import { sightingScreenVerdict } from './face-screen.js';
 
 const norm = (v) => String(v || '').trim().toLowerCase();
 const YEAR_MS = 365.25 * 86400000;
@@ -300,7 +301,8 @@ export function isReverseMatchCandidate(sighting, now = Date.now()) {
   if (!withinRetention(sighting, now)) return false;
   if (CLOSED_SIGHTING_STATUSES.has(sighting.status)) return false;
   if (sighting.cwcFollowup?.outcome === 'duplicate_or_invalid') return false;
-  if (sighting.screening?.verdict === 'no_person') return false;
+  // No person in it, by the engine or by an officer who looked.
+  if (sightingScreenVerdict(sighting.screening) === 'no_person') return false;
   return true;
 }
 

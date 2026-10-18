@@ -22,6 +22,9 @@ import process from 'node:process';
 
 import registerReportRoutes from '../shared/routes/reports.js';
 import { resolveSightingLocation } from '../shared/geocode.js';
+import { screenPhoto } from '../shared/match-pipeline.js';
+import { sightingScreenVerdict } from '../shared/face-screen.js';
+import { isReverseMatchCandidate } from '../shared/match-pool.js';
 
 const checks = [];
 const check = (name, ok, detail = '') => {
@@ -60,7 +63,7 @@ const AUTHORITIES = [
  * Registers the routes with stubs and returns the sighting handler plus the
  * notifications and records it produced.
  */
-function harness({ verdict, fetchImpl, matchResult } = {}) {
+function harness({ verdict, screen, fetchImpl, matchResult } = {}) {
   const notifications = [];
   const sightings = [];
 
@@ -90,7 +93,7 @@ function harness({ verdict, fetchImpl, matchResult } = {}) {
     fixedWindowRateLimit: () => (_req, _res, next) => next(),
     rankMatches: async () =>
       matchResult || { candidates: [], engine: { provider: 'stub', modelVersion: null, biometric: false } },
-    detectPerson: async () => ({ verdict, faces: verdict === 'person' ? 1 : 0, provider: 'stub', checkedAt: Date.now() }),
+    detectPerson: async () => screen || ({ verdict, faces: verdict === 'person' ? 1 : 0, provider: 'stub', checkedAt: Date.now() }),
     upload: { single: () => (_req, _res, next) => next() },
     fetchImpl,
     settings: {},
@@ -299,6 +302,92 @@ const nominatim = (address) => async () => ({
   await submit(handler, { body: { ...baseBody, lat: '26.1445', lng: '91.7362' }, file: photo });
   check('an uploaded sighting is routed by its coordinates', sightings[0]?.state === 'Assam', `got ${sightings[0]?.state}`);
   check('and records where its location came from', sightings[0]?.locationSource === 'coordinates');
+}
+
+// --- a face in the background is not a person in the photo -----------------
+//
+// A photo of a signboard on a pavement, with passers-by thirty metres behind
+// it, was screened as "person detected": Aarakshak found one of their faces.
+// A face the engine itself calls small or unclear counts only when a second
+// engine also finds one, and an officer's own reading overrides either.
+{
+  const face = (extra = {}) => ({ status: 'answered', score: 1, sourceFaces: 1, targetFaces: 1, sourceQuality: 0.9, warnings: [], ...extra });
+  const engine = (result) => ({ ready: true, calls: 0, async compare() { this.calls += 1; return result; } });
+  const off = { ready: false, async compare() { throw new Error('not configured'); } };
+
+  const clear = await screenPhoto(photoBytes, { aarakshak: engine(face()), rekognition: off });
+  check('a clear face is a person', clear.verdict === 'person' && clear.clearFace === true && sightingScreenVerdict(clear) === 'person');
+
+  const small = await screenPhoto(photoBytes, { aarakshak: engine(face({ warnings: ['face_small_in_frame'] })), rekognition: off });
+  check('a face the engine calls small, with no second engine, is not a clear person', small.clearFace === false && sightingScreenVerdict(small) === 'unclear_face', JSON.stringify({ clearFace: small.clearFace }));
+
+  const faint = await screenPhoto(photoBytes, { aarakshak: engine(face({ sourceQuality: 0.21 })), rekognition: off });
+  check('a low-quality face is not a clear person', sightingScreenVerdict(faint) === 'unclear_face');
+
+  const second = engine(face());
+  const confirmed = await screenPhoto(photoBytes, { aarakshak: engine(face({ warnings: ['low_detector_confidence'] })), rekognition: second });
+  check('a weak face a second engine also finds is a person', sightingScreenVerdict(confirmed) === 'person' && second.calls === 1);
+
+  const disputed = await screenPhoto(photoBytes, {
+    aarakshak: engine(face({ warnings: ['face_too_small'] })),
+    rekognition: engine({ status: 'no_face', warnings: ['no_face_detected'] }),
+  });
+  check('a weak face a second engine cannot find is not a person', sightingScreenVerdict(disputed) === 'unclear_face' && disputed.secondEngine?.status === 'no_face');
+
+  const unasked = engine(face());
+  await screenPhoto(photoBytes, { aarakshak: engine(face()), rekognition: unasked });
+  check('a clear face does not spend a second engine call', unasked.calls === 0);
+
+  check('a record screened before clearFace existed is judged by its stored quality',
+    sightingScreenVerdict({ verdict: 'person', faces: 1, quality: 0.3, warnings: [] }) === 'unclear_face'
+    && sightingScreenVerdict({ verdict: 'person', faces: 1, quality: 0.92, warnings: [] }) === 'person');
+
+  // The route: an unclear face reaches one reviewer, not every desk.
+  const { handler, notifications, sightings } = harness({ screen: small });
+  await submit(handler, { body: { ...baseBody }, file: photo });
+  check('an unclear face does not raise the general alert', sightings[0]?.screening?.raisesAlert === false);
+  check('it reaches the super admin for review', rolesOf(notifications).join(',') === 'super_admin', rolesOf(notifications).join(',') || '(nobody)');
+  check('the alert says there was no clear person', /no clear person/i.test(notifications[0]?.body || ''), notifications[0]?.body);
+
+  // The officer's correction, recorded over the engine's reading.
+  const officer = { id: 'u_police', role: 'police', name: 'PSI Station', jurisdiction: { state: 'Assam', district: 'Kamrup Metropolitan' } };
+  const sighting = { id: 'f_board', status: 'pending_review', state: 'Assam', district: 'Kamrup Metropolitan', photoFile: 'f_board.jpg', screening: { ...clear } };
+  const audit = [];
+  const { router, routes } = recorder();
+  registerReportRoutes(router, {
+    listReports: () => [],
+    listFoundReports: () => [sighting],
+    listUsers: () => AUTHORITIES,
+    findFoundReport: (id) => (id === sighting.id ? sighting : null),
+    updateFoundReport: (_id, patch) => Object.assign(sighting, patch),
+    addAudit: (row) => audit.push(row),
+    addActivity: () => {},
+    addNotification: () => {},
+    authRequired: (_req, _res, next) => next(),
+    optionalAuth: (_req, _res, next) => next(),
+    passwordChangeRequired: (_req, _res, next) => next(),
+    requireRole: () => (_req, _res, next) => next(),
+    fixedWindowRateLimit: () => (_req, _res, next) => next(),
+    upload: { single: () => (_req, _res, next) => next() },
+    settings: {},
+  });
+  const correct = routes.find((r) => r.method === 'POST' && r.path === '/found/:id/screening').handler;
+  const call = async (verdict) => {
+    let status = 200;
+    let payload = null;
+    const res = { status(c) { status = c; return res; }, json(d) { payload = d; return res; } };
+    await correct({ params: { id: sighting.id }, body: { verdict }, user: officer, query: {}, headers: {} }, res);
+    return { status, payload };
+  };
+  const marked = await call('no_person');
+  check('an officer can record that a photo shows no person', marked.status === 200 && sightingScreenVerdict(sighting.screening) === 'no_person', `HTTP ${marked.status}`);
+  check('the correction names the officer and is audited', sighting.screening.officer?.byName === 'PSI Station' && audit.some((a) => a.action === 'sighting.screening_corrected'));
+  check('the engine\'s own reading is kept beneath it', sighting.screening.verdict === 'person' && sighting.screening.clearFace === true);
+  check('a sighting marked "no person" leaves the reverse search', !isReverseMatchCandidate({ ...sighting, createdAt: Date.now(), retentionUntil: new Date(Date.now() + 86400000).toISOString() }));
+  const bad = await call('maybe');
+  check('an unknown reading is refused', bad.status === 400);
+  await call(null);
+  check('withdrawing the correction restores the engine\'s reading', !sighting.screening.officer && sightingScreenVerdict(sighting.screening) === 'person');
 }
 
 const failed = checks.filter((c) => !c.ok);
