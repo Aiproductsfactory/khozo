@@ -15,6 +15,19 @@ import { POLICE_ROLES } from '../../../shared/scope.js';
 import { ActionMessage, ActionToast, useAction } from './useAction.jsx';
 import { ConfirmMatchDialog, FamilyContactList, FamilyContactPanel, ReopenCasePanel, faceIndexFlag, photoCheckFlag } from './Reunite.jsx';
 import { preparePhoto } from '../photoPrep.js';
+import { RISK_BADGES, riskReasonLabel } from './riskLabels.js';
+
+/** "Trafficking risk: high" on a case row, when the case was raised. */
+function RiskBadge({ risk, className = '' }) {
+  const t = useT();
+  const badge = RISK_BADGES[risk?.level];
+  if (!badge) return null;
+  return (
+    <span className={`inline-block whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ${badge.className} ${className}`}>
+      {t(badge.label)}
+    </span>
+  );
+}
 
 const FORMAL_ACTION_ROLES = ['super_admin', 'admin', 'police', 'sjpu'];
 const WORKFLOW_ROLES = ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'dcrb', 'dlsa', 'cwc', 'dcpu', 'rpf', 'cci', 'saa', 'jjb', 'state_nodal', 'sara', 'crime_bureau'];
@@ -1119,6 +1132,7 @@ export default function Cases() {
                 </span>
                 <span className="mt-2 flex flex-wrap items-center gap-1.5">
                   <StatusBadge status={r.status} />
+                  <RiskBadge risk={r.traffickingRisk} />
                 </span>
               </span>
               <span aria-hidden="true" className="mt-3 text-2xl leading-none text-gray-300">›</span>
@@ -1205,6 +1219,7 @@ export default function Cases() {
                   <td className="px-4 py-3 text-gray-600">{d(r.firNo) || <span className="text-gray-300">-</span>}</td>
                   <td className="px-4 py-3">
                     <StatusBadge status={r.status} />
+                    <RiskBadge risk={r.traffickingRisk} className="ml-1" />
                     {/* An unconfirmed match is the most urgent fact about a case and
                         it does not change the case's status; without this line the
                         row reads "Missing" while the Matches queue holds a 71%. */}
@@ -1293,6 +1308,7 @@ export default function Cases() {
                   <div className="flex flex-wrap items-center gap-1.5">
                     <CategoryBadge category={personCategoryOf(selected)} />
                     <StatusBadge status={selected.status} />
+                    <RiskBadge risk={selected.traffickingRisk} />
                   </div>
                 </div>
               </div>
@@ -1312,7 +1328,9 @@ export default function Cases() {
                 [t('Missing since'), fmtDate(selected.dateOfMissing)],
                 [t('Match score'), Number(selected.matchScore) ? `${Math.round(Number(selected.matchScore) * 100)}%` : '-'],
                 [adultCase ? t('Family contact') : t('Parent'), d(selected.parentName) || '-'],
-                [t('Contact'), txt(selected.parentPhone) ? <PhoneLink phone={selected.parentPhone} /> : '-'],
+                [t('Contact'), txt(selected.parentPhone)
+                  ? <PhoneLink phone={selected.parentPhone} />
+                  : selected.familyContactWithheld ? <span className="text-xs font-normal text-gray-500">{t('Withheld: contact the family through the police or CWC')}</span> : '-'],
                 [t('Location'), d.places(selected.district, selected.state) || '-'],
                 [t('Address'), d(selected.address) || '-'],
                 [t('Found at'), d(selected.foundLocation) || '-'],
@@ -1327,6 +1345,20 @@ export default function Cases() {
                 </div>
               ))}
             </dl>
+
+            {RISK_BADGES[selected.traffickingRisk?.level] && (
+              <div className="mt-6 rounded-xl border border-red-100 bg-red-50/40 p-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm font-medium">{t('Trafficking risk')}</p>
+                  <RiskBadge risk={selected.traffickingRisk} />
+                </div>
+                <p className="mt-2 text-xs text-gray-600">{t('Raised because:')}</p>
+                <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm text-gray-700">
+                  {asList(selected.traffickingRisk?.reasons).map((r) => <li key={r.code}>{riskReasonLabel(t, r)}</li>)}
+                </ul>
+                <p className="mt-2 text-xs text-gray-500">{t('A prompt to review with the investigating officer, not a finding.')}</p>
+              </div>
+            )}
 
             {/*
               Whether this photo can be matched at all. A photo with no face,

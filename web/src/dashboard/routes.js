@@ -29,6 +29,8 @@ export const BULK_IMPORT_ROLES = ['super_admin', 'admin', 'police', 'sjpu'];
 export const NETWORK_ROLES = ['super_admin', 'admin', 'state_nodal', 'sara', 'crime_bureau'];
 export const CCI_REGISTER_ROLES = ['super_admin', 'admin', 'cwc', 'dcpu', 'cci', 'saa', 'state_nodal', 'sara'];
 export const ABUSE_REVIEW_ROLES = ['super_admin', 'admin', 'state_nodal', 'crime_bureau'];
+// The desks that investigate trafficking (GET /api/dashboard/patterns).
+export const PATTERN_ROLES = ['super_admin', 'admin', 'crime_bureau', 'state_nodal', 'police', 'sjpu', 'ahtu', 'dcrb', 'rpf'];
 
 /**
  * Sidebar entries, grouped so a long list reads as a few short ones.
@@ -46,6 +48,7 @@ export const DASHBOARD_NAV = [
   { to: '/app/sightings', label: msg('Sightings'), short: msg('Sightings'), icon: '📷', group: 'Review', roles: OPERATIONAL_ROLES },
   { to: '/app/cci-register', label: msg('CCI register'), icon: '🏠', group: 'Review', roles: CCI_REGISTER_ROLES },
   { to: '/app/grievances', label: msg('Grievances'), icon: '💬', group: 'Review', roles: OPERATIONAL_ROLES },
+  { to: '/app/patterns', label: msg('Trafficking patterns'), icon: '🕸️', group: 'Oversight', roles: PATTERN_ROLES },
   { to: '/app/mis', label: msg('MIS report'), icon: '📈', group: 'Oversight', roles: OPERATIONAL_ROLES },
   { to: '/app/audit', label: msg('Audit log'), icon: '🔒', group: 'Oversight', roles: OPERATIONAL_ROLES },
   { to: '/app/privacy', label: msg('Privacy review'), icon: '🛡️', group: 'Oversight', roles: OPERATIONAL_ROLES },
@@ -76,6 +79,7 @@ export const DASHBOARD_ROUTE_ROLES = {
   audit: OPERATIONAL_ROLES,
   fraud: ABUSE_REVIEW_ROLES,
   mis: OPERATIONAL_ROLES,
+  patterns: PATTERN_ROLES,
   grievances: OPERATIONAL_ROLES,
   network: NETWORK_ROLES,
 };

@@ -30,8 +30,10 @@ import {
   publicReporterName,
   isCitizenRole,
   citizenCaseView,
+  nonFamilyPhoneSet,
 } from '../case-domain.js';
 import { anonymisedLabel, deskCaseView } from '../privacy.js';
+import { assessTraffickingRisk, detectPatterns } from '../trafficking.js';
 import { anonymiseCase, anonymiseSighting, runRetentionSweep } from '../retention.js';
 
 export default function registerDashboardRoutes(router, deps) {
@@ -1685,6 +1687,76 @@ export default function registerDashboardRoutes(router, deps) {
     res.json({ ...result, verifiedAt: new Date().toISOString() });
   });
   
+  // ---- Trafficking patterns (shared/trafficking.js) ------------------------
+  //
+  // For the desks that investigate: police, SJPU, AHTU, DCRB, RPF and the
+  // state and national command. Computed over the cases and sightings the
+  // caller may already see, so nothing crosses a jurisdiction line.
+  const PATTERN_ROLES = ['super_admin', 'admin', 'crime_bureau', 'state_nodal', 'police', 'sjpu', 'ahtu', 'dcrb', 'rpf'];
+
+  function riskContext() {
+    return { reports: listReports(), aadhaarKey: settings.fieldHashKey, nonFamilyPhones: nonFamilyPhoneSet(listUsers()) };
+  }
+
+  router.get('/patterns', requireRole(...PATTERN_ROLES), (req, res) => {
+    const windowDays = Math.max(7, Math.min(180, Math.floor(Number(req.query?.days) || 30)));
+    const context = riskContext();
+    // A case registered before risk prompts existed is assessed here, for
+    // this answer only; the backfill below stores it.
+    const reports = scopeReports(req.user, listReports())
+      .map((r) => (r.traffickingRisk || r.anonymizedAt ? r : { ...r, traffickingRisk: assessTraffickingRisk(r, context) }));
+    const foundReports = scopeFoundReports(req.user, listFoundReports(), listReports());
+    const patterns = detectPatterns({
+      reports,
+      foundReports,
+      windowDays,
+      aadhaarKey: context.aadhaarKey,
+      nonFamilyPhones: context.nonFamilyPhones,
+    });
+    addAudit({
+      actorId: req.user.id,
+      actorName: req.user.name,
+      actorRole: req.user.role,
+      action: 'patterns.report_generated',
+      targetType: 'patterns',
+      summary: `Viewed trafficking patterns for ${scopeLabel(req.user)}`,
+      scope: { state: req.user.jurisdiction?.state || null, district: req.user.jurisdiction?.district || null },
+      metadata: { windowDays, ...patterns.counts },
+    });
+    res.json({ scope: scopeLabel(req.user), ...patterns });
+  });
+
+  // Stores a risk prompt on every open case that has none (or, with
+  // `reassess`, on every open case). No alerts: the AHTU sees the result on
+  // the patterns page rather than one notification per old case.
+  router.post('/patterns/assess-cases', requireRole('super_admin'), (req, res) => {
+    const read = readFields(req.body || {}, { reassess: 'flag' });
+    if (read.error) return res.status(400).json({ error: read.error });
+    const reassess = read.body.reassess === true || read.body.reassess === 'true';
+    const context = riskContext();
+    const levels = { high: 0, elevated: 0, standard: 0 };
+    let assessed = 0;
+    for (const r of listReports()) {
+      if (r.anonymizedAt || ['found', 'closed'].includes(r.status)) continue;
+      if (r.traffickingRisk && !reassess) continue;
+      const risk = assessTraffickingRisk(r, context);
+      updateReport(r.id, { traffickingRisk: risk });
+      levels[risk.level] += 1;
+      assessed += 1;
+    }
+    addAudit({
+      actorId: req.user.id,
+      actorName: req.user.name,
+      actorRole: req.user.role,
+      action: 'patterns.cases_assessed',
+      targetType: 'report',
+      summary: `Assessed ${assessed} open case${assessed === 1 ? '' : 's'} for trafficking risk`,
+      scope: {},
+      metadata: { assessed, reassess, ...levels },
+    });
+    res.json({ assessed, levels });
+  });
+
   router.get('/mis', requireRole(...OPERATIONAL_ROLES), (req, res) => {
     const reports = scopeReports(req.user, listReports());
     const foundReports = scopeFoundReports(req.user, listFoundReports(), listReports());

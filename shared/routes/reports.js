@@ -156,6 +156,7 @@ import {
   jurisdictionError,
   INTAKE_ALERT_ROLES,
 } from '../case-domain.js';
+import { assessTraffickingRisk } from '../trafficking.js';
 import { NO_FAMILY_CONTACT_ROLES, aadhaarFields, deskCaseView } from '../privacy.js';
 import { stripImageMetadata } from '../photo-strip.js';
 
@@ -542,6 +543,63 @@ export default function registerReportRoutes(router, deps) {
         intake: true,
       },
     });
+  }
+
+  /**
+   * The trafficking-risk prompt for a case (shared/trafficking.js), worked
+   * out from everything else Khozo holds: a repeat disappearance, other
+   * adolescents missing from the same district, the circumstances recorded.
+   */
+  function riskFor(report) {
+    return assessTraffickingRisk(report, {
+      reports: listReports(),
+      aadhaarKey: settings.fieldHashKey,
+      nonFamilyPhones: nonFamilyPhoneSet(listUsers()),
+    });
+  }
+
+  /**
+   * Tells the Anti Human Trafficking Unit and SJPU desks that can open a case
+   * that it was raised as high risk, with the reasons; the state's desks when
+   * the district has neither yet. Only for a case an officer has registered
+   * or verified: a stranger's unverified registration does not task an AHTU.
+   * Like every alert, it names the case by id, never the person.
+   */
+  function alertTraffickingRisk(report, actor) {
+    const risk = report?.traffickingRisk;
+    if (!risk || risk.level !== 'high' || isPendingCitizenIntake(report)) return 0;
+    const users = listUsers();
+    let recipients = users.filter((u) => ['ahtu', 'sjpu'].includes(u.role) && canAccessReport(u, report));
+    if (!recipients.length) {
+      recipients = users.filter((u) => ['admin', 'crime_bureau', 'state_nodal'].includes(u.role) && canAccessReport(u, report));
+    }
+    if (!recipients.length) return 0;
+    notifyAuthorities({
+      kind: 'trafficking_risk',
+      title: `High trafficking risk: case ${report.id}`,
+      body: `Case ${report.id} in ${caseWhere(report)} was raised for: ${risk.reasons.map((r) => r.label.toLowerCase()).join('; ')}. A prompt to review the case with the investigating officer, not a finding.`,
+      priority: 'high',
+      recipients,
+      scope: {
+        state: report.state || null,
+        stateCode: report.stateCode || null,
+        district: report.district || null,
+        districtCode: report.districtCode || null,
+        reportId: report.id,
+      },
+    });
+    addAudit({
+      actorId: actor?.id || null,
+      actorName: actor?.name || 'Khozo',
+      actorRole: actor?.role || 'system',
+      action: 'case.trafficking_risk_raised',
+      targetType: 'report',
+      targetId: report.id,
+      summary: `Raised case ${report.id} as high trafficking risk for ${recipients.length} desk${recipients.length === 1 ? '' : 's'}`,
+      scope: { state: report.state, district: report.district, reportId: report.id },
+      metadata: { level: risk.level, score: risk.score, reasons: risk.reasons.map((r) => r.code), version: risk.version, recipients: recipients.length },
+    });
+    return recipients.length;
   }
 
   // ---- Linking a sighting to a case: shared by both directions ---------------
@@ -1069,6 +1127,7 @@ export default function registerReportRoutes(router, deps) {
       registeredById: req.user.id,
       createdAt: Date.now(),
     };
+    report.traffickingRisk = riskFor(report);
     addReport(report);
     addActivity({ actor: req.user.name, action: isPolice ? 'Registered an FIR' : adult ? 'Submitted missing-person intake for verification' : 'Submitted missing-child intake for verification', target: report.childName, icon: 'plus', actorId: req.user.id, scope: { state: report.state, district: report.district, reportId: report.id } });
     addAudit({
@@ -1113,6 +1172,7 @@ export default function registerReportRoutes(router, deps) {
     // A family's or an NGO's report waits for an officer, so the officers who
     // verify it are told it is there (alertIntake).
     if (isPendingCitizenIntake(report)) alertIntake(report);
+    else alertTraffickingRisk(report, req.user);
     // Two-way matching: a case registered with a photo is compared with the
     // sightings already stored, inside this request (matchStoredSightings in
     // shared/sighting-matching.js). Bulk imports arrive here one row at a
@@ -1940,6 +2000,9 @@ export default function registerReportRoutes(router, deps) {
       lastWorkflowAt: intakeRecord.recordedAt,
       createdAt: now,
     };
+    // A child found alone and taken into care is exactly who an AHTU looks
+    // for: assessed like any case, and a high level alerts the desk.
+    report.traffickingRisk = riskFor(report);
     addReport(report);
     updateFoundReport(f.id, {
       status: 'formalized_case',
@@ -2001,6 +2064,7 @@ export default function registerReportRoutes(router, deps) {
         retentionUntil: report.retentionUntil,
       },
     });
+    alertTraffickingRisk(findReport(report.id), req.user);
     res.status(201).json({ foundReport: findFoundReport(f.id), report: deskCaseView(req.user, findReport(report.id)), careRecord: intakeRecord });
   });
 
@@ -4217,6 +4281,10 @@ export default function registerReportRoutes(router, deps) {
       : { sightingMatches: 0 };
     if (photoCheck) updateReport(r.id, { photoCheck });
     if (photo) await matcher.indexCase(findReport(r.id), photo);
+    // Verified, the case can task the AHTU: assess it again with everything
+    // that has arrived since it was registered.
+    updateReport(r.id, { traffickingRisk: riskFor(findReport(r.id)) });
+    alertTraffickingRisk(findReport(r.id), req.user);
     res.json({ report: deskCaseView(req.user, findReport(r.id)), sightingMatches: reverse.sightingMatches });
   });
 

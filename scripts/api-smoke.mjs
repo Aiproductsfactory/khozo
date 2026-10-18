@@ -1215,6 +1215,47 @@ async function twoWayMatchingChecks({ superAdmin, sjpu, cwc, dlsa, ngo, parent, 
 }
 
 /**
+ * Trafficking signals (shared/trafficking.js) end to end: a high-risk case
+ * alerts the AHTU desk that can open it, with the reasons and never the
+ * name; the patterns page is for investigating desks only; families never
+ * see the flag.
+ */
+async function traffickingChecks({ superAdmin, sjpu, ahtu, cci, parent }) {
+  const form = new FormData();
+  addDeclaration(form, 'Smoke Risk Declarant');
+  const fields = {
+    state: 'Maharashtra', district: 'Mumbai', childName: 'Kavya Risk Smoke', gender: 'Female', age: '15',
+    parentPhone: '9000004401', allowDuplicate: 'true',
+    circumstances: 'Left with an agent who promised her a job in a hotel; seen boarding a train at Dadar.',
+  };
+  for (const [key, value] of Object.entries(fields)) form.set(key, value);
+  form.append('vulnerabilityCategories', 'trafficking_risk');
+  const created = await request('POST', '/reports', { token: sjpu.token, form });
+  const risk = created.report.traffickingRisk;
+  assert(risk?.level === 'high' && risk.reasons.some((r) => r.code === 'lure_described'), `a lured, flagged girl of 15 is raised as high risk: ${JSON.stringify(risk)}`);
+
+  const ahtuAlerts = (await request('GET', '/dashboard/notifications', { token: ahtu.token })).notifications || [];
+  const alert = ahtuAlerts.find((row) => row.kind === 'trafficking_risk' && row.scope?.reportId === created.report.id);
+  assert(alert && alert.priority === 'high', 'the AHTU desk that can open the case is alerted');
+  assert(!JSON.stringify(alert).includes('Kavya'), 'the alert names the case by id, never the person');
+  const cciAlerts = (await request('GET', '/dashboard/notifications', { token: cci.token })).notifications || [];
+  assert(!cciAlerts.some((row) => row.kind === 'trafficking_risk'), 'welfare desks are not tasked with trafficking alerts');
+
+  const patterns = await request('GET', '/dashboard/patterns', { token: ahtu.token });
+  assert(patterns.highRisk.some((c) => c.id === created.report.id && c.reasons.length), 'the AHTU patterns page lists the high-risk case with its reasons');
+  assert(['surges', 'repeatMissing', 'sharedContacts', 'corridors', 'hotspots'].every((k) => Array.isArray(patterns[k])), 'the patterns page carries every pattern');
+  await expectStatus(403, () => request('GET', '/dashboard/patterns', { token: cci.token }), 'a CCI desk opening the patterns page');
+  await expectStatus(403, () => request('GET', '/dashboard/patterns', { token: parent.token }), 'a parent opening the patterns page');
+
+  const assessed = await request('POST', '/dashboard/patterns/assess-cases', { token: superAdmin.token, body: {} });
+  assert(typeof assessed.assessed === 'number' && assessed.levels, 'a super admin can assess the cases registered before risk prompts');
+  await expectStatus(403, () => request('POST', '/dashboard/patterns/assess-cases', { token: ahtu.token, body: {} }), 'a district desk assessing every case');
+
+  const parentCases = (await request('GET', '/reports', { token: parent.token })).reports;
+  assert(parentCases.every((r) => !('traffickingRisk' in r)), 'a family never sees a trafficking-risk flag');
+}
+
+/**
  * The DPIA's personal-data gaps, closed (docs/governance/dpia.md section 7):
  *
  *   G1   anonymising a case deletes its photograph's bytes and clears the
@@ -3823,6 +3864,7 @@ async function run() {
   await candidateAndPhotoChecks({ superAdmin, admin, sjpu, cwc, parent, fake: fakeAarakshak });
   await strictInputChecks({ superAdmin, sjpu });
   await privacyGapChecks({ superAdmin, sjpu, cci: await login('cci@khozo.org') });
+  await traffickingChecks({ superAdmin, sjpu, ahtu, cci: await login('cci@khozo.org'), parent });
 
   console.log(`API smoke checks passed (${runtimeName} runtime).`);
 }

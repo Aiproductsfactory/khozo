@@ -23,6 +23,7 @@ const expected = {
   mis: ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'dcrb', 'dlsa', 'cwc', 'dcpu', 'rpf', 'cci', 'saa', 'jjb', 'state_nodal', 'sara', 'crime_bureau'],
   grievances: ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'dcrb', 'dlsa', 'cwc', 'dcpu', 'rpf', 'cci', 'saa', 'jjb', 'state_nodal', 'sara', 'crime_bureau'],
   network: ['super_admin', 'admin', 'state_nodal', 'sara', 'crime_bureau'],
+  patterns: ['super_admin', 'admin', 'crime_bureau', 'state_nodal', 'police', 'sjpu', 'ahtu', 'dcrb', 'rpf'],
 };
 
 for (const [route, roles] of Object.entries(expected)) {
@@ -48,5 +49,8 @@ assert(!expected.matches.includes('parent'), 'Parent must not deep-link into sig
 assert(!expected.grievances.includes('parent'), 'Parent must not deep-link into grievance review');
 assert(!expected.fraud.includes('parent'), 'Parent must not deep-link into public abuse review');
 assert(!expected['cci-register'].includes('police'), 'Police must not deep-link into the CCI care register');
+for (const role of ['parent', 'ngo', 'cci', 'saa', 'jjb', 'dlsa', 'cwc']) {
+  assert(!expected.patterns.includes(role), `${role} must not open trafficking patterns, which only investigating desks act on`);
+}
 
 console.log('Web route guard checks passed.');
