@@ -831,7 +831,7 @@ export default function FoundReports({ view = 'matches' }) {
                     </p>
                   )}
                   {['missing', 'expired', 'unavailable'].includes(f.humanCheck) && (
-                    <p className="text-xs text-amber-700">{t('Sent without passing the bot check: from an offline phone, an older page, or while the check could not be reached.')}</p>
+                    <p className="text-xs text-amber-700">{t('We could not check that a person sent this. It came from a phone with no signal, an old copy of the page, or while the check was not working.')}</p>
                   )}
                   {screen && (
                     <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -1073,7 +1073,7 @@ export default function FoundReports({ view = 'matches' }) {
                   ) : (
                     <div className="rounded-xl border border-black/10 bg-gray-50 p-3 text-xs">
                       <p className="font-semibold text-gray-800">{t('Close this sighting and delete its photo now?')}</p>
-                      <p className="mt-0.5 text-gray-500">{t('For a photo of someone who is not missing and not in need. This cannot be undone, and the audit log records who decided.')}</p>
+                      <p className="mt-0.5 text-gray-500">{t('For a photo of someone who is not missing and not in need. This cannot be undone, and your name is recorded against the decision.')}</p>
                       <div role="radiogroup" className="mt-2 grid gap-1.5">
                         {DISMISSAL_OPTIONS.map((option) => (
                           <label key={option.id} className="flex items-start gap-2 text-gray-700">

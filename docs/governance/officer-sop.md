@@ -95,11 +95,11 @@ strangers, women and girls above all. When a sighting with no match to decide sh
 person who is plainly not missing and not in need, press **Not a concern…** and choose:
 
 - **Not a concern**: taken in good faith, but the person needs nothing from us.
-- **Misuse**: the photo was not taken to help anyone. It is raised in the public-abuse queue
-  for the command desks and counted in the MIS report.
+- **Misuse**: the photo was not taken to help anyone. It appears on the **Public abuse**
+  page that the command desks check, and is counted in the monthly MIS report.
 
 Either way the photo is deleted at once and the sighting keeps nothing that identifies
-anyone; this cannot be undone, and the audit log records who decided. **Never use it to
+anyone. This cannot be undone, and your name is recorded against the decision. **Never use it to
 clear a queue**: a child alone, a person who seems confused or hurt, or a sighting you are
 unsure of is followed up, not dismissed. A woman's or adult's sighting shows why the reporter
 thought she needs help; "no reason given" is a reason to look harder, not to dismiss.
