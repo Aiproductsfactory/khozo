@@ -18,6 +18,7 @@ import { preparePhoto } from '../photoPrep.js';
 import { RISK_BADGES, riskReasonLabel } from './riskLabels.js';
 import { CASE_CREATE_ROLES } from './routes.js';
 import NavIcon from './NavIcon.jsx';
+import PhotoViewer from './PhotoViewer.jsx';
 
 /** "Trafficking risk: high" on a case row, when the case was raised. */
 function RiskBadge({ risk, className = '' }) {
@@ -366,6 +367,8 @@ export default function Cases() {
     }
   });
   const [selected, setSelected] = useState(null);
+  // The id of the case whose photo is open full size (PhotoViewer).
+  const [photoView, setPhotoView] = useState('');
   // Phone only: the area and date filters are folded away until asked for.
   const [filtersOpen, setFiltersOpen] = useState(false);
   useBackClose(!!selected, () => setSelected(null));
@@ -1402,7 +1405,24 @@ export default function Cases() {
             */}
             <div className="flex items-start justify-between gap-3">
               <div className="flex min-w-0 items-start gap-4">
-                <Avatar name={d(selected.childName)} src={selected.photoUrl} size={96} />
+                {/* Opens the photo whole, beside the sighting when one is
+                    waiting, for the officer to compare faces by eye. */}
+                {txt(selected.photoUrl) ? (
+                  <button
+                    type="button"
+                    onClick={() => setPhotoView(selected.id)}
+                    className="group relative shrink-0 rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-khozo"
+                    aria-label={t('View full photo')}
+                    title={t('View full photo')}
+                  >
+                    <Avatar name={d(selected.childName)} src={selected.photoUrl} size={96} />
+                    <span className="absolute bottom-1 right-1 grid h-7 w-7 place-items-center rounded-md bg-black/60 text-white transition group-hover:bg-black/80">
+                      <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" /></svg>
+                    </span>
+                  </button>
+                ) : (
+                  <Avatar name={d(selected.childName)} src={selected.photoUrl} size={96} />
+                )}
                 <div className="min-w-0 pt-1">
                   <h3 className="text-xl font-bold capitalize leading-tight">{d(selected.childName)}</h3>
                   <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
@@ -1413,6 +1433,15 @@ export default function Cases() {
                   <p className="mt-2 text-sm text-gray-500">
                     {t('Missing since')} {fmtDate(selected.dateOfMissing)}
                   </p>
+                  {txt(selected.photoUrl) && (
+                    <button
+                      type="button"
+                      onClick={() => setPhotoView(selected.id)}
+                      className="mt-1 text-sm font-semibold text-khozo-dark underline decoration-dotted underline-offset-2 hover:text-khozo"
+                    >
+                      {selected.pendingMatch?.foundReportId ? t('Compare with the sighting') : t('View full photo')}
+                    </button>
+                  )}
                 </div>
               </div>
               <button onClick={() => setSelected(null)} className="hidden rounded-lg px-2 py-1 text-sm font-medium text-gray-500 hover:bg-gray-100 hover:text-ink sm:inline">{t('Close')}</button>
@@ -2963,6 +2992,38 @@ export default function Cases() {
             </div>
           </div>
         </div>
+      )}
+
+      {selected && photoView === selected.id && (
+        <ErrorBoundary>
+          <PhotoViewer
+            title={d(selected.childName) || selected.id}
+            onClose={() => setPhotoView('')}
+            photos={[
+              {
+                src: selected.photoUrl,
+                label: t('Case photo'),
+                caption: [txt(selected.age) && t('age {n}', { n: txt(selected.age) }), selected.dateOfMissing && `${t('Missing since')} ${fmtDate(selected.dateOfMissing)}`].filter(Boolean).join(' · '),
+              },
+              selected.pendingMatch?.foundReportId && {
+                src: `/api/reports/photo/${encodeURIComponent(selected.pendingMatch.foundReportId)}`,
+                label: t('Sighting photo'),
+                caption: t('Possible match · {pct}% similar · not verified', { pct: Math.round((Number(selected.pendingMatch.score) || 0) * 100) }),
+              },
+            ].filter(Boolean)}
+            footer={selected.pendingMatch?.foundReportId ? (
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>{t('Looking at the photos does not confirm a match. Confirming asks how the person was verified: in person, by video or from documents.')}</span>
+                <Link
+                  to={`/app/matches?id=${encodeURIComponent(selected.pendingMatch.foundReportId)}`}
+                  className="shrink-0 rounded-lg bg-white px-3 py-2 text-xs font-semibold text-ink hover:bg-white/90"
+                >
+                  {t('Open this sighting')}
+                </Link>
+              </div>
+            ) : null}
+          />
+        </ErrorBoundary>
       )}
 
       {confirming && (

@@ -131,25 +131,36 @@ export function Logo({ light = false, className = '', to = '/' }) {
   );
 }
 
-export function StatCard({ label, value, sub, accent = 'khozo', icon }) {
+// With `onClick` the whole card is a button that opens what the figure counts.
+export function StatCard({ label, value, sub, accent = 'khozo', icon, onClick }) {
+  const t = useT();
   const accents = {
     khozo: 'text-khozo bg-khozo-light',
     red: 'text-red-600 bg-red-50',
     amber: 'text-amber-600 bg-amber-50',
     blue: 'text-blue-600 bg-blue-50',
   };
-  return (
-    <div className="card p-4 sm:p-5">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="text-sm font-medium text-gray-500">{label}</p>
-          <p className="mt-1 text-3xl font-bold tracking-tight">{value}</p>
-          {sub && <p className="mt-1 text-xs text-gray-400">{sub}</p>}
-        </div>
-        {/* On a phone two cards share a row, and the icon gives its room to the words. */}
-        {icon && <span className={`hidden h-10 w-10 shrink-0 place-items-center rounded-xl text-lg sm:grid ${accents[accent]}`}>{icon}</span>}
+  const body = (
+    <div className="flex items-start justify-between gap-2">
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-gray-500">{label}</p>
+        <p className="mt-1 text-3xl font-bold tracking-tight">{value}</p>
+        {sub && <p className="mt-1 text-xs text-gray-400">{sub}</p>}
       </div>
+      {/* On a phone two cards share a row, and the icon gives its room to the words. */}
+      {icon && <span className={`hidden h-10 w-10 shrink-0 place-items-center rounded-xl text-lg sm:grid ${accents[accent]}`}>{icon}</span>}
     </div>
+  );
+  if (!onClick) return <div className="card p-4 sm:p-5">{body}</div>;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="card group block w-full p-4 text-left transition hover:shadow-md hover:ring-1 hover:ring-khozo/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-khozo sm:p-5"
+    >
+      {body}
+      <span className="mt-2 block text-xs font-semibold text-khozo-dark opacity-70 group-hover:opacity-100">{t('View details')} ›</span>
+    </button>
   );
 }
 

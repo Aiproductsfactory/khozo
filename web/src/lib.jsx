@@ -241,22 +241,29 @@ export function Avatar({ name: rawName, src: rawSrc, size = 40 }) {
   );
 }
 
-export function ProtectedImage({ src: rawSrc, alt, className, style, fallback }) {
+// `loading`, when given, shows while the photo is fetched; `fallback` shows
+// when there is none or it could not be fetched (and while loading, if no
+// `loading` was given).
+export function ProtectedImage({ src: rawSrc, alt, className, style, fallback, loading }) {
   const [objectUrl, setObjectUrl] = useState(null);
+  const [fetching, setFetching] = useState(false);
   const src = txt(rawSrc);
 
   useEffect(() => {
     if (!src) {
       setObjectUrl(null);
+      setFetching(false);
       return undefined;
     }
     if (src.startsWith('data:')) {
       setObjectUrl(src);
+      setFetching(false);
       return undefined;
     }
     let alive = true;
     let nextUrl = null;
     const apiPath = src.startsWith('/api') ? src.slice(4) : src;
+    setFetching(true);
     api.blob(apiPath)
       .then((blob) => {
         if (!alive) return;
@@ -265,6 +272,9 @@ export function ProtectedImage({ src: rawSrc, alt, className, style, fallback })
       })
       .catch(() => {
         if (alive) setObjectUrl(null);
+      })
+      .finally(() => {
+        if (alive) setFetching(false);
       });
     return () => {
       alive = false;
@@ -273,6 +283,7 @@ export function ProtectedImage({ src: rawSrc, alt, className, style, fallback })
   }, [src]);
 
   if (!objectUrl) {
+    if (fetching && loading) return loading;
     return fallback || null;
   }
 

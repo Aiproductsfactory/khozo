@@ -9,6 +9,7 @@ import { useDisplay } from '../useDisplay.js';
 import { useBackClose } from '../useBackClose.js';
 import { ActionMessage, ActionToast, useAction } from './useAction.jsx';
 import { ConfirmMatchDialog, EngineScores, MatchEvidence, currentCandidate, photoCheckFlag, telHref } from './Reunite.jsx';
+import PhotoViewer from './PhotoViewer.jsx';
 import { POLICE_ROLES } from '../../../shared/scope.js';
 import { sightingScreenVerdict } from '../../../shared/face-screen.js';
 
@@ -498,6 +499,9 @@ export default function FoundReports({ view = 'matches' }) {
   };
 
   useBackClose(!!compareModal, () => setCompareModal(null));
+  // Both photos of the open comparison, full screen (PhotoViewer).
+  const [compareFull, setCompareFull] = useState(false);
+  useEffect(() => { if (!compareModal) setCompareFull(false); }, [compareModal]);
 
   const openConfirm = (sighting, matched) => {
     action.clear();
@@ -1220,14 +1224,19 @@ export default function FoundReports({ view = 'matches' }) {
             <div className="grid grid-cols-2 gap-2 sm:gap-4">
               <div className="min-w-0 text-center">
                 <span className="text-xs font-semibold text-gray-600 block mb-2">{t('Sighting photo')}</span>
-                <div className="flex h-56 items-center justify-center overflow-hidden rounded-xl border bg-slate-100 text-xs text-slate-400 sm:h-80">
+                <button
+                  type="button"
+                  onClick={() => setCompareFull(true)}
+                  title={t('View both photos full size')}
+                  className="flex h-56 w-full cursor-zoom-in items-center justify-center overflow-hidden rounded-xl border bg-slate-100 text-xs text-slate-400 hover:ring-2 hover:ring-khozo/40 sm:h-80"
+                >
                   <ProtectedImage
                     src={txt(compareModal.sighting.photoUrl) || (compareModal.sighting.id ? `/api/reports/photo/${compareModal.sighting.id}` : null)}
                     alt={t('Sighting')}
                     className="max-h-full max-w-full object-contain"
                     fallback={<span>{t('No sighting photo')}</span>}
                   />
-                </div>
+                </button>
                 <p className="mt-2 text-xs font-medium text-gray-700">{d(compareModal.sighting.foundLocation)}</p>
               </div>
 
@@ -1235,17 +1244,25 @@ export default function FoundReports({ view = 'matches' }) {
                 <span className="text-xs font-semibold text-indigo-600 block mb-2">
                   {isAdultCase(compareModal.matched) ? t('Missing person record') : t('Missing child record')}
                 </span>
-                <div className="flex h-56 items-center justify-center overflow-hidden rounded-xl border border-indigo-100 bg-indigo-50 text-xs text-indigo-400 sm:h-80">
+                <button
+                  type="button"
+                  onClick={() => setCompareFull(true)}
+                  title={t('View both photos full size')}
+                  className="flex h-56 w-full cursor-zoom-in items-center justify-center overflow-hidden rounded-xl border border-indigo-100 bg-indigo-50 text-xs text-indigo-400 hover:ring-2 hover:ring-khozo/40 sm:h-80"
+                >
                   <ProtectedImage
                     src={txt(compareModal.matched.photoUrl) || (compareModal.matched.id ? `/api/reports/photo/${compareModal.matched.id}` : null)}
                     alt={t('Missing child')}
                     className="max-h-full max-w-full object-contain"
                     fallback={<span>{t('No case photo')}</span>}
                   />
-                </div>
+                </button>
                 <p className="mt-2 text-xs font-bold text-gray-900">{d(compareModal.matched.childName)}</p>
               </div>
             </div>
+            <button type="button" onClick={() => setCompareFull(true)} className="btn-ghost w-full py-2 text-xs">
+              {t('View both photos full size')}
+            </button>
 
             <div className="rounded-xl bg-slate-50 p-3.5 text-center ring-1 ring-slate-200">
               <span className="block text-xs font-semibold text-slate-600">{t('Face similarity')}</span>
@@ -1289,6 +1306,28 @@ export default function FoundReports({ view = 'matches' }) {
             </div>
           </div>
         </div>
+        </ErrorBoundary>
+      )}
+
+      {compareModal && compareFull && (
+        <ErrorBoundary>
+          <PhotoViewer
+            title={t('Face comparison')}
+            onClose={() => setCompareFull(false)}
+            photos={[
+              {
+                src: txt(compareModal.sighting.photoUrl) || (compareModal.sighting.id ? `/api/reports/photo/${compareModal.sighting.id}` : null),
+                label: t('Sighting photo'),
+                caption: txt(compareModal.sighting.geoAddress) || d(compareModal.sighting.foundLocation),
+              },
+              {
+                src: txt(compareModal.matched.photoUrl) || (compareModal.matched.id ? `/api/reports/photo/${compareModal.matched.id}` : null),
+                label: isAdultCase(compareModal.matched) ? t('Missing person record') : t('Missing child record'),
+                caption: d(compareModal.matched.childName),
+              },
+            ]}
+            footer={t('Looking at the photos does not confirm a match. Confirming asks how the person was verified: in person, by video or from documents.')}
+          />
         </ErrorBoundary>
       )}
 

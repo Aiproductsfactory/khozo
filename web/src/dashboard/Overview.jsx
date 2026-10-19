@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -6,8 +6,9 @@ import {
 } from 'recharts';
 import { api } from '../api.js';
 import { useAuth } from '../auth.jsx';
-import { StatCard } from '../components.jsx';
+import { ErrorBoundary, StatCard } from '../components.jsx';
 import NavIcon from './NavIcon.jsx';
+import OverviewDetail from './OverviewDetail.jsx';
 import { asList, categoryLabel, timeAgo, txt } from '../lib.jsx';
 import { currentLocale, msg, useT } from '../i18n.jsx';
 import { PHONE_QUERY, useMediaQuery } from '../useMediaQuery.js';
@@ -60,6 +61,27 @@ const count = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0).to
 
 const OP_ROLES = ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'dcrb', 'dlsa', 'cwc', 'dcpu', 'rpf', 'cci', 'saa', 'jjb', 'state_nodal', 'sara', 'crime_bureau'];
 
+// Follow-up alert types with a clock of their own; every other type is a
+// statutory record coming due.
+const ROUTINE_ALERTS = ['case_overdue', 'case_no_recent_update', 'pending_sighting', 'intake_overdue'];
+// What opens when a figure is clicked (OverviewDetail.jsx): the records the
+// figure counts, with a filter where the figure is a slice of a list.
+const DETAIL = {
+  active: { kind: 'active' },
+  reunited: { kind: 'reunited' },
+  intakes: { kind: 'intakes' },
+  sightings: { kind: 'sightings' },
+  alerts: { kind: 'alerts' },
+  overdue: { kind: 'alerts', filter: (a) => a.type === 'case_overdue' },
+  stale: { kind: 'alerts', filter: (a) => a.type === 'case_no_recent_update' },
+  formal: { kind: 'alerts', filter: (a) => !ROUTINE_ALERTS.includes(a.type) },
+  high: { kind: 'alerts', filter: (a) => a.priority === 'high' },
+  network: { kind: 'network' },
+  cciActive: { kind: 'cci', filter: (r) => !['found', 'closed'].includes(r.caseStatus) },
+  cciOverdue: { kind: 'cci', filter: (r) => r.reviewStatus === 'overdue' },
+  cciDueSoon: { kind: 'cci', filter: (r) => r.reviewStatus === 'due_soon' },
+};
+
 /**
  * What each role is actually responsible for, as live counts.
  *
@@ -71,88 +93,88 @@ const OP_ROLES = ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'dcrb', 'dls
  */
 // Reports from families and NGOs that wait for this desk to verify them: none
 // of them is compared with a sighting until an officer does.
-const INTAKE_WORK = { label: msg('Intakes to verify'), from: (s) => s.intakes?.pending, to: '/app/cases?status=intake_pending' };
+const INTAKE_WORK = { label: msg('Intakes to verify'), from: (s) => s.intakes?.pending, to: '/app/cases?status=intake_pending', detail: DETAIL.intakes };
 
 const ROLE_WORK = {
   police: [
     INTAKE_WORK,
-    { label: msg('Sightings to review'), from: (s) => s.cards.pendingMatches, to: '/app/matches' },
-    { label: msg('Cases open past 30 days'), from: (s, f) => f?.totals.caseOverdue, to: '/app/cases' },
-    { label: msg('Cases with no recent note'), from: (s, f) => f?.totals.staleUpdates, to: '/app/cases' },
+    { label: msg('Sightings to review'), from: (s) => s.cards.pendingMatches, to: '/app/matches', detail: DETAIL.sightings },
+    { label: msg('Cases open past 30 days'), from: (s, f) => f?.totals.caseOverdue, to: '/app/cases', detail: DETAIL.overdue },
+    { label: msg('Cases with no recent note'), from: (s, f) => f?.totals.staleUpdates, to: '/app/cases', detail: DETAIL.stale },
   ],
   sjpu: [
     INTAKE_WORK,
-    { label: msg('Sightings to review'), from: (s) => s.cards.pendingMatches, to: '/app/matches' },
-    { label: msg('Cases needing a follow-up note'), from: (s, f) => f?.totals.staleUpdates, to: '/app/cases' },
+    { label: msg('Sightings to review'), from: (s) => s.cards.pendingMatches, to: '/app/matches', detail: DETAIL.sightings },
+    { label: msg('Cases needing a follow-up note'), from: (s, f) => f?.totals.staleUpdates, to: '/app/cases', detail: DETAIL.stale },
   ],
   ahtu: [
-    { label: msg('Sightings to review'), from: (s) => s.cards.pendingMatches, to: '/app/matches' },
-    { label: msg('Cases open past 30 days'), from: (s, f) => f?.totals.caseOverdue, to: '/app/cases' },
+    { label: msg('Sightings to review'), from: (s) => s.cards.pendingMatches, to: '/app/matches', detail: DETAIL.sightings },
+    { label: msg('Cases open past 30 days'), from: (s, f) => f?.totals.caseOverdue, to: '/app/cases', detail: DETAIL.overdue },
   ],
   rpf: [
-    { label: msg('Sightings to review'), from: (s) => s.cards.pendingMatches, to: '/app/matches' },
-    { label: msg('Active cases in your district'), from: (s) => s.cards.activeCases, to: '/app/cases' },
+    { label: msg('Sightings to review'), from: (s) => s.cards.pendingMatches, to: '/app/matches', detail: DETAIL.sightings },
+    { label: msg('Active cases in your district'), from: (s) => s.cards.activeCases, to: '/app/cases', detail: DETAIL.active },
   ],
   cwc: [
     INTAKE_WORK,
-    { label: msg('Sightings awaiting a decision'), from: (s) => s.cards.pendingMatches, to: '/app/matches' },
-    { label: msg('Statutory records due'), from: (s, f) => f?.totals.formalFollowups, to: '/app/cases' },
-    { label: msg('Children in the CCI register'), from: (s, f, c) => c?.totals.activeChildren, to: '/app/cci-register' },
+    { label: msg('Sightings awaiting a decision'), from: (s) => s.cards.pendingMatches, to: '/app/matches', detail: DETAIL.sightings },
+    { label: msg('Statutory records due'), from: (s, f) => f?.totals.formalFollowups, to: '/app/cases', detail: DETAIL.formal },
+    { label: msg('Children in the CCI register'), from: (s, f, c) => c?.totals.activeChildren, to: '/app/cci-register', detail: DETAIL.cciActive },
   ],
   dcpu: [
     INTAKE_WORK,
-    { label: msg('Sightings awaiting a decision'), from: (s) => s.cards.pendingMatches, to: '/app/matches' },
-    { label: msg('Statutory records due'), from: (s, f) => f?.totals.formalFollowups, to: '/app/cases' },
-    { label: msg('Children in the CCI register'), from: (s, f, c) => c?.totals.activeChildren, to: '/app/cci-register' },
+    { label: msg('Sightings awaiting a decision'), from: (s) => s.cards.pendingMatches, to: '/app/matches', detail: DETAIL.sightings },
+    { label: msg('Statutory records due'), from: (s, f) => f?.totals.formalFollowups, to: '/app/cases', detail: DETAIL.formal },
+    { label: msg('Children in the CCI register'), from: (s, f, c) => c?.totals.activeChildren, to: '/app/cci-register', detail: DETAIL.cciActive },
   ],
   cci: [
-    { label: msg('Children in your care'), from: (s, f, c) => c?.totals.activeChildren, to: '/app/cci-register' },
-    { label: msg('Care reviews overdue'), from: (s, f, c) => c?.totals.overdueReviews, to: '/app/cci-register' },
-    { label: msg('Care reviews due soon'), from: (s, f, c) => c?.totals.dueSoonReviews, to: '/app/cci-register' },
+    { label: msg('Children in your care'), from: (s, f, c) => c?.totals.activeChildren, to: '/app/cci-register', detail: DETAIL.cciActive },
+    { label: msg('Care reviews overdue'), from: (s, f, c) => c?.totals.overdueReviews, to: '/app/cci-register', detail: DETAIL.cciOverdue },
+    { label: msg('Care reviews due soon'), from: (s, f, c) => c?.totals.dueSoonReviews, to: '/app/cci-register', detail: DETAIL.cciDueSoon },
   ],
   saa: [
-    { label: msg('Children in the register'), from: (s, f, c) => c?.totals.activeChildren, to: '/app/cci-register' },
-    { label: msg('Adoption records due'), from: (s, f) => f?.totals.formalFollowups, to: '/app/cases' },
+    { label: msg('Children in the register'), from: (s, f, c) => c?.totals.activeChildren, to: '/app/cci-register', detail: DETAIL.cciActive },
+    { label: msg('Adoption records due'), from: (s, f) => f?.totals.formalFollowups, to: '/app/cases', detail: DETAIL.formal },
   ],
   sara: [
-    { label: msg('Children in the state register'), from: (s, f, c) => c?.totals.activeChildren, to: '/app/cci-register' },
-    { label: msg('Adoption records due'), from: (s, f) => f?.totals.formalFollowups, to: '/app/cases' },
-    { label: msg('Statewide active cases'), from: (s) => s.cards.activeCases, to: '/app/cases' },
+    { label: msg('Children in the state register'), from: (s, f, c) => c?.totals.activeChildren, to: '/app/cci-register', detail: DETAIL.cciActive },
+    { label: msg('Adoption records due'), from: (s, f) => f?.totals.formalFollowups, to: '/app/cases', detail: DETAIL.formal },
+    { label: msg('Statewide active cases'), from: (s) => s.cards.activeCases, to: '/app/cases', detail: DETAIL.active },
   ],
   jjb: [
-    { label: msg('Proceedings and records due'), from: (s, f) => f?.totals.formalFollowups, to: '/app/cases' },
-    { label: msg('Active cases in your district'), from: (s) => s.cards.activeCases, to: '/app/cases' },
+    { label: msg('Proceedings and records due'), from: (s, f) => f?.totals.formalFollowups, to: '/app/cases', detail: DETAIL.formal },
+    { label: msg('Active cases in your district'), from: (s) => s.cards.activeCases, to: '/app/cases', detail: DETAIL.active },
   ],
   dlsa: [
-    { label: msg('Legal-aid records due'), from: (s, f) => f?.totals.formalFollowups, to: '/app/cases' },
-    { label: msg('Active cases in your district'), from: (s) => s.cards.activeCases, to: '/app/cases' },
+    { label: msg('Legal-aid records due'), from: (s, f) => f?.totals.formalFollowups, to: '/app/cases', detail: DETAIL.formal },
+    { label: msg('Active cases in your district'), from: (s) => s.cards.activeCases, to: '/app/cases', detail: DETAIL.active },
   ],
   dcrb: [
-    { label: msg('Bureau records due'), from: (s, f) => f?.totals.formalFollowups, to: '/app/cases' },
-    { label: msg('Cases open past 30 days'), from: (s, f) => f?.totals.caseOverdue, to: '/app/cases' },
+    { label: msg('Bureau records due'), from: (s, f) => f?.totals.formalFollowups, to: '/app/cases', detail: DETAIL.formal },
+    { label: msg('Cases open past 30 days'), from: (s, f) => f?.totals.caseOverdue, to: '/app/cases', detail: DETAIL.overdue },
   ],
   crime_bureau: [
-    { label: msg('Bureau records due'), from: (s, f) => f?.totals.formalFollowups, to: '/app/cases' },
-    { label: msg('Statewide active cases'), from: (s) => s.cards.activeCases, to: '/app/cases' },
+    { label: msg('Bureau records due'), from: (s, f) => f?.totals.formalFollowups, to: '/app/cases', detail: DETAIL.formal },
+    { label: msg('Statewide active cases'), from: (s) => s.cards.activeCases, to: '/app/cases', detail: DETAIL.active },
     { label: msg('Abuse signals to review'), from: (s, f) => f?.totals.high, to: '/app/fraud' },
   ],
   state_nodal: [
     INTAKE_WORK,
-    { label: msg('Statewide active cases'), from: (s) => s.cards.activeCases, to: '/app/cases' },
-    { label: msg('Sightings awaiting review'), from: (s) => s.cards.pendingMatches, to: '/app/matches' },
-    { label: msg('High-priority follow-ups'), from: (s, f) => f?.totals.high, to: '/app/cases' },
+    { label: msg('Statewide active cases'), from: (s) => s.cards.activeCases, to: '/app/cases', detail: DETAIL.active },
+    { label: msg('Sightings awaiting review'), from: (s) => s.cards.pendingMatches, to: '/app/matches', detail: DETAIL.sightings },
+    { label: msg('High-priority follow-ups'), from: (s, f) => f?.totals.high, to: '/app/cases', detail: DETAIL.high },
   ],
   admin: [
     INTAKE_WORK,
-    { label: msg('Sightings awaiting review'), from: (s) => s.cards.pendingMatches, to: '/app/matches' },
-    { label: msg('High-priority follow-ups'), from: (s, f) => f?.totals.high, to: '/app/cases' },
-    { label: msg('Stakeholders on the network'), from: (s, f, c, n) => n?.users.length, to: '/app/network' },
+    { label: msg('Sightings awaiting review'), from: (s) => s.cards.pendingMatches, to: '/app/matches', detail: DETAIL.sightings },
+    { label: msg('High-priority follow-ups'), from: (s, f) => f?.totals.high, to: '/app/cases', detail: DETAIL.high },
+    { label: msg('Stakeholders on the network'), from: (s, f, c, n) => n?.users.length, to: '/app/network', detail: DETAIL.network },
   ],
   super_admin: [
     INTAKE_WORK,
-    { label: msg('Sightings awaiting review'), from: (s) => s.cards.pendingMatches, to: '/app/matches' },
-    { label: msg('High-priority follow-ups'), from: (s, f) => f?.totals.high, to: '/app/cases' },
-    { label: msg('Stakeholders on the network'), from: (s, f, c, n) => n?.users.length, to: '/app/network' },
+    { label: msg('Sightings awaiting review'), from: (s) => s.cards.pendingMatches, to: '/app/matches', detail: DETAIL.sightings },
+    { label: msg('High-priority follow-ups'), from: (s, f) => f?.totals.high, to: '/app/cases', detail: DETAIL.high },
+    { label: msg('Stakeholders on the network'), from: (s, f, c, n) => n?.users.length, to: '/app/network', detail: DETAIL.network },
   ],
 };
 
@@ -168,6 +190,23 @@ export default function Overview() {
 
   const [cciRegister, setCciRegister] = useState(null);
   const [network, setNetwork] = useState(null);
+  // The figure whose records are open in the side sheet: { kind, filter, label, value }.
+  const [detail, setDetail] = useState(null);
+  // The case register and the sighting queue, fetched the first time a sheet
+  // needs one and kept while the page is open. A failed fetch is not kept.
+  const lists = useRef({});
+  const loadList = useCallback((source) => {
+    if (!lists.current[source]) {
+      const path = source === 'sightings' ? '/reports/found/all' : '/reports';
+      lists.current[source] = api.get(path)
+        .then((d) => asList(source === 'sightings' ? d?.foundReports : d?.reports))
+        .catch((e) => {
+          delete lists.current[source];
+          throw e;
+        });
+    }
+    return lists.current[source];
+  }, []);
 
   useEffect(() => {
     // The headline figures are what the page is built around, so a failure here
@@ -232,6 +271,9 @@ export default function Overview() {
   // it always did; once women or adults are registered it counts people.
   const categorySplit = asList(stats.categorySplit).filter((row) => row && typeof row === 'object');
   const hasAdults = categorySplit.some((row) => row.category !== 'child' && row.total > 0);
+  // A click handler that opens a figure's records; none for a family or NGO,
+  // whose own reports are their whole view.
+  const open = (spec, label, value) => (showOps && spec ? () => setDetail({ ...spec, label, value: count(value) }) : undefined);
 
   return (
     <div className="space-y-6">
@@ -257,6 +299,7 @@ export default function Overview() {
         <StatCard
           label={hasAdults ? t('People still missing') : t('Children still missing')}
           value={count(cards.totalMissing)}
+          onClick={open(DETAIL.active, hasAdults ? t('People still missing') : t('Children still missing'), cards.totalMissing)}
           accent="red"
           icon={<NavIcon name="missing" />}
           sub={t('{n} of them under review', { n: Number(asList(stats.statusSplit).find((s) => s?.name === 'Under review')?.value) || 0 })}
@@ -264,6 +307,7 @@ export default function Overview() {
         <StatCard
           label={t('Reunited or closed')}
           value={count(cards.totalFound)}
+          onClick={open(DETAIL.reunited, t('Reunited or closed'), cards.totalFound)}
           accent="khozo"
           icon={<NavIcon name="cci" />}
           sub={
@@ -275,6 +319,7 @@ export default function Overview() {
         <StatCard
           label={t('Sightings awaiting review')}
           value={count(cards.pendingMatches)}
+          onClick={open(DETAIL.sightings, t('Sightings awaiting review'), cards.pendingMatches)}
           accent="amber"
           icon={<NavIcon name="search" />}
           sub={
@@ -286,6 +331,7 @@ export default function Overview() {
         <StatCard
           label={t('Needs your attention')}
           value={count(followups?.totals?.alerts)}
+          onClick={open(DETAIL.alerts, t('Needs your attention'), followups?.totals?.alerts)}
           accent="blue"
           icon={<NavIcon name="alert" />}
           sub={Number(followups?.totals?.high) ? t('{n} high priority', { n: Number(followups.totals.high) }) : t('Nothing overdue')}
@@ -314,18 +360,24 @@ export default function Overview() {
           {/* Two to a row on a phone: three left "Cases with no recent note"
               four lines tall in a 90 px column. */}
           <div className={`mt-4 grid grid-cols-2 gap-2 sm:gap-3 ${work.length >= 4 ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
-            {work.map((item) => (
-              <Link
-                key={item.label}
-                to={item.to}
-                className="group flex min-w-0 flex-col rounded-xl border border-slate-200 bg-slate-50/70 p-3 transition hover:border-khozo/40 hover:bg-khozo-light/50 sm:p-4"
-              >
-                <p className={`text-2xl font-extrabold sm:text-3xl ${item.value > 0 ? 'text-slate-900' : 'text-slate-300'}`}>
-                  {Number(item.value).toLocaleString('en-IN')}
-                </p>
-                <p className="mt-1 text-sm font-medium text-slate-600 group-hover:text-khozo-dark">{t(item.label)}</p>
-              </Link>
-            ))}
+            {work.map((item) => {
+              const tileClass = 'group flex min-w-0 flex-col rounded-xl border border-slate-200 bg-slate-50/70 p-3 text-left transition hover:border-khozo/40 hover:bg-khozo-light/50 sm:p-4';
+              const inner = (
+                <>
+                  <p className={`text-2xl font-extrabold sm:text-3xl ${item.value > 0 ? 'text-slate-900' : 'text-slate-300'}`}>
+                    {Number(item.value).toLocaleString('en-IN')}
+                  </p>
+                  <p className="mt-1 text-sm font-medium text-slate-600 group-hover:text-khozo-dark">{t(item.label)}</p>
+                </>
+              );
+              return item.detail ? (
+                <button key={item.label} type="button" onClick={open(item.detail, t(item.label), item.value)} className={tileClass}>
+                  {inner}
+                </button>
+              ) : (
+                <Link key={item.label} to={item.to} className={tileClass}>{inner}</Link>
+              );
+            })}
           </div>
         </div>
       )}
@@ -533,6 +585,23 @@ export default function Overview() {
           </ul>
         </div>
       </div>
+
+      {detail && (
+        <ErrorBoundary>
+          <OverviewDetail
+            key={`${detail.kind}:${detail.label}`}
+            detail={detail}
+            scope={scope}
+            load={loadList}
+            lists={{
+              alerts: followups ? asList(followups.alerts) : null,
+              network: network ? asList(network.users) : null,
+              cci: cciRegister ? asList(cciRegister.register) : null,
+            }}
+            onClose={() => setDetail(null)}
+          />
+        </ErrorBoundary>
+      )}
     </div>
   );
 }
