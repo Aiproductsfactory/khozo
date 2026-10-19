@@ -52,14 +52,19 @@ const REOPEN_ROLES = POLICE_ROLES;
 // Replacing a case photo that cannot be matched (POST /reports/:id/photo).
 const PHOTO_REPLACE_ROLES = POLICE_ROLES;
 
-/** A small flag for a case whose photo cannot be matched: no face, or a group photo. */
+/**
+ * A small flag for a case whose photos cannot be matched: no face, or only a
+ * group photo (shared/photo-need.js). A bad main photo beside a usable one is
+ * not flagged: matching uses the usable one.
+ */
 function PhotoCheckChip({ report }) {
   const t = useT();
-  const flag = photoCheckFlag(report?.photoCheck);
-  if (!flag || report?.photoCheck?.verdict === 'unchecked') return null;
+  const need = photoNeedOf(report);
+  if (need !== 'no_face' && need !== 'group') return null;
+  const flag = photoCheckFlag({ verdict: need === 'group' ? 'multiple_faces' : 'no_face' });
   return (
     <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ${flag.className}`}>
-      {report.photoCheck.verdict === 'multiple_faces' ? t('Group photo') : t('Photo not usable for matching')}
+      {need === 'group' ? t('Group photo') : t('Photo not usable for matching')}
     </span>
   );
 }
@@ -807,7 +812,11 @@ export default function Cases() {
     const chosen = photoAdd.caseId === r.id ? photoAdd.files : [];
     if (!chosen.length) return;
     const form = new FormData();
-    for (const file of chosen) form.append('extraPhotos', await preparePhoto(file));
+    // A case with no photo yet: the first becomes its main photo (as `photo`),
+    // so all five fit; the server holds at most four beside a main one.
+    for (const [i, file] of chosen.entries()) {
+      form.append(i === 0 && !txt(r.photoUrl) ? 'photo' : 'extraPhotos', await preparePhoto(file));
+    }
     if (photoAdd.consent) form.set('photoConsent', 'true');
     const data = await api.postForm(`/reports/${r.id}/photos`, form);
     if (data?.report) showReport(data.report);
@@ -1574,7 +1583,11 @@ export default function Cases() {
                       : t('Ask the family for a better photo: recent, the face clearly visible and large, the person alone, in good light. If they have several, use the clearest.')}
                   </p>
                 )}
-                {photoCheckFlag(selected.photoCheck) ? (
+                {photoCheckFlag(selected.photoCheck) && ['no_face', 'multiple_faces'].includes(selected.photoCheck?.verdict) && !photoNeedOf(selected) ? (
+                  <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 ring-1 ring-slate-200">
+                    {t('The main photo does not show one clear face, but another photo of this case does, and matching uses that one. You can make it the main photo.')}
+                  </p>
+                ) : photoCheckFlag(selected.photoCheck) ? (
                   <p className={`mt-2 rounded-lg px-3 py-2 text-xs font-semibold ring-1 ${photoCheckFlag(selected.photoCheck).className}`}>
                     {t(photoCheckFlag(selected.photoCheck).label)}
                   </p>
@@ -1657,9 +1670,9 @@ export default function Cases() {
                           ? t('Add {n} photos', { n: photoAdd.files.length })
                           : t('Add photo')}
                     </button>
-                    <ActionMessage action={action} id="photos" />
                   </div>
                 )}
+                <ActionMessage action={action} id="photos" />
                 {canReplacePhoto && !selected.anonymizedAt && (
                   <>
                     {viewPhotosOf(selected).length > 1 && (

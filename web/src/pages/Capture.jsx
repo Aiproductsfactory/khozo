@@ -337,6 +337,7 @@ export default function Capture() {
     return prev.filter((p) => p.key !== key);
   });
   const preparingAny = preparing || extras.some((p) => p.preparing);
+  const photoCount = (file ? 1 : 0) + extras.length;
 
   useEffect(() => {
     getQueuedSightings().then(setQueued).catch(() => setQueued([]));
@@ -778,6 +779,7 @@ export default function Capture() {
                   <input type="checkbox" className="mt-1" checked={form.photoConsent} onChange={setChecked('photoConsent')} required />
                   <span>
                     {t(copy.consent)}
+                    {photoCount > 1 && <> {t('This covers all {n} photos.', { n: photoCount })}</>}
                   </span>
                 </label>
               )}

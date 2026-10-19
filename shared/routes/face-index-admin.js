@@ -35,7 +35,6 @@
 import { isForwardPoolCase } from '../match-pool.js';
 import {
   PHOTO_REJECTION_REASONS,
-  WEAK_FACE_WARNINGS,
   enrollCaseInIndex,
   isRetryableIndexFailure,
   removeCaseFromIndex,
@@ -43,6 +42,7 @@ import {
 } from '../face-index.js';
 import { readFields } from '../case-domain.js';
 import { loadPhotos } from '../photo-set.js';
+import { galleryHasGoodFace } from '../photo-need.js';
 
 export const INDEX_BATCH_MAX = 20;
 const INDEX_BATCH_DEFAULT = 10;
@@ -109,7 +109,8 @@ export default function registerFaceIndexAdminRoutes(router, deps) {
       if (state === 'enrolled') {
         counts.enrolled += 1;
         // In the gallery, but with a face Aarakshak could barely use.
-        if ((report.faceIndex?.warnings || []).some((w) => WEAK_FACE_WARNINGS.has(w))) counts.weak += 1;
+        // Several photos: weak only if every face the gallery took is weak.
+        if (!galleryHasGoodFace(report.faceIndex)) counts.weak += 1;
       } else if (state === 'pending') {
         counts.pending += 1;
         rows.pending.push(report);
@@ -265,7 +266,8 @@ export default function registerFaceIndexAdminRoutes(router, deps) {
       }
       // eslint-disable-next-line no-await-in-loop
       const entry = await enrollCaseInIndex(index, findReport(report.id) || report, photos, updateReport);
-      calls += 1;
+      // A set refused for a photo is tried again with one photo: two calls.
+      calls += entry?.attempts || 1;
       if (entry?.status === 'enrolled') enrolled += 1;
       else if (entry && !isRetryableIndexFailure(entry.reason)) rejected += 1;
       else {

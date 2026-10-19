@@ -106,6 +106,7 @@ export default function PhotoViewer({ panes: givenPanes, photos, title, onClose,
                   aria-label={actual ? t('Fit to screen') : t('Actual size')}
                 >
                   <ProtectedImage
+                    key={photo.src}
                     src={photo.src}
                     alt={txt(pane.label)}
                     className={actual ? 'max-w-none' : 'max-h-full max-w-full object-contain'}

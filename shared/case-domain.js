@@ -808,9 +808,13 @@ function citizenCaseView(report) {
   view.personCategory = personCategoryOf(report);
   // A number stored whole before Khozo stopped storing them is shown masked.
   if ('childAadhar' in view) view.childAadhar = maskAadhaar(view.childAadhar);
-  // The other photos the family gave, by where to fetch them: what the face
-  // checks made of them is the desks' business (shared/photo-set.js).
-  view.extraPhotos = extraPhotosView(report).map(({ id, url }) => ({ id, url }));
+  // The other photos the family gave, by where to fetch them - not ones the
+  // police added later, and not what the face checks made of any: that is
+  // the desks' business (shared/photo-set.js).
+  const given = new Set((Array.isArray(report.extraPhotos) ? report.extraPhotos : [])
+    .filter((p) => p && p.addedById && p.addedById === report.registeredById)
+    .map((p) => p.id));
+  view.extraPhotos = extraPhotosView(report).filter((p) => given.has(p.id)).map(({ id, url }) => ({ id, url }));
   return view;
 }
 

@@ -19,6 +19,8 @@ import {
 } from '../shared/photo-set.js';
 import { anonymisedReportPatch } from '../shared/privacy.js';
 import { anonymiseCase } from '../shared/retention.js';
+import { photoNeedOf } from '../shared/photo-need.js';
+import { citizenCaseView } from '../shared/case-domain.js';
 
 const checks = [];
 const check = (name, ok, detail = '') => {
@@ -176,6 +178,79 @@ const readPhoto = async (file) => photo(String(file).replace(/\.jpg$/, '').repla
 
   const legacy = await enrollCaseInIndex({ ...refusesSets, enroll: async (caseId, photos) => ({ ok: true, photos: photos.map(() => ({ status: 'enrolled', face_id: 'x' })) }) }, { id: 'r_old' }, photo('FACE:A'), null);
   check('a single photo given as bytes is enrolled as the main photo', legacy.photos[0].photoId === MAIN_PHOTO && legacy.status === 'enrolled');
+}
+
+// ---- What the review found, kept fixed ---------------------------------------------
+
+{
+  // A faceless main photo and extras not yet checked: the gallery would be
+  // given the extras, so matching leads with one of them too.
+  const r = record('r_lead', 'NOFACE', [['p_lead0001', 'FACE_L', null]], { photoCheck: { verdict: 'no_face' } });
+  check('a faceless main photo gives the lead to an extra not yet checked', leadPhotoOf(r).id === 'p_lead0001');
+
+  // Going forward the records are cases: a case's group photo or faceless
+  // photo is never compared - a relative beside the child would match.
+  const stored = [record('r_grp', 'FACE_G', [['p_grp00001', 'GROUP_G', 'multiple_faces'], ['p_nof00001', 'NOFACE', 'no_face'], ['p_ok000001', 'FACE_G2', 'usable']])];
+  const forward = await loadComparable(stored, readPhoto, 5, { direction: 'forward' });
+  check('a case\'s group and faceless photos are not compared', forward[0].extras.map((p) => p.id).join() === 'p_ok000001', JSON.stringify(forward[0].extras.map((p) => p.id)));
+  const reverse = await loadComparable(stored, readPhoto, 5, { direction: 'reverse' });
+  check('a sighting\'s group photo may still be compared (the child may be in it), never a faceless one',
+    reverse[0].extras.map((p) => p.id).join() === 'p_grp00001,p_ok000001', JSON.stringify(reverse[0].extras.map((p) => p.id)));
+}
+
+{
+  // Other photos are read only for the pairs the budget lets run.
+  const reads = [];
+  const counting = async (file) => { reads.push(file); return readPhoto(file); };
+  const stored = Array.from({ length: 6 }, (_, i) => record(`r_rd${i}`, `FACE_R${i}`, [1, 2, 3, 4].map((n) => [`p_rd${i}x${n}`, `FACE_RX${i}${n}`, 'usable'])));
+  const comparable = await loadComparable(stored, counting, 5);
+  const leadReads = reads.length;
+  const { providers: p } = providers();
+  await comparePhotos({ photoBuf: photo('FACE:R0'), comparable, providers: p, extraPairBudget: 3 });
+  check('only the photos the budget lets be compared are read', leadReads === 6 && reads.length - leadReads === 3, `${leadReads} lead reads, ${reads.length - leadReads} more`);
+}
+
+{
+  // No new extra pair starts after the time allowed.
+  let clock = 0;
+  const { calls, providers: p } = providers();
+  const slow = { ...p, aarakshak: { ready: true, compare: async (a, b) => { clock += 6000; return p.aarakshak.compare(a, b); } } };
+  const stored = Array.from({ length: 5 }, (_, i) => record(`r_tm${i}`, `FACE_T${i}`, [1, 2, 3].map((n) => [`p_tm${i}x${n}`, `FACE_TX${i}${n}`, 'usable'])));
+  const comparable = await loadComparable(stored, readPhoto, 5);
+  const out = await comparePhotos({ photoBuf: photo('FACE:T0'), comparable, providers: slow, concurrency: 1, extraPairTimeMs: 15000, now: () => clock });
+  check('extra pairs stop being started once the time allowed has passed',
+    out.summary.extraPairs.stoppedForTime > 0 && calls.aarakshak.length < 5 + 15, JSON.stringify({ calls: calls.aarakshak.length, extra: out.summary.extraPairs }));
+}
+
+{
+  const bad = { id: 'p_bad00001', buffer: photo('GROUP'), check: { verdict: 'multiple_faces' } };
+  check('a group photo is never sent to the gallery alone', enrollablePhotos([bad]).length === 0);
+  check('a lone faceless main photo still is, as before', enrollablePhotos([{ id: MAIN_PHOTO, buffer: photo('NOFACE'), check: { verdict: 'no_face' } }]).length === 1);
+  const twice = await enrollCaseInIndex({
+    name: 'test', enabled: true,
+    async enroll(caseId, photos) { return photos.length > 1 ? { ok: false, reason: 'face_too_small' } : { ok: true, photos: [{ status: 'enrolled' }] }; },
+    async search() { return null; }, async remove() { return { ok: true }; }, async info() { return null; }, async listCaseIds() { return null; },
+  }, { id: 'r_att' }, [{ id: MAIN_PHOTO, buffer: photo('FACE:A'), check: null }, { id: 'p_att00001', buffer: photo('FACE:A2'), check: null }], null);
+  check('a retried enrolment says it took two calls', twice.attempts === 2, JSON.stringify(twice));
+}
+
+{
+  const refusedButUsable = {
+    photoFile: 'a', photoCheck: { verdict: 'no_face' },
+    extraPhotos: [{ id: 'p_usable01', file: 'b', check: { verdict: 'usable' } }],
+    faceIndex: { status: 'failed', reason: 'face_too_small' },
+  };
+  check('a case the gallery refused still needs a better photo, whatever the checks said', photoNeedOf(refusedButUsable) === 'weak');
+
+  const view = citizenCaseView({
+    id: 'r_fam', registeredById: 'u_parent', photoUrl: '/api/reports/photo/r_fam', photoFile: 'r_fam.jpg',
+    extraPhotos: [
+      { id: 'p_family01', file: 'f1', addedById: 'u_parent', check: { verdict: 'usable' } },
+      { id: 'p_police01', file: 'f2', addedById: 'u_police', check: { verdict: 'usable' } },
+    ],
+  });
+  check('a family sees the photos it gave, not those the police added, and no check',
+    view.extraPhotos.length === 1 && view.extraPhotos[0].id === 'p_family01' && !('check' in view.extraPhotos[0]), JSON.stringify(view.extraPhotos));
 }
 
 // ---- Anonymising deletes every photo ---------------------------------------------

@@ -699,7 +699,10 @@ export default function FoundReports({ view = 'matches' }) {
           const proposedCandidates = asList(f.matchCandidates).filter((c) => c && c.status === 'proposed');
           const rejectedCount = asList(f.matchCandidates).filter((c) => c && c.status === 'rejected').length;
           const hasNext = proposedCandidates.some((c) => c.reportId !== f.matchedReportId);
-          const casePhotoFlag = matched ? photoCheckFlag(matched.photoCheck) : null;
+          // About the case photo the match was made on, not only the main one.
+          const casePhotoFlag = matched
+            ? photoCheckFlag((viewPhotosOf(matched).find((p) => p.id === (photoPairOf(f, matched)?.case || MAIN_PHOTO)) || { check: matched.photoCheck }).check)
+            : null;
           const lastSearch = comparedLine(f.matchEngine);
           const searched = searches[f.id];
           const reported = f.reportedLocation && typeof f.reportedLocation === 'object' ? f.reportedLocation : f;
@@ -1282,7 +1285,10 @@ export default function FoundReports({ view = 'matches' }) {
             panes={[{
               label: t('Sighting photos'),
               startId: MAIN_PHOTO,
+              // Another photo the screen found no person in is held back, as
+              // the main one is on the card, until an officer asks to see it.
               photos: (viewPhotosOf(viewing).length ? viewPhotosOf(viewing) : [{ id: MAIN_PHOTO, src: `/api/reports/photo/${viewing.id}` }])
+                .filter((p) => p.id === MAIN_PHOTO || revealed[viewing.id] || p.check?.verdict === 'usable' || p.check?.verdict === 'multiple_faces')
                 .map((p) => ({ id: p.id, src: p.src })),
             }]}
           />
@@ -1353,6 +1359,9 @@ export default function FoundReports({ view = 'matches' }) {
                   />
                 </button>
                 <p className="mt-2 text-xs font-bold text-gray-900">{d(compareModal.matched.childName)}</p>
+                {photoPairOf(compareModal.sighting, compareModal.matched)?.case === null && (
+                  <p className="text-[11px] font-semibold text-amber-700">{t('The case photo this match was found on has since been removed or replaced.')}</p>
+                )}
                 {viewPhotosOf(compareModal.matched).length > 1 && (
                   <p className="text-[11px] text-gray-500">
                     {photoPairOf(compareModal.sighting, compareModal.matched)?.case && photoPairOf(compareModal.sighting, compareModal.matched).case !== MAIN_PHOTO

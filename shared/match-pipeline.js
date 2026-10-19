@@ -34,7 +34,7 @@
  */
 import { DISAGREEMENT_GAP, MAX_MATCH_CANDIDATES, thresholdsOf } from './match-config.js';
 import { isWeakFace } from './face-screen.js';
-import { MAIN_PHOTO, leadPhotoOf, loadPhotos, photoCountOf } from './photo-set.js';
+import { MAIN_PHOTO, isBadFacePhoto, leadPhotoOf, photoCountOf, photosOf } from './photo-set.js';
 
 export const ENGINES = {
   aarakshak: {
@@ -119,12 +119,17 @@ function rounded(value) {
  * Step 1b of comparePhotos: compares the other photo pairs of the records
  * most like the probe, and moves each record's row to its best answered pair.
  * Mutates `rows`. Returns how many pairs were compared and what they found.
+ *
+ * A record's other photos are read only for the pairs the budget lets run,
+ * and no new pair is started after `deadline` (a time in ms): the person who
+ * sent a sighting is waiting on the answer.
  */
-async function compareOtherPairs({ rows, photoBuf, probeId, probeExtras, direction, aarakshak, concurrency, budget }) {
+async function compareOtherPairs({ rows, photoBuf, probeId, probeExtras, direction, aarakshak, concurrency, budget, deadline = Infinity, now = () => Date.now() }) {
+  const none = { compared: 0, answered: 0, improved: 0, stoppedForTime: 0 };
   const limit = Math.max(0, Math.floor(Number(budget) || 0));
   const probes = [{ id: probeId, buffer: photoBuf }, ...(Array.isArray(probeExtras) ? probeExtras : []).filter((p) => p?.buffer?.length)];
-  const loadable = (row) => typeof row.extras === 'function' || Array.isArray(row.extras);
-  if (!limit || (!rows.some(loadable) && probes.length < 2)) return { compared: 0, answered: 0, improved: 0 };
+  const hasExtras = (row) => typeof row.extras === 'function' || (Array.isArray(row.extras) && row.extras.length > 0);
+  if (!limit || (!rows.some(hasExtras) && probes.length < 2)) return none;
 
   // The best five by their first pair, then those whose first pair found no
   // face (the record's other photos, or the probe's, may show one).
@@ -132,17 +137,20 @@ async function compareOtherPairs({ rows, photoBuf, probeId, probeExtras, directi
     ...rows.filter((row) => row.aarakshak.status === 'answered').sort((a, b) => b.aarakshak.score - a.aarakshak.score).slice(0, MAX_MATCH_CANDIDATES),
     ...rows.filter((row) => row.aarakshak.status === 'no_face').slice(0, MAX_MATCH_CANDIDATES),
   ];
-  if (!shortlist.length) return { compared: 0, answered: 0, improved: 0 };
+  if (!shortlist.length) return none;
 
-  // Each shortlisted record's other photos, read only now.
+  // Each shortlisted record's photos, as descriptors: `{ id, buffer }` in
+  // hand, or `{ id, load() }` read only if one of its pairs is spent.
   const targetsOf = await mapLimit(shortlist, concurrency, async (row) => {
-    let extras = [];
+    let extras = row.extras;
     try {
-      extras = typeof row.extras === 'function' ? await row.extras() : row.extras || [];
+      if (typeof extras === 'function') extras = await extras();
     } catch {
       extras = [];
     }
-    return [{ id: row.targetId, buffer: row.targetBuf }, ...(Array.isArray(extras) ? extras : []).filter((p) => p?.buffer?.length && p.id !== row.targetId)];
+    const others = (Array.isArray(extras) ? extras : [])
+      .filter((p) => p && p.id !== row.targetId && (p.buffer?.length || typeof p.load === 'function'));
+    return [{ id: row.targetId, buffer: row.targetBuf }, ...others];
   });
 
   // Every pair not yet compared, per record; then one pair per record a
@@ -165,22 +173,40 @@ async function compareOtherPairs({ rows, photoBuf, probeId, probeExtras, directi
       if (queue[round]) spend.push(queue[round]);
     }
   }
-  if (!spend.length) return { compared: 0, answered: 0, improved: 0 };
+  if (!spend.length || now() > deadline) return { ...none, stoppedForTime: now() > deadline ? spend.length : 0 };
 
-  const results = await mapLimit(spend, concurrency, async (item) => answer(await aarakshak.compare(...orient(direction, item.probe.buffer, item.target.buffer))));
+  // Only the photos those pairs need are read, each once.
+  const toRead = [...new Set(spend.map((item) => item.target).filter((target) => !target.buffer?.length && typeof target.load === 'function'))];
+  await mapLimit(toRead, concurrency, async (target) => {
+    try {
+      target.buffer = await target.load();
+    } catch {
+      target.buffer = null;
+    }
+  });
+  const ready = spend.filter((item) => item.target.buffer?.length);
+
+  let stoppedForTime = 0;
+  const results = await mapLimit(ready, concurrency, async (item) => {
+    if (now() > deadline) {
+      stoppedForTime += 1;
+      return { status: 'not_asked' };
+    }
+    return answer(await aarakshak.compare(...orient(direction, item.probe.buffer, item.target.buffer)));
+  });
   let answeredCount = 0;
   const improvedRows = new Set();
   results.forEach((result, i) => {
     if (result.status !== 'answered') return;
     answeredCount += 1;
-    const { row, probe, target } = spend[i];
+    const { row, probe, target } = ready[i];
     if (row.aarakshak.status === 'answered' && row.aarakshak.score >= result.score) return;
     row.aarakshak = result;
     row.buffers = orient(direction, probe.buffer, target.buffer);
     row.pair = photoPairOf(direction, probe.id, target.id);
     improvedRows.add(row);
   });
-  return { compared: spend.length, answered: answeredCount, improved: improvedRows.size };
+  return { compared: ready.length - stoppedForTime, answered: answeredCount, improved: improvedRows.size, stoppedForTime };
 }
 
 /**
@@ -189,6 +215,13 @@ async function compareOtherPairs({ rows, photoBuf, probeId, probeExtras, directi
  * Aarakshak call; twenty is four more rounds for five cases.
  */
 export const EXTRA_PAIR_BUDGET = 20;
+
+/**
+ * How long after a search starts its extra photo pairs may still be begun,
+ * by default. The phone gives up on a sighting at 45 s; the first pairs and
+ * the second opinion need their share of that.
+ */
+export const EXTRA_PAIR_TIME_MS = 15000;
 
 /** KHOZO_EXTRA_PAIR_BUDGET as read: a number of pairs, 0 to compare no other pair. */
 export function extraPairBudgetOf(value) {
@@ -199,22 +232,25 @@ export function extraPairBudgetOf(value) {
 
 /**
  * The records of a search as comparePhotos takes them: each one's lead photo
- * (shared/photo-set.js leadPhotoOf) read now, its other photos only if it is
- * shortlisted. A record whose lead photo cannot be read is left out, as one
- * whose only photo could not be read always was.
+ * (shared/photo-set.js leadPhotoOf) read now, its other photos described and
+ * read only if a pair of them is compared. A photo whose own check found no
+ * face is never compared; a case's group photo neither, going forward (the
+ * records are cases): a relative beside the child would be matched as the
+ * child. A sighting's group photo stays: the child may be in it. A record
+ * whose lead photo cannot be read is left out, as one whose only photo could
+ * not be read always was.
  */
-export async function loadComparable(stored, readPhoto, concurrency) {
+export async function loadComparable(stored, readPhoto, concurrency, { direction = 'forward' } = {}) {
   const loaded = await mapLimit(stored, concurrency, async (report) => {
     const lead = leadPhotoOf(report) || { id: MAIN_PHOTO, file: report.photoFile };
     const targetBuf = lead.file ? await readPhoto(lead.file) : null;
-    return {
-      report,
-      targetId: lead.id,
-      targetBuf,
-      extras: photoCountOf(report) > 1
-        ? async () => (await loadPhotos(report, readPhoto, { [lead.id]: targetBuf })).filter((p) => p.id !== lead.id)
-        : null,
-    };
+    const others = photoCountOf(report) > 1
+      ? photosOf(report)
+        .filter((p) => p.id !== lead.id)
+        .filter((p) => p.check?.verdict !== 'no_face' && !(direction === 'forward' && isBadFacePhoto(p)))
+        .map((p) => ({ id: p.id, load: () => readPhoto(p.file) }))
+      : [];
+    return { report, targetId: lead.id, targetBuf, extras: others.length ? others : null };
   });
   return loaded.filter((row) => row.targetBuf);
 }
@@ -260,8 +296,11 @@ export async function comparePhotos({
   secondOpinionTopN = MAX_MATCH_CANDIDATES,
   concurrency = 5,
   extraPairBudget = EXTRA_PAIR_BUDGET,
+  extraPairTimeMs = EXTRA_PAIR_TIME_MS,
+  now = () => Date.now(),
 }) {
   const { aarakshak, rekognition } = providers;
+  const deadline = now() + Math.max(0, Number(extraPairTimeMs) || 0);
   const pairs = comparable.map(({ report, targetBuf, targetId = 'main', extras = null }) => ({
     report,
     buffers: orient(direction, photoBuf, targetBuf),
@@ -279,8 +318,8 @@ export async function comparePhotos({
 
   // 1b. The other photo pairs of the records most like the probe.
   const extraPairs = aarakshak.ready
-    ? await compareOtherPairs({ rows, photoBuf, probeId, probeExtras, direction, aarakshak, concurrency, budget: extraPairBudget })
-    : { compared: 0, answered: 0, improved: 0 };
+    ? await compareOtherPairs({ rows, photoBuf, probeId, probeExtras, direction, aarakshak, concurrency, budget: extraPairBudget, deadline, now })
+    : { compared: 0, answered: 0, improved: 0, stoppedForTime: 0 };
 
   const answered = [];
   const unanswered = [];

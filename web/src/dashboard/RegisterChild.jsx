@@ -138,6 +138,9 @@ export default function RegisterChild() {
   // photo - another age, another angle - is often the one that matches.
   const [photos, setPhotos] = useState([]);
   const file = photos[0]?.file || null;
+  // A photo is made smaller on the phone before it is sent; until every one
+  // is ready, sending would carry the full-size camera files.
+  const preparingPhotos = photos.some((p) => p.preparing);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [duplicates, setDuplicates] = useState([]);
@@ -199,11 +202,11 @@ export default function RegisterChild() {
     const picked = [...(e.target.files || [])].slice(0, Math.max(0, MAX_CASE_PHOTOS - photos.length));
     e.target.value = '';
     if (!picked.length) return;
-    const added = picked.map((raw) => ({ key: `${Date.now()}-${Math.random().toString(36).slice(2)}`, file: raw, preview: URL.createObjectURL(raw) }));
+    const added = picked.map((raw) => ({ key: `${Date.now()}-${Math.random().toString(36).slice(2)}`, file: raw, preview: URL.createObjectURL(raw), preparing: true }));
     setPhotos((prev) => [...prev, ...added].slice(0, MAX_CASE_PHOTOS));
     for (const photo of added) {
       preparePhoto(photo.file).then((ready) => {
-        setPhotos((prev) => prev.map((p) => (p.key === photo.key ? { ...p, file: ready } : p)));
+        setPhotos((prev) => prev.map((p) => (p.key === photo.key ? { ...p, file: ready, preparing: false } : p)));
       });
     }
   };
@@ -246,7 +249,10 @@ export default function RegisterChild() {
         // runs only on a case matched at once (an officer's); a family's
         // report is checked when an officer verifies it.
         hadPhoto: Boolean(file),
-        photoVerdict: data.report?.photoCheck?.verdict || null,
+        // A usable other photo is what matching leads with (shared/photo-set.js).
+        photoVerdict: (data.report?.extraPhotos || []).some((p) => p?.check?.verdict === 'usable')
+          ? 'usable'
+          : data.report?.photoCheck?.verdict || null,
         place: [data.report?.district || data.report?.districtText, data.report?.state].filter(Boolean).join(', '),
       });
       try { window.scrollTo({ top: 0 }); } catch {}
@@ -631,7 +637,9 @@ export default function RegisterChild() {
         */}
         <div className="sticky bottom-[calc(3.5625rem+env(safe-area-inset-bottom,0px))] z-10 -mx-4 flex justify-end gap-3 border-t border-black/5 bg-white/95 px-4 py-3 backdrop-blur sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none">
           <button type="button" className="btn-ghost" onClick={() => nav('/app')}>{t('Cancel')}</button>
-          <button className="btn-primary flex-1 sm:flex-none" disabled={busy}>{busy ? t('Submitting...') : allowDuplicate ? t('Submit duplicate anyway') : t('Submit')}</button>
+          <button className="btn-primary flex-1 sm:flex-none" disabled={busy || preparingPhotos}>
+            {busy ? t('Submitting...') : preparingPhotos ? t('Preparing the photos…') : allowDuplicate ? t('Submit duplicate anyway') : t('Submit')}
+          </button>
         </div>
       </form>
     </div>

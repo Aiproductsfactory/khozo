@@ -26,7 +26,7 @@ import { createSightingMatcher, engineRecordOf, engineSummary, evidenceOf, isRev
 import { detectImageMime } from '../photo-format.js';
 import {
   MAIN_PHOTO, MAX_CASE_PHOTOS, MAX_SIGHTING_PHOTOS, TOO_MANY_PHOTOS,
-  extraPhotoKey, extraPhotoUrl, extraPhotosOf, extraPhotosView, isExtraPhotoId, photoCountOf,
+  extraPhotoKey, extraPhotoUrl, extraPhotosOf, extraPhotosView, isBadFacePhoto, isExtraPhotoId, leadPhotoOf, photoCountOf,
 } from '../photo-set.js';
 import { sendSms, smsGatewayConfigured } from '../sms.js';
 // The case vocabulary, validation and public-redaction rules are shared with the
@@ -867,12 +867,25 @@ export default function registerReportRoutes(router, deps) {
     // An extra photo of the same record (?p=<id>, shared/photo-set.js): the
     // same person, so the same rule above decides who may see it.
     if (req.query?.p != null) {
-      const extra = isExtraPhotoId(req.query.p) && !record.anonymizedAt
-        ? extraPhotosOf(record).find((p) => p.id === req.query.p)
+      const photoId = String(req.query.p);
+      let file = isExtraPhotoId(photoId) && !record.anonymizedAt
+        ? extraPhotosOf(record).find((p) => p.id === photoId)?.file || null
         : null;
-      const bytes = extra ? await readPhoto(extra.file) : null;
+      let bytes = file ? await readPhoto(file) : null;
+      // As for the main photo below: a sighting reached through its
+      // found-child intake is shown with the intake's copy, which keeps the
+      // sighting's photo ids.
+      const viaIntake = found?.reverseMatch?.viaIntakeReportId;
+      if (!bytes && isExtraPhotoId(photoId) && viaIntake && found.matchedReportId) {
+        const intake = findReport(viaIntake);
+        const copy = intake && !intake.anonymizedAt ? extraPhotosOf(intake).find((p) => p.id === photoId) : null;
+        if (copy) {
+          file = copy.file;
+          bytes = await readPhoto(copy.file);
+        }
+      }
       if (!bytes) return res.status(404).end();
-      return res.type(detectImageMime(bytes) || photoMimeType(extra.file)).send(bytes);
+      return res.type(detectImageMime(bytes) || photoMimeType(file)).send(bytes);
     }
 
     let buffer = record.photoFile ? await readPhoto(record.photoFile) : null;
@@ -1334,6 +1347,10 @@ export default function registerReportRoutes(router, deps) {
     // outbound connections, and the reverse search already uses five.
     const searchable = Boolean(report.photoFile) && !isPendingCitizenIntake(report);
     const photoCheck = searchable ? await matcher.checkCasePhoto(req.file?.buffer) : null;
+    if (photoCheck) {
+      updateReport(report.id, { photoCheck });
+      report.photoCheck = photoCheck;
+    }
     // Each extra photo is checked on its own: a family's second photo may be
     // the one with a clear face.
     if (searchable && report.extraPhotos.length) {
@@ -1341,14 +1358,15 @@ export default function registerReportRoutes(router, deps) {
       updateReport(report.id, { extraPhotos });
       report.extraPhotos = extraPhotos;
     }
+    // The search leads with the photo that shows one face (leadPhotoOf): a
+    // group or faceless main photo would spend every comparison for nothing.
+    const checked = findReport(report.id) || report;
+    const photoBuffers = { [MAIN_PHOTO]: req.file?.buffer, ...extras.buffers };
+    const lead = leadPhotoOf(checked);
     const reverse = searchable
-      ? await matcher.matchStoredSightings(findReport(report.id) || report, { trigger: 'registration', actor: req.user, photo: req.file?.buffer })
+      ? await matcher.matchStoredSightings(checked, { trigger: 'registration', actor: req.user, photo: photoBuffers[lead?.id] || req.file?.buffer, photoId: photoBuffers[lead?.id] ? lead.id : MAIN_PHOTO })
       : { sightingMatches: 0 };
-    if (photoCheck) {
-      updateReport(report.id, { photoCheck });
-      report.photoCheck = photoCheck;
-    }
-    if (searchable) await matcher.indexCase(findReport(report.id) || report, { main: req.file?.buffer, ...extras.buffers });
+    if (searchable) await matcher.indexCase(findReport(report.id) || report, photoBuffers);
     res.status(201).json({
       report: isCitizenRole(req.user.role) ? citizenCaseView(report) : { ...deskCaseView(req.user, findReport(report.id) || report), photoCheck: report.photoCheck || null },
       // How many stored sightings were linked to this case for police review.
@@ -1439,14 +1457,20 @@ export default function registerReportRoutes(router, deps) {
         screens.push(screen);
         if (sightingScreenVerdict(screen) === 'person') break;
       }
-      const lead = Math.max(0, screens.findIndex((screen) => sightingScreenVerdict(screen) === 'person'));
+      // Which photo leads: one that shows a person; else one with a face
+      // too unclear to call; else one the screen could not judge; never one
+      // it found empty while another may not be.
+      const rank = (screen) => ({ person: 0, unclear_face: 1, unverified: 2 }[sightingScreenVerdict(screen)] ?? 3);
+      const lead = screens.reduce((best, screen, i) => (rank(screen) < rank(screens[best]) ? i : best), 0);
       const order = [lead, ...sentFiles.map((_, i) => i).filter((i) => i !== lead)];
       photos = order.map((i, at) => ({ id: at === 0 ? MAIN_PHOTO : `p_${nanoid(8)}`, file: sentFiles[i], screen: screens[i] || null }));
       screening = photos[0].screen;
       search = await matcher.forwardSearch(photos[0].file.buffer, {
         ...searchHints,
         probeId: MAIN_PHOTO,
-        probeExtras: photos.slice(1).map((p) => ({ id: p.id, buffer: p.file.buffer })),
+        // A photo the screen found empty is not compared with anyone.
+        probeExtras: photos.slice(1).filter((p) => sightingScreenVerdict(p.screen) !== 'no_person').map((p) => ({ id: p.id, buffer: p.file.buffer })),
+        leadShowsFace: sightingScreenVerdict(screening) === 'person',
       });
     }
     const mainPhotoFile = photos[0]?.file || null;
@@ -2122,15 +2146,22 @@ export default function registerReportRoutes(router, deps) {
       ? await storePhoto(reportId, { buffer: sightingPhoto, mimetype: detectImageMime(sightingPhoto) || photoMimeType(f.photoFile) })
       : { photoUrl: null, photoFile: null };
     const photoCheck = photo.photoFile ? await matcher.checkCasePhoto(sightingPhoto) : null;
-    // And its other photos, each with what was found in it (shared/photo-set.js).
+    // And its other photos that show one face (shared/photo-set.js), under the
+    // same ids, so a match made on the copy names the sighting's photo. A
+    // photo the reporter's screen never looked at is checked now; a group
+    // photo or an empty one stays with the sighting and goes with it.
     const copiedExtras = [];
     for (const extra of photo.photoFile ? extraPhotosOf(f) : []) {
+      if (isBadFacePhoto(extra)) continue;
       // eslint-disable-next-line no-await-in-loop
       const bytes = await Promise.resolve(readPhoto(extra.file)).catch(() => null);
       if (!bytes?.length) continue;
       // eslint-disable-next-line no-await-in-loop
-      const copied = await storeExtraPhotos(reportId, [{ buffer: bytes, mimetype: detectImageMime(bytes) || photoMimeType(extra.file) }], req.user);
-      copiedExtras.push(...copied.entries.map((entry) => ({ ...entry, check: extra.check || null })));
+      const check = extra.check?.verdict === 'usable' ? extra.check : await matcher.checkCasePhoto(bytes);
+      if (check?.verdict !== 'usable') continue;
+      // eslint-disable-next-line no-await-in-loop
+      const copied = await storeExtraPhotos(reportId, [{ buffer: bytes, mimetype: detectImageMime(bytes) || photoMimeType(extra.file) }], req.user, [extra.id]);
+      copiedExtras.push(...copied.entries.map((entry) => ({ ...entry, check })));
     }
     const intakeRecord = {
       id: `cci_${now}_${Math.random().toString(36).slice(2, 7)}`,
@@ -2628,12 +2659,17 @@ export default function registerReportRoutes(router, deps) {
     if (previous.photoFile && previous.photoFile !== photoFile && typeof deletePhoto === 'function') {
       await Promise.resolve(deletePhoto(previous.photoFile)).catch(() => {});
     }
+    // A score worked out on the old main photo is no longer about the photo
+    // shown as main.
+    if (previous.photoFile) renameCasePhotos(r.id, { [MAIN_PHOTO]: null });
     const updated = findReport(r.id);
     // The index holds the new face, not the old one.
     if (isForwardPoolCase(updated)) await matcher.indexCase(updated, req.file.buffer);
     const searchable = !['found', 'closed'].includes(updated.status) && !isPendingCitizenIntake(updated) && !isFoundChildIntake(updated);
     const reverse = searchable
-      ? await matcher.matchStoredSightings(updated, { trigger: 'photo_replaced', actor: req.user, photo: req.file.buffer })
+      // Led by the photo that shows one face (leadPhotoOf): the new main
+      // photo, unless its check found none or a group and another one has.
+      ? await matcher.matchStoredSightings(updated, { trigger: 'photo_replaced', actor: req.user, photo: leadPhotoOf(updated)?.id === MAIN_PHOTO ? req.file.buffer : null })
       : { sightingMatches: 0, engine: null };
     addActivity({ actor: req.user.name, action: 'Replaced the case photo', target: r.childName, icon: 'upload', actorId: req.user.id, scope: { state: r.state, district: r.district, reportId: r.id } });
     addAudit({
@@ -2655,6 +2691,29 @@ export default function registerReportRoutes(router, deps) {
     });
     res.json({ report: deskCaseView(req.user, findReport(r.id)), photoCheck, sightingMatches: reverse.sightingMatches, engine: reverse.engine || null });
   });
+
+  /**
+   * Keeps the photo pairs stored on sightings (photoPair, matchedPhotoPair:
+   * which photo of each a score was worked out on) pointing at the right
+   * photos after a case's photos change. `rename` maps a case photo id to its
+   * new id - the main photo became an extra, an extra the main one - or to
+   * null when that photo is gone, so the console says so instead of showing
+   * another photo as the one that matched.
+   */
+  function renameCasePhotos(reportId, rename) {
+    const fix = (pair) => (pair && typeof pair === 'object' && Object.prototype.hasOwnProperty.call(rename, pair.case)
+      ? { ...pair, case: rename[pair.case] }
+      : pair);
+    for (const f of listFoundReports()) {
+      const candidates = Array.isArray(f.matchCandidates) ? f.matchCandidates : [];
+      const patch = {};
+      if (candidates.some((c) => c?.reportId === reportId && c.photoPair)) {
+        patch.matchCandidates = candidates.map((c) => (c?.reportId === reportId && c.photoPair ? { ...c, photoPair: fix(c.photoPair) } : c));
+      }
+      if (f.matchedReportId === reportId && f.matchedPhotoPair) patch.matchedPhotoPair = fix(f.matchedPhotoPair);
+      if (Object.keys(patch).length) updateFoundReport(f.id, patch);
+    }
+  }
 
   /**
    * The checks every change to a case's photo set shares: the case exists, is
@@ -2729,10 +2788,25 @@ export default function registerReportRoutes(router, deps) {
     const stored = await storeExtraPhotos(r.id, files, req.user);
     if (files.length && !stored.entries.length && !mainFile) return res.status(500).json({ error: 'The photos could not be stored. Try again.' });
     const added = await checkExtraPhotos(stored.entries, stored.buffers);
+    // Read again before writing: the checks above take seconds, and another
+    // officer may have changed the photos meanwhile.
+    const fresh = findReport(r.id) || r;
+    if ((mainFile && fresh.photoFile) || photoCountOf(fresh) + (mainFile && !fresh.photoFile ? 1 : 0) + added.length > MAX_CASE_PHOTOS) {
+      if (typeof deletePhoto === 'function') {
+        for (const file of [patch.photoFile, ...added.map((a) => a.file)].filter(Boolean)) {
+          // eslint-disable-next-line no-await-in-loop
+          await Promise.resolve(deletePhoto(file)).catch(() => {});
+        }
+      }
+      return res.status(409).json({ error: 'The photos of this case changed while yours were being added. Open the case again and try again.' });
+    }
     updateReport(r.id, {
       ...patch,
-      photoConsent: true,
-      extraPhotos: [...extraPhotosOf(r), ...added],
+      // A photo from a department's register was not given with anyone's
+      // consent, and adding to it does not say it was (DPIA G15).
+      ...(fresh.photoConsent || isTruthy(read.body.photoConsent) ? { photoConsent: true } : {}),
+      ...(!fresh.photoBasis && isTruthy(read.body.photoConsent) ? { photoBasis: 'consent' } : {}),
+      extraPhotos: [...extraPhotosOf(fresh), ...added],
     });
     const updated = findReport(r.id);
     if (isForwardPoolCase(updated)) await matcher.indexCase(updated, { ...(mainFile ? { main: mainFile.buffer } : {}), ...stored.buffers });
@@ -2741,7 +2815,8 @@ export default function registerReportRoutes(router, deps) {
       ...(mainFile ? [{ id: 'main', buffer: mainFile.buffer, check: patch.photoCheck }] : []),
       ...added.map((entry) => ({ id: entry.id, buffer: stored.buffers[entry.id], check: entry.check })),
     ].filter((p) => p.buffer);
-    const probe = newPhotos.find((p) => p.check?.verdict === 'usable') || newPhotos[0];
+    // Only a photo that shows one face is worth a search: each comparison is paid.
+    const probe = newPhotos.find((p) => p.check?.verdict === 'usable');
     const searchable = probe && !['found', 'closed'].includes(updated.status) && !isPendingCitizenIntake(updated) && !isFoundChildIntake(updated);
     const reverse = searchable
       ? await matcher.matchStoredSightings(updated, { trigger: 'photo_added', actor: req.user, photo: probe.buffer, photoId: probe.id })
@@ -2786,8 +2861,17 @@ export default function registerReportRoutes(router, deps) {
     const extras = extraPhotosOf(r);
     const target = extras.find((p) => p.id === req.params.photoId);
     if (!target) return res.status(404).json({ error: 'Photo not found on this case' });
+    // Whether the gallery may hold this photo's face (the set it was given, or
+    // a record from before it listed the set).
+    const inGallery = r.faceIndex?.status === 'enrolled'
+      && (!Array.isArray(r.faceIndex.photos) || r.faceIndex.photos.some((p) => p?.photoId === target.id));
     updateReport(r.id, { extraPhotos: extras.filter((p) => p.id !== target.id) });
     if (typeof deletePhoto === 'function') await Promise.resolve(deletePhoto(target.file)).catch(() => {});
+    renameCasePhotos(r.id, { [target.id]: null });
+    // The removed face leaves the gallery before the rest go back in: if
+    // enrolling the rest failed, the gallery would otherwise keep it - the
+    // wrong person's face, matched as this case's.
+    if (inGallery) await matcher.unindexCase(findReport(r.id));
     const updated = findReport(r.id);
     if (isForwardPoolCase(updated)) await matcher.indexCase(updated);
     addActivity({ actor: req.user.name, action: 'Removed a photo from the case', target: r.childName, icon: 'upload', actorId: req.user.id, scope: { state: r.state, district: r.district, reportId: r.id } });
@@ -2830,6 +2914,7 @@ export default function registerReportRoutes(router, deps) {
       photoCheck: target.check || null,
       extraPhotos: [...former, ...extras.filter((p) => p.id !== target.id)],
     });
+    renameCasePhotos(r.id, { [MAIN_PHOTO]: former.length ? formerId : null, [target.id]: MAIN_PHOTO });
     const updated = findReport(r.id);
     addActivity({ actor: req.user.name, action: 'Chose the main photo of the case', target: r.childName, icon: 'upload', actorId: req.user.id, scope: { state: r.state, district: r.district, reportId: r.id } });
     addAudit({

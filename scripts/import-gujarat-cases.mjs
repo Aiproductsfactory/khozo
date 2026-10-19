@@ -45,7 +45,6 @@
 import { readFileSync, writeFileSync, existsSync, statSync, renameSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import { MAX_CASE_PHOTOS } from '../shared/photo-set.js';
 
 // ---------------------------------------------------------------- arguments
 
@@ -196,10 +195,7 @@ function payloadFor(c, user) {
     visibility: 'police',
   };
   const photo = c.photos?.[0] ? path.join(DATA_DIR, 'photos', c.photos[0]) : null;
-  // The row's other photos go beside the main one (shared/photo-set.js: a
-  // case holds five in all).
-  const extraPhotos = photo ? (c.photos || []).slice(1, MAX_CASE_PHOTOS).map((name) => path.join(DATA_DIR, 'photos', name)) : [];
-  return { fields, categories: categoriesFor(c), photo, extraPhotos };
+  return { fields, categories: categoriesFor(c), photo };
 }
 
 /** Local checks that mirror validateMissingReport, so a bad row fails here, not on the server. */
@@ -215,10 +211,6 @@ function validate(c, p) {
   if (p.photo) {
     if (!existsSync(p.photo)) errs.push(`photo file missing: ${p.photo}`);
     else if (statSync(p.photo).size > MAX_PHOTO_BYTES) errs.push('photo is larger than 8 MB');
-    for (const extra of p.extraPhotos || []) {
-      if (!existsSync(extra)) errs.push(`photo file missing: ${extra}`);
-      else if (statSync(extra).size > MAX_PHOTO_BYTES) errs.push(`photo ${path.basename(extra)} is larger than 8 MB`);
-    }
   }
   return errs;
 }
@@ -348,9 +340,6 @@ function buildForm(p, allowDuplicate) {
     // record says where it came from instead (DPIA G15).
     fd.append('photoBasis', 'department_register');
       fd.append('photo', new Blob([readFileSync(p.photo)], { type: 'image/jpeg' }), path.basename(p.photo));
-      for (const extra of p.extraPhotos || []) {
-        fd.append('extraPhotos', new Blob([readFileSync(extra)], { type: 'image/jpeg' }), path.basename(extra));
-      }
     }
     return fd;
   };
@@ -387,8 +376,10 @@ async function main() {
         ...p.fields,
         vulnerabilityCategories: p.categories,
         photo: p.photo ? `${path.basename(p.photo)} (${Math.round(statSync(p.photo).size / 1024)} KB)` : null,
-        extraPhotos: (p.extraPhotos || []).map((f) => path.basename(f)),
-        extraPhotosNotUploaded: (c.photos || []).slice(MAX_CASE_PHOTOS),
+        // Only the first picture is sent: a register's other pictures may be
+        // of someone else. An officer adds the family's other photos from
+        // the case (POST /api/reports/:id/photos).
+        extraPhotosNotUploaded: (c.photos || []).slice(1),
         notes: c.notes,
       }, null, 2));
     }

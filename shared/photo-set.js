@@ -32,7 +32,7 @@ export const EXTRA_PHOTO_FIELD = 'extraPhotos';
 export const MAX_EXTRA_FILES = MAX_CASE_PHOTOS - 1;
 
 /** The refusal for an upload carrying more photos than the record may hold. */
-export const TOO_MANY_PHOTOS = `Too many photos: a case holds at most ${MAX_CASE_PHOTOS} and a sighting at most ${MAX_SIGHTING_PHOTOS}.`;
+export const TOO_MANY_PHOTOS = `Too many photos: a case can have at most ${MAX_CASE_PHOTOS}, and a sighting at most ${MAX_SIGHTING_PHOTOS}.`;
 
 /**
  * The largest multipart body either runtime reads: three photos at the 8 MB
@@ -42,7 +42,7 @@ export const TOO_MANY_PHOTOS = `Too many photos: a case holds at most ${MAX_CASE
 export const MULTIPART_MAX_BYTES = 24 * 1024 * 1024;
 
 /** The refusal for a body over MULTIPART_MAX_BYTES. */
-export const PHOTOS_TOO_LARGE = 'The photos are too large to send together (24 MB at most). Send fewer or smaller photos.';
+export const PHOTOS_TOO_LARGE = 'These photos are too large to send together. Send fewer photos, or smaller ones.';
 
 /** How the main photo is named where a photo is named by id (a matched pair). */
 export const MAIN_PHOTO = 'main';
@@ -105,14 +105,23 @@ const notOneFace = (check) => check?.verdict === 'no_face' || check?.verdict ===
 
 /**
  * The photo a record is compared on first (shared/match-pipeline.js): the
- * main photo, unless its own face check found no face or a group and another
- * photo's found one face - then that one. Null without a photo.
+ * main photo, unless its own face check found no face or a group - then the
+ * first photo whose check found one face, else the first not known to be
+ * bad (not yet checked), which is what the face search gallery is given too
+ * (shared/face-index.js enrollablePhotos). Null without a photo.
  */
 export function leadPhotoOf(record) {
   const photos = photosOf(record);
   if (!photos.length) return null;
   if (!notOneFace(photos[0].check)) return photos[0];
-  return photos.find((p) => p.check?.verdict === 'usable') || photos[0];
+  return photos.find((p) => p.check?.verdict === 'usable')
+    || photos.find((p) => !notOneFace(p.check))
+    || photos[0];
+}
+
+/** Whether a photo's own check found no face, or a group, in it. */
+export function isBadFacePhoto(photo) {
+  return notOneFace(photo?.check);
 }
 
 /**
@@ -167,7 +176,10 @@ export function photoUrlOf(record, photoId = MAIN_PHOTO) {
     return record.photoUrl || (record.photoFile ? `/api/reports/photo/${record.id}` : null);
   }
   const extra = (Array.isArray(record.extraPhotos) ? record.extraPhotos : []).find((p) => p?.id === photoId);
-  return extra ? extra.url || extraPhotoUrl(record.id, photoId) : null;
+  if (extra) return extra.url || extraPhotoUrl(record.id, photoId);
+  // Not listed (a sighting matched through its found-child intake keeps the
+  // ids, the server finds the copy): ask for it by id.
+  return isExtraPhotoId(photoId) && record.id ? extraPhotoUrl(record.id, photoId) : null;
 }
 
 /**

@@ -39,7 +39,7 @@ import {
 } from './match-pool.js';
 import { MAX_MATCH_CANDIDATES, configHashOf, thresholdsOf } from './match-config.js';
 import { INDEX_TOP_K, enrollCaseInIndex, removeCaseFromIndex, safeFaceIndex } from './face-index.js';
-import { MAIN_PHOTO, leadPhotoOf, loadPhotos } from './photo-set.js';
+import { MAIN_PHOTO, isBadFacePhoto, leadPhotoOf, loadPhotos } from './photo-set.js';
 
 /**
  * Whether a comparison result is put in front of an officer.
@@ -55,6 +55,15 @@ export function isStrongMatch(candidate, engine) {
 }
 
 const iso = () => new Date().toISOString();
+
+/**
+ * Whether a sighting's screen found a person in its main photo: the screen is
+ * of the main photo (shared/routes/reports.js POST /found makes the photo that
+ * shows a person the main one).
+ */
+function sightingScreenShowsPerson(sighting, photoId) {
+  return photoId === MAIN_PHOTO && sighting?.screening?.verdict === 'person';
+}
 
 /** A candidate as it is kept on the sighting. */
 export function storedCandidate(candidate, rank, { source = 'forward', trigger = null } = {}) {
@@ -314,7 +323,7 @@ export function createSightingMatcher(deps) {
    * or when the index does not answer, on the nearest-first budget. Cases an
    * officer rejected for this sighting are never compared again.
    */
-  async function forwardSearch(photo, { state = null, district = null, gender = null, ageApprox = null, excludeReportIds = [], probeId = MAIN_PHOTO, probeExtras = [] } = {}) {
+  async function forwardSearch(photo, { state = null, district = null, gender = null, ageApprox = null, excludeReportIds = [], probeId = MAIN_PHOTO, probeExtras = [], leadShowsFace = true } = {}) {
     const excluded = new Set(excludeReportIds);
     const extras = (Array.isArray(probeExtras) ? probeExtras : []).filter((p) => p?.buffer?.length);
     // The sighting's other photos (shared/photo-set.js), compared only for
@@ -322,10 +331,14 @@ export function createSightingMatcher(deps) {
     const hints = { state, district, gender, ageApprox, excludeReportIds: [...excluded], probeId, probeExtras: extras };
     let index = null;
     if (photo?.length && faceIndex.enabled) {
-      // The lead photo first; another of the sighting's photos only when the
-      // index found no face in it (at most one search a photo).
+      // The lead photo first. Another of the sighting's photos only when the
+      // index gave no answer AND the lead is not known to show a face: then
+      // "no answer" is most likely "no face in it", and the next photo may
+      // have one. When the lead does show a face, no answer is the gallery's
+      // fault (a timeout, a 5xx, its rate), and asking again would only
+      // spend more of its rate. At most one search a photo.
       let hits = await faceIndex.search(photo, INDEX_TOP_K);
-      for (const extra of extras) {
+      for (const extra of leadShowsFace ? [] : extras) {
         if (Array.isArray(hits)) break;
         // eslint-disable-next-line no-await-in-loop
         hits = await faceIndex.search(extra.buffer, INDEX_TOP_K);
@@ -479,7 +492,8 @@ export function createSightingMatcher(deps) {
       ageApprox: sighting.ageApprox ?? null,
       excludeReportIds: [...rejectedReportIds(sighting)],
       probeId: lead.id,
-      probeExtras: photos.filter((p) => p.id !== lead.id),
+      probeExtras: photos.filter((p) => p.id !== lead.id && p.check?.verdict !== 'no_face'),
+      leadShowsFace: lead.check?.verdict === 'usable' || sightingScreenShowsPerson(sighting, lead.id),
     });
     const before = { status: sighting.status, matchedReportId: sighting.matchedReportId || null };
     const updated = await commitSighting(
@@ -627,7 +641,9 @@ export function createSightingMatcher(deps) {
         reportId: report.id,
         subject: { gender: report.gender, age: report.age, dateOfMissing: report.dateOfMissing, createdAt: report.createdAt },
         probeId: leadId,
-        probeExtras: photos.filter((p) => p.id !== leadId),
+        // A case's group photo is never compared: a relative beside the
+        // child would be matched as the child. Nor one with no face in it.
+        probeExtras: photos.filter((p) => p.id !== leadId && !isBadFacePhoto(p)),
       });
       const record = engineRecordOf(engine, { indexProvider: faceIndex.name, trigger: `reverse:${trigger}` });
 

@@ -1,5 +1,4 @@
 {
-  "{n} pictures in this row: the one on top is the main photo, and up to 4 more are added beside it": "इस पंक्ति में {n} चित्र: सबसे ऊपर वाला मुख्य फ़ोटो है, और अधिकतम 4 और उसके साथ जोड़े जाते हैं",
   "Photos added.": "फ़ोटो जोड़ी गईं।",
   "Main photo changed.": "मुख्य फ़ोटो बदली गई।",
   "Remove this photo from the case? It is deleted.": "यह फ़ोटो मामले से हटाएँ? इसे मिटा दिया जाएगा।",
@@ -34,5 +33,9 @@
   "Take another photo": "एक और फ़ोटो लें",
   "Add from gallery": "गैलरी से जोड़ें",
   "{n} photos will be sent.": "{n} फ़ोटो भेजी जाएँगी।",
-  "Replace the main photo": "मुख्य फ़ोटो बदलें"
+  "Replace the main photo": "मुख्य फ़ोटो बदलें",
+  "The main photo does not show one clear face, but another photo of this case does, and matching uses that one. You can make it the main photo.": "मुख्य फ़ोटो में एक साफ़ चेहरा नहीं दिखता, पर इस मामले की एक दूसरी फ़ोटो में दिखता है, और मिलान उसी से होता है। आप उसे मुख्य फ़ोटो बना सकते हैं।",
+  "The case photo this match was found on has since been removed or replaced.": "जिस मामले की फ़ोटो पर यह मिलान मिला था, वह फ़ोटो बाद में हटा दी गई है या बदल दी गई है।",
+  "Preparing the photos…": "फ़ोटो तैयार हो रही हैं…",
+  "This covers all {n} photos.": "यह सभी {n} फ़ोटो पर लागू होता है।"
 }

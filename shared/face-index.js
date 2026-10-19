@@ -474,9 +474,13 @@ const notOneFace = (check) => check?.verdict === 'no_face' || check?.verdict ===
  */
 export function enrollablePhotos(photos) {
   const list = (Array.isArray(photos) ? photos : []).filter((p) => p?.buffer?.length);
-  if (list.length <= 1) return list;
   const good = list.filter((p) => !notOneFace(p.check));
-  return good.length ? good : [list[0]];
+  if (good.length) return good;
+  // Only photos known to show no face or a group: the main one goes, as it
+  // always has, and the gallery says what it makes of it. An extra alone -
+  // the main photo could not be read - does not: a group photo would enrol
+  // strangers' faces under the case.
+  return list.filter((p) => !p.id || p.id === 'main').slice(0, 1);
 }
 
 /**
@@ -498,10 +502,13 @@ export async function enrollCaseInIndex(faceIndex, report, photos, updateReport)
   let set = enrollablePhotos(given);
   if (!set.length) return null;
   let res = await index.enroll(report.id, set.map((p) => p.buffer));
+  // Calls made, for a caller that counts them against Aarakshak's rate.
+  let attempts = 1;
   const aboutAPhoto = (reason) => PHOTO_REJECTION_REASONS.has(reason) || String(reason || '').startsWith('refused_');
   if (!res?.ok && set.length > 1 && aboutAPhoto(res?.reason)) {
     set = [set[0]];
     res = await index.enroll(report.id, set.map((p) => p.buffer));
+    attempts += 1;
   }
   const each = Array.isArray(res?.photos) ? res.photos : [];
   const entry = {
@@ -522,6 +529,7 @@ export async function enrollCaseInIndex(faceIndex, report, photos, updateReport)
       quality: Number.isFinite(each[i]?.quality) ? each[i].quality : null,
       warnings: Array.isArray(each[i]?.warnings) && each[i].warnings.length ? each[i].warnings : null,
     })),
+    attempts,
     at: new Date().toISOString(),
   };
   if (typeof updateReport === 'function') updateReport(report.id, { faceIndex: entry });

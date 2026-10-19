@@ -326,7 +326,7 @@ async function rankStored(photoBuf, stored, readPhoto, { direction = 'forward', 
   if (stored.length) {
     // Each record's lead photo; its others read only if it is shortlisted
     // (shared/match-pipeline.js, several photos a record).
-    const comparable = await loadComparable(stored, readPhoto, cfg.concurrency);
+    const comparable = await loadComparable(stored, readPhoto, cfg.concurrency, { direction });
     if (comparable.length) {
       outcome = await comparePhotos({
         photoBuf,

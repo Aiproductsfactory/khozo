@@ -26,28 +26,34 @@ export const PHOTO_NEEDS = ['no_photo', 'no_face', 'group', 'weak'];
 export function photoNeedOf(report) {
   if (!report || typeof report !== 'object' || report.anonymizedAt) return null;
   if (!report.photoFile && !report.photoUrl) return 'no_photo';
-  if (extraPhotosOf(report).some((p) => p.check?.verdict === 'usable') && hasAGoodFace(report)) return null;
-  const verdict = report.photoCheck?.verdict;
-  if (verdict === 'no_face') return 'no_face';
-  if (verdict === 'multiple_faces') return 'group';
   const index = report.faceIndex;
-  if (index && typeof index === 'object') {
-    const reason = String(index.reason || '');
-    if (index.status === 'failed') {
-      // The stored file could not be read: nothing is left to compare with.
-      if (reason === 'photo_missing') return 'no_photo';
-      if (reason === 'no_face' || reason === 'face_not_found_at_box') return 'no_face';
-      if (reason === 'multiple_faces') return 'group';
-      // The gallery's other refusals are about the photo; a 5xx, a timeout
-      // or a missing key is about the gallery, and says nothing of the photo.
-      if (PHOTO_REJECTION_REASONS.has(reason) || reason.startsWith('refused_') || /^http_4\d\d$/.test(reason)) return 'weak';
-    }
-    if (index.status === 'enrolled' && !hasAGoodFace(report)) return 'weak';
-  }
+  // The gallery refused every photo it was given: no face check can clear that.
+  const refused = index && typeof index === 'object' && index.status === 'failed' ? galleryRefusal(index) : null;
+  if (refused) return refused;
+  const usableExtra = extraPhotosOf(report).some((p) => p.check?.verdict === 'usable');
+  const verdict = report.photoCheck?.verdict;
+  if (verdict === 'no_face' && !usableExtra) return 'no_face';
+  if (verdict === 'multiple_faces' && !usableExtra) return 'group';
+  if (index && typeof index === 'object' && index.status === 'enrolled' && !hasAGoodFace(report)) return 'weak';
   return null;
 }
 
 const weak = (warnings) => Array.isArray(warnings) && warnings.some((w) => WEAK_FACE_WARNINGS.has(w));
+
+/**
+ * Why the gallery refused a case, as a photo need, or null when it was not
+ * about the photos: a 5xx, a timeout or a missing key is about the gallery,
+ * and says nothing of the photo. `photo_missing`: the stored file could not
+ * be read, so nothing is left to compare with.
+ */
+function galleryRefusal(index) {
+  const reason = String(index.reason || '');
+  if (reason === 'photo_missing') return 'no_photo';
+  if (reason === 'no_face' || reason === 'face_not_found_at_box') return 'no_face';
+  if (reason === 'multiple_faces') return 'group';
+  if (PHOTO_REJECTION_REASONS.has(reason) || reason.startsWith('refused_') || /^http_4\d\d$/.test(reason)) return 'weak';
+  return null;
+}
 
 /**
  * Whether the face search gallery holds a face of the case it can match
@@ -55,6 +61,10 @@ const weak = (warnings) => Array.isArray(warnings) && warnings.some((w) => WEAK_
  * gallery recorded each photo, its top-level warnings were the only photo's.
  * True when the gallery has said nothing.
  */
+export function galleryHasGoodFace(index) {
+  return hasAGoodFace({ faceIndex: index });
+}
+
 function hasAGoodFace(report) {
   const index = report.faceIndex;
   if (!index || typeof index !== 'object' || index.status !== 'enrolled') return true;

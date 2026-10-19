@@ -323,9 +323,6 @@ ok(!clearlyDifferent({ reportId: 'r_5' }, undefined, baseRec, fields), 'duplicat
   const fd = buildForm({ fields: { childName: 'A', age: '', gender: 'Male' }, categories: ['unaccompanied'] }, new Blob(['x'], { type: 'image/jpeg' }), { allowDuplicate: true, photoName: '1.jpg' });
   eq([fd.get('childName'), fd.has('age'), fd.get('allowDuplicate'), fd.get('photoBasis'), fd.getAll('vulnerabilityCategories')], ['A', false, 'true', 'department_register', ['unaccompanied']], 'form: fields as the CLI sends them');
   eq(fd.has('photoConsent'), false, 'form: an imported photo does not claim a consent nobody gave');
-  const many = buildForm({ fields: { childName: 'A' }, categories: [] }, new Blob(['x'], { type: 'image/jpeg' }), { photoName: '7.jpg', extraPhotos: [new Blob(['y'], { type: 'image/jpeg' }), new Blob(['z'], { type: 'image/jpeg' })] });
-  eq([many.getAll('extraPhotos').length, many.getAll('extraPhotos')[1].name, many.get('photo').name], [2, '7-3.jpg', '7.jpg'], "form: a row's other pictures go beside its main photo");
-  eq(buildForm({ fields: { childName: 'A' }, categories: [] }, null, { extraPhotos: [new Blob(['y'])] }).has('extraPhotos'), false, 'form: no other pictures without a main photo');
 
   const existing = [{ ...sameCase }, { ...sibling }];
   const calls = [];
