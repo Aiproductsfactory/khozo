@@ -94,6 +94,11 @@ const TINY_PNG = Buffer.from(
   'base64'
 );
 
+/** A photo with two faces in it, for the stand-in engine (see facePhotoFile). */
+function groupPhotoFile(label) {
+  return new File([Buffer.concat([TINY_PNG, Buffer.from(`KHOZO-SMOKE-FACE:${label}:case;KHOZO-SMOKE-GROUP;`)])], `group-${label}.png`, { type: 'image/png' });
+}
+
 function tinyPngFile() {
   return new File([TINY_PNG], 'tiny.png', { type: 'image/png' });
 }
@@ -1747,6 +1752,142 @@ async function candidateAndPhotoChecks({ superAdmin, admin, sjpu, cwc, parent, f
   assert(refusedBytes.error === 'Sighting photo does not look like a JPG, PNG or WebP image', `refused by its bytes: ${refusedBytes.error}`);
   const gif = sightingForm(new File([Buffer.from('GIF89a')], 'photo.gif', { type: 'image/gif' }));
   await expectStatus(400, () => request('POST', '/reports/found', { form: gif }), 'a sighting photo of a type other than JPEG, PNG or WebP');
+}
+
+/**
+ * Several photos of one person (shared/photo-set.js), through the running API
+ * on both runtimes: a case keeps and serves each photo under the same access
+ * rule as its main one, leads its matching with a photo that shows a face, and
+ * is found through it; an officer adds photos, chooses the main one and
+ * removes one; a family sees where its photos are, not what was made of them;
+ * too many are refused; and anonymising deletes every one.
+ */
+async function multiPhotoChecks({ superAdmin, sjpu, cwc, parent }) {
+  const mumbai = { state: 'Maharashtra', district: 'Mumbai' };
+  let phone = 9000001900;
+  const nextPhone = () => String(phone++);
+  const caseForm = (fields, photo, extras = []) => {
+    const form = new FormData();
+    addDeclaration(form, 'Smoke Multi-photo Declarant');
+    form.set('allowDuplicate', 'true');
+    for (const [key, value] of Object.entries({ ...mumbai, gender: 'Female', age: '11', ...fields })) form.set(key, value);
+    form.set('photoConsent', 'true');
+    if (photo) form.set('photo', photo);
+    for (const extra of extras) form.append('extraPhotos', extra);
+    return form;
+  };
+  const sightingForm = (photo, extras = []) => {
+    const form = new FormData();
+    form.set('foundLocation', 'Near Dadar station, multi-photo smoke');
+    form.set('state', mumbai.state);
+    form.set('district', mumbai.district);
+    form.set('note', 'Multi-photo smoke sighting');
+    form.set('reporterPhone', nextPhone());
+    form.set('photoConsent', 'true');
+    form.set('photo', photo);
+    for (const extra of extras) form.append('extraPhotos', extra);
+    return form;
+  };
+  const register = (fields, photo, extras, token = sjpu.token) => request('POST', '/reports', { token, form: caseForm(fields, photo, extras) });
+  const storedCase = async (id) => (await request('GET', `/reports/${id}`, { token: superAdmin.token })).report;
+  const storedSighting = async (id) => (await request('GET', '/reports/found/all', { token: superAdmin.token })).foundReports.find((row) => row.id === id);
+  const photoAt = (url, token) => fetch(`${base}${String(url).replace(/^\/api/, '')}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  const photosForm = (photos, consent = false) => {
+    const form = new FormData();
+    for (const p of photos) form.append('extraPhotos', p);
+    if (consent) form.set('photoConsent', 'true');
+    return form;
+  };
+
+  // A case whose main photo shows no face, with a clear second photo.
+  const meera = await register(
+    { childName: 'Meera Multi-photo Smoke', parentPhone: '9876500901' },
+    tinyPngFile(),
+    [facePhotoFile('MP1', 'case'), groupPhotoFile('MPG')],
+  );
+  const extras = meera.report.extraPhotos || [];
+  assert(extras.length === 2 && extras.every((p) => /^p_/.test(p.id) && /\?p=p_/.test(p.url)), `a case keeps its extra photos: ${JSON.stringify(extras)}`);
+  assert(meera.report.photoCheck?.verdict === 'no_face' && extras[0].check?.verdict === 'usable' && extras[1].check?.verdict === 'multiple_faces',
+    `each photo is checked on its own: ${JSON.stringify([meera.report.photoCheck?.verdict, ...extras.map((p) => p.check?.verdict)])}`);
+  const statsAfter = await request('GET', '/dashboard/stats', { token: sjpu.token });
+  assert(Number.isInteger(statsAfter.photoNeeds?.total), 'the photo counts are still given');
+
+  // Served under the main photo's rule.
+  const served = await photoAt(extras[0].url, sjpu.token);
+  assert(served.ok && Buffer.from(await served.arrayBuffer()).includes(Buffer.from('KHOZO-SMOKE-FACE:MP1:case;')), 'an extra photo is served to an authorised desk');
+  assert((await photoAt(extras[0].url)).status === 401, 'an extra photo is never served without a token');
+  assert((await photoAt(`/api/reports/photo/${meera.report.id}?p=p_doesnotexist`, sjpu.token)).status === 404, 'an unknown extra photo is not found');
+  assert((await photoAt(`/api/reports/photo/${meera.report.id}?p=../../etc`, sjpu.token)).status === 404, 'a malformed photo id is not found');
+
+  // Matching leads with the photo that shows a face.
+  const sighting = await request('POST', '/reports/found', { form: sightingForm(facePhotoFile('MP1')) });
+  const linked = await storedSighting(sighting.foundReport.id);
+  assert(linked.matchedReportId === meera.report.id && linked.matchedPhotoPair?.case === extras[0].id,
+    `a sighting is matched with the case photo that shows a face: ${JSON.stringify({ matched: linked.matchedReportId, pair: linked.matchedPhotoPair })}`);
+  const reviewCase = linked.matchedReport;
+  assert(Array.isArray(reviewCase?.extraPhotos) && reviewCase.extraPhotos.length === 2 && reviewCase.extraPhotos.every((p) => !('file' in p)),
+    `the review desk sees the case's other photos, never their storage keys: ${JSON.stringify(reviewCase?.extraPhotos)}`);
+
+  // A sighting with more than one photo of its own.
+  const twoPhotoSighting = await request('POST', '/reports/found', { form: sightingForm(tinyPngFile(), [facePhotoFile('MP4')]) });
+  const twoStored = await storedSighting(twoPhotoSighting.foundReport.id);
+  assert(twoStored.extraPhotos?.length === 1, `a sighting keeps its second photo: ${JSON.stringify(twoStored.extraPhotos)}`);
+  const tooManySighting = await expectStatus(400, () => request('POST', '/reports/found', {
+    form: sightingForm(facePhotoFile('MP5'), [facePhotoFile('MP5'), facePhotoFile('MP5'), facePhotoFile('MP5')]),
+  }), 'a sighting with four photos');
+  assert(/Too many photos/.test(tooManySighting.error || ''), `too many sighting photos are refused with the reason: ${tooManySighting.error}`);
+
+  // An officer adds a photo the family brought; the stored sightings are
+  // searched again with it.
+  const waiting = await request('POST', '/reports/found', { form: sightingForm(facePhotoFile('MP2')) });
+  const addPhotos = (account, id, form) => request('POST', `/reports/${id}/photos`, { token: account.token, form });
+  await expectStatus(403, () => addPhotos(cwc, meera.report.id, photosForm([facePhotoFile('MP2', 'case')])), 'a CWC desk adds a case photo');
+  await expectStatus(403, () => addPhotos(parent, meera.report.id, photosForm([facePhotoFile('MP2', 'case')])), 'a parent adds a case photo');
+  await expectStatus(400, () => addPhotos(sjpu, meera.report.id, new FormData()), 'adding no photo');
+  const added = await addPhotos(sjpu, meera.report.id, photosForm([facePhotoFile('MP2', 'case')]));
+  assert(added.added?.length === 1 && added.report.extraPhotos.length === 3 && added.sightingMatches === 1,
+    `an added photo is kept, checked and searched with: ${JSON.stringify({ added: added.added, count: added.report.extraPhotos.length, sightingMatches: added.sightingMatches })}`);
+  assert((await storedSighting(waiting.foundReport.id)).matchedReportId === meera.report.id, 'the stored sighting the new photo shows is linked for review');
+  const tooMany = await expectStatus(400, () => addPhotos(sjpu, meera.report.id, photosForm([facePhotoFile('MP3', 'case'), facePhotoFile('MP3', 'case')])), 'adding past five photos');
+  assert(/1 more photo/.test(tooMany.error || ''), `the refusal says how many more fit: ${tooMany.error}`);
+  const audit = (await request('GET', '/dashboard/audit', { token: superAdmin.token })).audit;
+  assert(audit.some((row) => row.action === 'case.photos_added' && row.targetId === meera.report.id && row.metadata?.photoCount === 4), 'adding photos is audited');
+
+  // Choosing the main photo, and removing one.
+  const chosen = await request('POST', `/reports/${meera.report.id}/photos/${extras[0].id}/main`, { token: sjpu.token, body: {} });
+  assert(chosen.report.photoCheck?.verdict === 'usable' && chosen.report.extraPhotos.length === 3 && !chosen.report.extraPhotos.some((p) => p.id === extras[0].id),
+    `an extra photo becomes the main one and the old main photo is kept as an extra: ${JSON.stringify({ check: chosen.report.photoCheck, extras: chosen.report.extraPhotos.map((p) => p.id) })}`);
+  const mainServed = await photoAt(chosen.report.photoUrl, sjpu.token);
+  assert(mainServed.ok && Buffer.from(await mainServed.arrayBuffer()).includes(Buffer.from('KHOZO-SMOKE-FACE:MP1:case;')), 'the case serves its new main photo');
+  const groupEntry = chosen.report.extraPhotos.find((p) => p.check?.verdict === 'multiple_faces');
+  const groupFile = (await storedCase(meera.report.id)).extraPhotos.find((p) => p.id === groupEntry.id)?.file;
+  const removed = await request('DELETE', `/reports/${meera.report.id}/photos/${groupEntry.id}`, { token: sjpu.token });
+  assert(removed.report.extraPhotos.length === 2 && !removed.report.extraPhotos.some((p) => p.id === groupEntry.id), 'an extra photo is removed');
+  assert((await photoAt(groupEntry.url, sjpu.token)).status === 404, 'a removed photo is no longer served');
+  assert(!groupFile || !fs.existsSync(path.join(dataDir, 'uploads', groupFile)), 'and its file is deleted');
+  await expectStatus(404, () => request('DELETE', `/reports/${meera.report.id}/photos/p_doesnotexist`, { token: sjpu.token }), 'removing a photo the case does not have');
+
+  // Too many photos at registration.
+  const refused = await expectStatus(400, () => register({ childName: 'Too Many Photos Smoke', parentPhone: '9876500902' }, facePhotoFile('MP6', 'case'),
+    [1, 2, 3, 4, 5].map(() => facePhotoFile('MP6', 'case'))), 'registering a case with six photos');
+  assert(/Too many photos/.test(refused.error || ''), `six photos are refused with the reason: ${refused.error}`);
+
+  // A family sees where its photos are, not what was made of them.
+  const family = await register({ childName: 'Family Multi-photo Smoke', parentPhone: '9876500903' }, facePhotoFile('MP7', 'case'), [facePhotoFile('MP7', 'case')], parent.token);
+  assert(family.report.extraPhotos?.length === 1 && Object.keys(family.report.extraPhotos[0]).sort().join() === 'id,url',
+    `a family's view lists its photos by where they are: ${JSON.stringify(family.report.extraPhotos)}`);
+
+  // Anonymising deletes every photo.
+  const files = (await storedCase(meera.report.id)).extraPhotos.map((p) => p.file);
+  assert(files.length === 2 && files.every((f) => fs.existsSync(path.join(dataDir, 'uploads', f))), 'precondition: the extra photos are stored');
+  await request('POST', `/dashboard/privacy/retention/report/${meera.report.id}`, {
+    token: superAdmin.token,
+    body: { decision: 'anonymize', approvalReference: 'SMOKE-MULTI-PHOTO', approvalType: 'privacy_officer' },
+  });
+  assert(files.every((f) => !fs.existsSync(path.join(dataDir, 'uploads', f))), 'anonymising deletes every extra photo');
+  const anonymised = await storedCase(meera.report.id);
+  assert(Array.isArray(anonymised.extraPhotos) && anonymised.extraPhotos.length === 0, 'and leaves none listed');
+  assert((await photoAt(extras[0].url, superAdmin.token)).status === 404, 'and serves none');
 }
 
 let fakeAarakshak;
@@ -3903,6 +4044,7 @@ async function run() {
   await personCategoryChecks({ superAdmin, sjpu, cwc, parent });
   await twoWayMatchingChecks({ superAdmin, sjpu, cwc, dlsa, ngo: await login('ngo@khozo.org'), parent, fake: fakeAarakshak });
   await candidateAndPhotoChecks({ superAdmin, admin, sjpu, cwc, parent, fake: fakeAarakshak });
+  await multiPhotoChecks({ superAdmin, sjpu, cwc, parent });
   await strictInputChecks({ superAdmin, sjpu });
   await privacyGapChecks({ superAdmin, sjpu, cci: await login('cci@khozo.org') });
   await traffickingChecks({ superAdmin, sjpu, ahtu, cci: await login('cci@khozo.org'), parent });

@@ -253,6 +253,8 @@ export function anonymisedReportPatch(report, { now = Date.now(), approval = nul
       ? { reason: report.closure.reason || null, label: report.closure.label || null, closedAt: report.closure.closedAt || null }
       : null,
     publicBulletin: null,
+    // Every photo goes, not only the main one (shared/photo-set.js).
+    extraPhotos: [],
     privacyReviewStatus: 'anonymized',
     anonymizedAt: new Date(now).toISOString(),
     anonymizationApproval: approval,
@@ -268,6 +270,7 @@ export function anonymisedSightingPatch(sighting, { now = Date.now(), approval =
     // A string, as every sighting's place is: screens and searches read it as text.
     foundLocation: 'Location removed',
     verification: strippedVerification(sighting.verification),
+    extraPhotos: [],
     privacyReviewStatus: 'anonymized',
     anonymizedAt: new Date(now).toISOString(),
     anonymizationApproval: approval,

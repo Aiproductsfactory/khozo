@@ -39,6 +39,7 @@ import {
 } from './match-pool.js';
 import { MAX_MATCH_CANDIDATES, configHashOf, thresholdsOf } from './match-config.js';
 import { INDEX_TOP_K, enrollCaseInIndex, removeCaseFromIndex, safeFaceIndex } from './face-index.js';
+import { MAIN_PHOTO, leadPhotoOf, loadPhotos } from './photo-set.js';
 
 /**
  * Whether a comparison result is put in front of an officer.
@@ -74,6 +75,9 @@ export function storedCandidate(candidate, rank, { source = 'forward', trigger =
     enginesAnswered: Array.isArray(candidate.enginesAnswered) ? candidate.enginesAnswered : [],
     warnings,
     lowQuality: Boolean(candidate.lowQuality || warnings) || null,
+    // Which photo of the sighting and which of the case the score is for
+    // (shared/photo-set.js ids), so the officer looks at that pair first.
+    photoPair: candidate.photoPair || null,
     source,
     trigger,
     proposedAt: iso(),
@@ -96,6 +100,7 @@ export function evidenceOf(candidate) {
     matchNotChecked: candidate ? Boolean(candidate.notChecked) : null,
     photoQualityWarnings: candidate?.warnings || null,
     lowQualityPhoto: candidate?.lowQuality || null,
+    matchedPhotoPair: candidate?.photoPair || null,
   };
 }
 
@@ -133,6 +138,8 @@ export function engineRecordOf(engine, { indexProvider = 'none', trigger = null 
     configHash: settings ? configHashOf(settings, indexProvider) : null,
     index: e.index || null,
     noFace: Boolean(e.noFace) || null,
+    // Photo pairs compared beyond each record's first (shared/photo-set.js).
+    extraPairs: e.extraPairs && e.extraPairs.compared ? e.extraPairs : null,
     sightingQuality: e.sightingQuality ?? null,
     qualityWarnings: Array.isArray(e.qualityWarnings) && e.qualityWarnings.length ? e.qualityWarnings : null,
     note: e.reason || e.note || null,
@@ -175,7 +182,7 @@ export function reportedLocationOf(sighting) {
 export const LINK_RESTORED_FIELDS = [
   'status', 'state', 'district', 'referralStatus', 'referredTo1098',
   'matchScore', 'primaryScore', 'secondOpinionScore', 'secondOpinionProvider', 'secondOpinion',
-  'enginesDisagree', 'matchEngine', 'photoQualityWarnings', 'lowQualityPhoto',
+  'enginesDisagree', 'matchEngine', 'photoQualityWarnings', 'lowQualityPhoto', 'matchedPhotoPair',
 ];
 
 export function previousSightingFields(sighting) {
@@ -307,12 +314,22 @@ export function createSightingMatcher(deps) {
    * or when the index does not answer, on the nearest-first budget. Cases an
    * officer rejected for this sighting are never compared again.
    */
-  async function forwardSearch(photo, { state = null, district = null, gender = null, ageApprox = null, excludeReportIds = [] } = {}) {
+  async function forwardSearch(photo, { state = null, district = null, gender = null, ageApprox = null, excludeReportIds = [], probeId = MAIN_PHOTO, probeExtras = [] } = {}) {
     const excluded = new Set(excludeReportIds);
-    const hints = { state, district, gender, ageApprox, excludeReportIds: [...excluded] };
+    const extras = (Array.isArray(probeExtras) ? probeExtras : []).filter((p) => p?.buffer?.length);
+    // The sighting's other photos (shared/photo-set.js), compared only for
+    // the cases most like its lead photo (shared/match-pipeline.js).
+    const hints = { state, district, gender, ageApprox, excludeReportIds: [...excluded], probeId, probeExtras: extras };
     let index = null;
     if (photo?.length && faceIndex.enabled) {
-      const hits = await faceIndex.search(photo, INDEX_TOP_K);
+      // The lead photo first; another of the sighting's photos only when the
+      // index found no face in it (at most one search a photo).
+      let hits = await faceIndex.search(photo, INDEX_TOP_K);
+      for (const extra of extras) {
+        if (Array.isArray(hits)) break;
+        // eslint-disable-next-line no-await-in-loop
+        hits = await faceIndex.search(extra.buffer, INDEX_TOP_K);
+      }
       if (Array.isArray(hits)) {
         hints.shortlist = hits.map((hit) => hit.caseId);
         hints.indexProvider = faceIndex.name;
@@ -445,7 +462,10 @@ export function createSightingMatcher(deps) {
    * case it did not point at before; that case's police officers are alerted.
    */
   async function rematchSighting(sighting, { trigger = 'rematch', actor = null } = {}) {
-    const photo = sighting.photoFile ? await readPhoto(sighting.photoFile) : null;
+    // Every photo of the sighting, its lead first (shared/photo-set.js).
+    const lead = leadPhotoOf(sighting);
+    const photos = lead ? await loadPhotos(sighting, readPhoto) : [];
+    const photo = photos.find((p) => p.id === lead?.id)?.buffer || null;
     if (!photo) {
       // Recorded, so a re-match batch moves past it instead of retrying it forever.
       await commitSighting(sighting.id, () => ({ rematchAttemptedAt: iso() }), (row) => !row.anonymizedAt);
@@ -458,6 +478,8 @@ export function createSightingMatcher(deps) {
       gender: sighting.gender || null,
       ageApprox: sighting.ageApprox ?? null,
       excludeReportIds: [...rejectedReportIds(sighting)],
+      probeId: lead.id,
+      probeExtras: photos.filter((p) => p.id !== lead.id),
     });
     const before = { status: sighting.status, matchedReportId: sighting.matchedReportId || null };
     const updated = await commitSighting(
@@ -580,7 +602,7 @@ export function createSightingMatcher(deps) {
    * replica is flushed at the end of the request, so work left running after it
    * could be lost. A failure here never fails the request that triggered it.
    */
-  async function matchStoredSightings(report, { trigger, actor, photo = null }) {
+  async function matchStoredSightings(report, { trigger, actor, photo = null, photoId = null }) {
     const result = (sightingMatches, engine) => ({ sightingMatches, engine: engineSummary(engine) });
     if (!report?.photoFile || report.anonymizedAt) {
       return result(0, { provider: 'none', biometric: false, reason: 'The case has no photo to compare.' });
@@ -592,13 +614,20 @@ export function createSightingMatcher(deps) {
       return result(0, { provider: 'none', biometric: false, reason: 'Reverse matching is not available on this runtime.' });
     }
     try {
-      const casePhoto = photo || (await readPhoto(report.photoFile));
+      // The case's photos (shared/photo-set.js): the one given (`photoId`,
+      // the main photo unless said) or the lead one compared with every
+      // sighting, the others only with those most like it.
+      const leadId = photo ? photoId || MAIN_PHOTO : leadPhotoOf(report)?.id || MAIN_PHOTO;
+      const photos = await loadPhotos(report, readPhoto, photo ? { [leadId]: photo } : null);
+      const casePhoto = photos.find((p) => p.id === leadId)?.buffer || photo || null;
       if (!casePhoto) return result(0, { provider: 'none', biometric: false, reason: 'The case photo could not be read.' });
       const { candidates, engine } = await rankSightingMatches(casePhoto, {
         state: report.state,
         district: report.district,
         reportId: report.id,
         subject: { gender: report.gender, age: report.age, dateOfMissing: report.dateOfMissing, createdAt: report.createdAt },
+        probeId: leadId,
+        probeExtras: photos.filter((p) => p.id !== leadId),
       });
       const record = engineRecordOf(engine, { indexProvider: faceIndex.name, trigger: `reverse:${trigger}` });
 
@@ -728,11 +757,14 @@ export function createSightingMatcher(deps) {
 
   // ---- The one-to-many index ---------------------------------------------------
 
-  /** Adds an open, verified missing case's photo to the index, when one is configured. */
-  async function indexCase(report, photo = null) {
+  /**
+   * Adds an open, verified missing case's photos - the main one and its
+   * extras (shared/photo-set.js) - to the index, when one is configured.
+   * `photos` is bytes already in hand (loadPhotos); the rest are read.
+   */
+  async function indexCase(report, photos = null) {
     if (!faceIndex.enabled || !report?.photoFile || !isForwardPoolCase(report)) return null;
-    const bytes = photo || (await readPhoto(report.photoFile));
-    return enrollCaseInIndex(faceIndex, report, bytes, updateReport);
+    return enrollCaseInIndex(faceIndex, report, await loadPhotos(report, readPhoto, photos), updateReport);
   }
 
   /** Takes a case out of the index: it was found, closed or anonymised. */

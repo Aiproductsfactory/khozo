@@ -16,12 +16,15 @@
 
 import { PHOTO_TOO_LARGE } from '../../../shared/case-domain.js';
 import { PHOTO_MAX_BYTES } from '../../../shared/photo-format.js';
+import { EXTRA_PHOTO_FIELD, MAX_EXTRA_FILES, MULTIPART_MAX_BYTES, PHOTOS_TOO_LARGE, TOO_MANY_PHOTOS } from '../../../shared/photo-set.js';
 
 const PARAM_PATTERN = /:([A-Za-z_][\w]*)/g;
 
 /**
  * The most a multipart body may carry beyond its one photo: the form's text
- * fields. A body declaring more than photo + this is refused before it is read.
+ * fields. A body declaring more than photo + this, without extra photos, is
+ * refused as one photo too large; with them, the whole body may reach
+ * MULTIPART_MAX_BYTES (shared/photo-set.js).
  */
 const MULTIPART_FIELDS_ALLOWANCE = 512 * 1024;
 
@@ -148,47 +151,67 @@ function toResponse(state) {
   return new Response(null, { status: state.status, headers });
 }
 
-/** Parses the body once, into the `req.body` / `req.file` shape multer produces. */
+/** One uploaded file, in the shape multer gives it. */
+async function filePart(key, value) {
+  return {
+    fieldname: key,
+    originalname: value.name || 'upload',
+    mimetype: value.type || 'application/octet-stream',
+    size: value.size ?? 0,
+    buffer: Buffer.from(await value.arrayBuffer()),
+  };
+}
+
+/**
+ * Parses the body once, into the `req.body` / `req.file` shape multer
+ * produces, plus `req.extraFiles`: the photos sent under EXTRA_PHOTO_FIELD
+ * beside the main one (shared/photo-set.js), as server/src/routes/reports.js
+ * gives them on Express.
+ */
 async function readBody(request) {
   const contentType = request.headers.get('content-type') || '';
 
   if (contentType.includes('application/json')) {
-    return { body: await request.json().catch(() => ({})), file: null };
+    return { body: await request.json().catch(() => ({})), file: null, extraFiles: [] };
   }
 
   if (contentType.includes('multipart/form-data') || contentType.includes('application/x-www-form-urlencoded')) {
-    // The photo limit Express applies (multer, 8 MB), applied here too: a
-    // declared length over it is refused before the body is read at all, and
-    // a file part over it once it has been.
+    // The photo limit Express applies (multer, 8 MB a photo), applied here
+    // too: a declared length over the whole-body cap is refused before the
+    // body is read at all, and a file part over 8 MB once it has been.
     const declared = Number(request.headers.get('content-length'));
-    if (Number.isFinite(declared) && declared > PHOTO_MAX_BYTES + MULTIPART_FIELDS_ALLOWANCE) {
-      throw new BodyRejected(413, PHOTO_TOO_LARGE);
+    if (Number.isFinite(declared) && declared > MULTIPART_MAX_BYTES) {
+      throw new BodyRejected(413, PHOTOS_TOO_LARGE);
     }
     const form = await request.formData().catch(() => null);
-    if (!form) return { body: {}, file: null };
+    if (!form) return { body: {}, file: null, extraFiles: [] };
     const body = {};
     let file = null;
+    const extraFiles = [];
     for (const [key, value] of form.entries()) {
       if (value && typeof value === 'object' && typeof value.arrayBuffer === 'function') {
         if ((value.size ?? 0) > PHOTO_MAX_BYTES) throw new BodyRejected(413, PHOTO_TOO_LARGE);
-        // Only the first file part matters: every route uses `upload.single`.
-        if (!file) {
-          file = {
-            fieldname: key,
-            originalname: value.name || 'upload',
-            mimetype: value.type || 'application/octet-stream',
-            size: value.size ?? 0,
-            buffer: Buffer.from(await value.arrayBuffer()),
-          };
+        if (key === EXTRA_PHOTO_FIELD) {
+          if (extraFiles.length >= MAX_EXTRA_FILES) throw new BodyRejected(400, TOO_MANY_PHOTOS);
+          extraFiles.push(await filePart(key, value));
+        } else if (!file) {
+          // The main photo: the first file part not sent as an extra, under
+          // whatever name, as every route has always read it.
+          file = await filePart(key, value);
         }
       } else {
         body[key] = value;
       }
     }
-    return { body, file };
+    // One photo larger than the old single-photo body allowed is answered as
+    // before: that photo is too large.
+    if (!extraFiles.length && Number.isFinite(declared) && declared > PHOTO_MAX_BYTES + MULTIPART_FIELDS_ALLOWANCE) {
+      throw new BodyRejected(413, PHOTO_TOO_LARGE);
+    }
+    return { body, file, extraFiles };
   }
 
-  return { body: {}, file: null };
+  return { body: {}, file: null, extraFiles: [] };
 }
 
 /**
@@ -233,6 +256,7 @@ export async function handleRequest(router, request, { basePath = '', context = 
       query: Object.fromEntries(url.searchParams.entries()),
       body: parsed.body,
       file: parsed.file,
+      extraFiles: parsed.extraFiles || [],
       user: null,
       ip: headers['cf-connecting-ip'] || (headers['x-forwarded-for'] || '').split(',')[0].trim() || 'unknown',
       socket: {},

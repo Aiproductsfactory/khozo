@@ -31,6 +31,7 @@
  */
 import { removeCaseFromIndex } from './face-index.js';
 import { anonymisedLabel, anonymisedReportPatch, anonymisedSightingPatch } from './privacy.js';
+import { photoFilesOf } from './photo-set.js';
 
 const DAY_MS = 86400000;
 const CLOSED_CASE = new Set(['found', 'closed']);
@@ -148,9 +149,7 @@ export async function anonymiseCase(deps, report, { now = Date.now(), approval =
   const patch = anonymisedReportPatch(before, { now, approval });
   deps.updateReport(before.id, patch);
   await removeCaseFromIndex(deps.faceIndex, before, deps.updateReport);
-  if (before.photoFile && typeof deps.deletePhoto === 'function') {
-    await Promise.resolve(deps.deletePhoto(before.photoFile)).catch(() => false);
-  }
+  await deleteEveryPhoto(deps, before);
   if (typeof deps.rewriteActivity === 'function') {
     const label = anonymisedLabel('report', before.id);
     // A parent or NGO who registered the case is named as the actor of its
@@ -169,6 +168,14 @@ export async function anonymiseCase(deps, report, { now = Date.now(), approval =
   return patch;
 }
 
+/** Deletes the main photo and every extra photo of a record (shared/photo-set.js). */
+async function deleteEveryPhoto(deps, record) {
+  if (typeof deps.deletePhoto !== 'function') return;
+  for (const file of photoFilesOf(record)) {
+    await Promise.resolve(deps.deletePhoto(file)).catch(() => false);
+  }
+}
+
 /** `text` with each of `names` replaced, for an activity row's wording. */
 function withoutNames(text, names) {
   if (typeof text !== 'string') return text;
@@ -182,9 +189,7 @@ export async function anonymiseSighting(deps, sighting, { now = Date.now(), appr
   const before = { ...sighting };
   const patch = anonymisedSightingPatch(before, { now, approval });
   deps.updateFoundReport(before.id, patch);
-  if (before.photoFile && typeof deps.deletePhoto === 'function') {
-    await Promise.resolve(deps.deletePhoto(before.photoFile)).catch(() => false);
-  }
+  await deleteEveryPhoto(deps, before);
   if (typeof deps.rewriteActivity === 'function') {
     const label = anonymisedLabel('foundReport', before.id);
     const place = String(before.foundLocation || '').trim();

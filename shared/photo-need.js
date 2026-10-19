@@ -1,5 +1,6 @@
 // Whether a case's photo can find the person in a sighting, and if not, why.
 import { PHOTO_REJECTION_REASONS, WEAK_FACE_WARNINGS } from './face-index.js';
+import { extraPhotosOf } from './photo-set.js';
 
 /** The reasons, most serious first. */
 export const PHOTO_NEEDS = ['no_photo', 'no_face', 'group', 'weak'];
@@ -16,13 +17,16 @@ export const PHOTO_NEEDS = ['no_photo', 'no_face', 'group', 'weak'];
  *             too small or unclear to match reliably
  *
  * The desk asks the family for a recent, clear photo of the face alone and
- * replaces it (POST /reports/:id/photo), which checks and enrols it again.
- * Reads only fields every desk view of a case carries (deskCaseView), so the
- * server's count and the console's list agree.
+ * replaces it (POST /reports/:id/photo), or adds it beside the others (POST
+ * /reports/:id/photos), which checks and enrols it again. A case with several
+ * photos (shared/photo-set.js) needs none while any of them shows one face:
+ * matching leads with that one. Reads only fields every desk view of a case
+ * carries (deskCaseView), so the server's count and the console's list agree.
  */
 export function photoNeedOf(report) {
   if (!report || typeof report !== 'object' || report.anonymizedAt) return null;
   if (!report.photoFile && !report.photoUrl) return 'no_photo';
+  if (extraPhotosOf(report).some((p) => p.check?.verdict === 'usable') && hasAGoodFace(report)) return null;
   const verdict = report.photoCheck?.verdict;
   if (verdict === 'no_face') return 'no_face';
   if (verdict === 'multiple_faces') return 'group';
@@ -38,9 +42,25 @@ export function photoNeedOf(report) {
       // or a missing key is about the gallery, and says nothing of the photo.
       if (PHOTO_REJECTION_REASONS.has(reason) || reason.startsWith('refused_') || /^http_4\d\d$/.test(reason)) return 'weak';
     }
-    if (index.status === 'enrolled' && Array.isArray(index.warnings) && index.warnings.some((w) => WEAK_FACE_WARNINGS.has(w))) return 'weak';
+    if (index.status === 'enrolled' && !hasAGoodFace(report)) return 'weak';
   }
   return null;
+}
+
+const weak = (warnings) => Array.isArray(warnings) && warnings.some((w) => WEAK_FACE_WARNINGS.has(w));
+
+/**
+ * Whether the face search gallery holds a face of the case it can match
+ * well: any photo it enrolled without a small-or-unclear warning. Before the
+ * gallery recorded each photo, its top-level warnings were the only photo's.
+ * True when the gallery has said nothing.
+ */
+function hasAGoodFace(report) {
+  const index = report.faceIndex;
+  if (!index || typeof index !== 'object' || index.status !== 'enrolled') return true;
+  const photos = Array.isArray(index.photos) ? index.photos.filter((p) => p && typeof p === 'object') : [];
+  if (!photos.length) return !weak(index.warnings);
+  return photos.some((p) => p.status === 'enrolled' && !weak(p.warnings));
 }
 
 /** Counts of open cases by reason, plus the total. */

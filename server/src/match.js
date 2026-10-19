@@ -11,7 +11,7 @@
 import { listReports, listFoundReports, readPhoto as readStoredPhoto } from './store.js';
 import { selectMatchCandidates, selectSightingCandidates } from '../../shared/match-pool.js';
 import { engineSettings } from '../../shared/match-config.js';
-import { ENGINES, comparePhotos, mapLimit, rankResult, screenPhoto } from '../../shared/match-pipeline.js';
+import { ENGINES, comparePhotos, extraPairBudgetOf, loadComparable, rankResult, screenPhoto } from '../../shared/match-pipeline.js';
 import { detectImageMime, imageExtension, rekognitionReadable } from '../../shared/photo-format.js';
 import { RekognitionClient, CompareFacesCommand } from '@aws-sdk/client-rekognition';
 
@@ -319,25 +319,27 @@ export async function probeMatchProviders(photoBuf) {
  * Photo reads hit the database, so they run concurrently rather than one round
  * trip per candidate.
  */
-async function rankStored(photoBuf, stored, readPhoto, { direction = 'forward', pool, noun = 'open case' } = {}) {
+async function rankStored(photoBuf, stored, readPhoto, { direction = 'forward', pool, noun = 'open case', probeId = 'main', probeExtras = [] } = {}) {
   const cfg = config();
   const started = Date.now();
   let outcome = null;
   if (stored.length) {
-    const loaded = await mapLimit(stored, cfg.concurrency, async (report) => ({
-      report,
-      targetBuf: await readPhoto(report.photoFile),
-    }));
-    const comparable = loaded.filter((row) => row.targetBuf);
+    // Each record's lead photo; its others read only if it is shortlisted
+    // (shared/match-pipeline.js, several photos a record).
+    const comparable = await loadComparable(stored, readPhoto, cfg.concurrency);
     if (comparable.length) {
       outcome = await comparePhotos({
         photoBuf,
+        probeId,
+        probeExtras,
         comparable,
         direction,
         providers: providersFor(cfg),
         confirmThreshold: cfg.confirmThreshold,
         secondOpinionTopN: cfg.secondOpinionTopN,
         concurrency: cfg.concurrency,
+        // Kept out of the engine settings: see worker/src/match.js.
+        extraPairBudget: extraPairBudgetOf(process.env.KHOZO_EXTRA_PAIR_BUDGET),
       });
     }
   }
@@ -372,7 +374,13 @@ export async function rankMatches(photoBuf, hints = {}, source = {}) {
   const reports = source.reports || listReports();
   const readPhoto = source.readPhoto || readStoredPhoto;
   const { reports: withPhotos, pool } = selectMatchCandidates(reports, hints, cfg.forwardBudget);
-  return rankStored(photoBuf, withPhotos, readPhoto, { direction: 'forward', pool, noun: 'open case' });
+  return rankStored(photoBuf, withPhotos, readPhoto, {
+    direction: 'forward',
+    pool,
+    noun: 'open case',
+    probeId: hints.probeId || 'main',
+    probeExtras: hints.probeExtras || [],
+  });
 }
 
 /**
@@ -393,7 +401,13 @@ export async function rankSightingMatches(casePhotoBuf, hints = {}, source = {})
   const intakeReports = source.reports || listReports();
   const readPhoto = source.readPhoto || readStoredPhoto;
   const { sightings, pool } = selectSightingCandidates(foundReports, hints, cfg.reverseBudget, Date.now(), { intakeReports });
-  const ranked = await rankStored(casePhotoBuf, sightings, readPhoto, { direction: 'reverse', pool, noun: 'stored sighting' });
+  const ranked = await rankStored(casePhotoBuf, sightings, readPhoto, {
+    direction: 'reverse',
+    pool,
+    noun: 'stored sighting',
+    probeId: hints.probeId || 'main',
+    probeExtras: hints.probeExtras || [],
+  });
   return {
     candidates: ranked.candidates.map(({ report, ...rest }) => ({ ...rest, sighting: report })),
     engine: ranked.engine,

@@ -19,6 +19,7 @@ import crypto from 'node:crypto';
 
 import { canAccessReport, sameDistrictPlace, sameStatePlace } from './scope.js';
 import { PHOTO_MAX_BYTES, detectImageMime } from './photo-format.js';
+import { extraPhotosView } from './photo-set.js';
 import { canonicalPlace } from './geo/index.js';
 import { isFullAadhaar, maskAadhaar, storedAadhaarFingerprint } from './privacy.js';
 
@@ -807,6 +808,9 @@ function citizenCaseView(report) {
   view.personCategory = personCategoryOf(report);
   // A number stored whole before Khozo stopped storing them is shown masked.
   if ('childAadhar' in view) view.childAadhar = maskAadhaar(view.childAadhar);
+  // The other photos the family gave, by where to fetch them: what the face
+  // checks made of them is the desks' business (shared/photo-set.js).
+  view.extraPhotos = extraPhotosView(report).map(({ id, url }) => ({ id, url }));
   return view;
 }
 

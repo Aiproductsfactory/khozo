@@ -262,38 +262,60 @@ export function aarakshakGalleryIndex({ url, key, gallery = '', fetchImpl = fetc
     console.warn(`[FaceIndex] ${what} failed: ${res.status ?? 'no answer'}${ref} ${String(res.text || '').slice(0, 200)}${note ? ` - ${note}` : ''}`);
   }
 
-  // The per-photo verdict, whether the case was enrolled (201) or refused
-  // (a FastAPI error carries it under `detail`).
-  function photoResultOf(data) {
-    const photos = Array.isArray(data?.photos) ? data.photos : Array.isArray(data?.detail?.photos) ? data.detail.photos : null;
-    return photos && photos[0] && typeof photos[0] === 'object' ? photos[0] : null;
+  // The per-photo verdicts, in the order the photos were sent, whether the
+  // case was enrolled (201) or refused (a FastAPI error carries them under
+  // `detail`). Placed by `photo_index` where Aarakshak gives it.
+  function photoResultsOf(data, count) {
+    const photos = Array.isArray(data?.photos) ? data.photos : Array.isArray(data?.detail?.photos) ? data.detail.photos : [];
+    const out = new Array(count).fill(null);
+    photos.forEach((p, i) => {
+      if (!p || typeof p !== 'object') return;
+      const at = Number.isInteger(p.photo_index) && p.photo_index >= 0 && p.photo_index < count ? p.photo_index : i;
+      if (at < count && !out[at]) out[at] = p;
+    });
+    return out;
+  }
+
+  function photoSummaryOf(verdict) {
+    return {
+      status: typeof verdict?.status === 'string' ? verdict.status : null,
+      faceId: typeof verdict?.face_id === 'string' ? verdict.face_id : null,
+      quality: Number.isFinite(Number(verdict?.quality_score)) && verdict?.quality_score != null ? Number(verdict.quality_score) : null,
+      warnings: Array.isArray(verdict?.warnings) ? verdict.warnings.filter((w) => typeof w === 'string').slice(0, 5) : [],
+    };
   }
 
   return {
     name: 'aarakshak-gallery',
     enabled: true,
 
+    // One photo, or several of the same person sent together as `images`
+    // parts: `replace` makes the gallery hold exactly this set of faces. What
+    // is returned at the top describes the first photo (the case's main one);
+    // `photos` describes each, in the order sent.
     async enroll(caseId, photo) {
-      if (!caseId || !photo?.length) return { ok: false, reason: 'no_photo' };
+      const photos = (Array.isArray(photo) ? photo : [photo]).filter((p) => p?.length);
+      if (!caseId || !photos.length) return { ok: false, reason: 'no_photo' };
       const { body, contentType } = multipart([
         { name: 'case_id', value: caseId },
         { name: 'replace', value: 'true' },
-        imagePart('images', photo),
+        ...photos.map((p) => imagePart('images', p)),
       ]);
       const headers = { 'Content-Type': contentType, 'Idempotency-Key': `khozo-enrol-${caseId}-${crypto.randomUUID()}` };
       const res = await callWithRetry('POST', '/cases', { headers, body });
-      const verdict = photoResultOf(res.data);
-      const quality = Number.isFinite(Number(verdict?.quality_score)) && verdict?.quality_score != null ? Number(verdict.quality_score) : null;
-      const warnings = Array.isArray(verdict?.warnings) ? verdict.warnings.filter((w) => typeof w === 'string').slice(0, 5) : [];
+      const results = photoResultsOf(res.data, photos.length);
+      const each = results.map(photoSummaryOf);
+      const verdict = results[0];
+      const { quality, warnings } = each[0];
       if (res.ok && Number(res.data?.faces_enrolled) > 0) {
-        return { ok: true, faceId: typeof verdict?.face_id === 'string' ? verdict.face_id : null, quality, warnings, requestId: res.requestId };
+        return { ok: true, faceId: each[0].faceId, quality, warnings, photos: each, requestId: res.requestId };
       }
       const status = typeof verdict?.status === 'string' ? verdict.status : '';
       // A refusal (4xx, other than the key or the rate) says why in its body.
       const refusal = !res.ok && res.status >= 400 && res.status < 500 && ![401, 403, 429].includes(res.status) ? refusalOf(res.data) : null;
       const reason = status && status !== 'enrolled' ? status : res.ok ? 'not_enrolled' : refusal?.reason || reasonOf(res);
       warn(`enrol ${caseId}`, res, reason);
-      return { ok: false, reason, detail: refusal?.message || null, quality, warnings, requestId: res.requestId };
+      return { ok: false, reason, detail: refusal?.message || null, quality, warnings, photos: each, requestId: res.requestId };
     },
 
     async search(photo, topK = INDEX_TOP_K) {
@@ -440,18 +462,48 @@ export function safeFaceIndex(provider) {
   };
 }
 
+/** Whether a face check says a photo is not one face of one person. */
+const notOneFace = (check) => check?.verdict === 'no_face' || check?.verdict === 'multiple_faces';
+
 /**
- * Enrols a case's photo and records the outcome on the case (`faceIndex`), so
- * the forward search knows which open cases the index holds and fills its
+ * The photos of a case worth giving the gallery: an extra photo whose own
+ * face check found no face or a group is left out - a group photo would
+ * enrol strangers' faces under the case - and so is such a main photo when
+ * a better one is there. A case with only one photo sends it as it always
+ * has, and the gallery says what it makes of it.
+ */
+export function enrollablePhotos(photos) {
+  const list = (Array.isArray(photos) ? photos : []).filter((p) => p?.buffer?.length);
+  if (list.length <= 1) return list;
+  const good = list.filter((p) => !notOneFace(p.check));
+  return good.length ? good : [list[0]];
+}
+
+/**
+ * Enrols a case's photos and records the outcome on the case (`faceIndex`),
+ * so the forward search knows which open cases the index holds and fills its
  * budget with the ones it does not (shared/match-pool.js). A refused photo is
  * recorded with the provider's reason, so the desk knows the case needs a
  * better one. No-op without an enabled provider.
+ *
+ * `photos` is the case's main photo as bytes, or every photo of it as
+ * `[{ id, buffer, check }]`, main first (loadPhotos, shared/photo-set.js).
+ * A set refused for a reason about a photo is tried again with its first
+ * photo alone, so a case is never held less than before it had extras.
  */
-export async function enrollCaseInIndex(faceIndex, report, photo, updateReport) {
+export async function enrollCaseInIndex(faceIndex, report, photos, updateReport) {
   const index = safeFaceIndex(faceIndex);
   if (!index.enabled || !report?.id) return null;
-  if (!photo?.length) return null;
-  const res = await index.enroll(report.id, photo);
+  const given = Array.isArray(photos) ? photos : photos?.length ? [{ id: 'main', buffer: photos, check: null }] : [];
+  let set = enrollablePhotos(given);
+  if (!set.length) return null;
+  let res = await index.enroll(report.id, set.map((p) => p.buffer));
+  const aboutAPhoto = (reason) => PHOTO_REJECTION_REASONS.has(reason) || String(reason || '').startsWith('refused_');
+  if (!res?.ok && set.length > 1 && aboutAPhoto(res?.reason)) {
+    set = [set[0]];
+    res = await index.enroll(report.id, set.map((p) => p.buffer));
+  }
+  const each = Array.isArray(res?.photos) ? res.photos : [];
   const entry = {
     provider: index.name,
     status: res?.ok ? 'enrolled' : 'failed',
@@ -461,6 +513,15 @@ export async function enrollCaseInIndex(faceIndex, report, photo, updateReport) 
     // Aarakshak's own words for a refusal, and the id its support asks for.
     detail: res?.ok ? null : res?.detail || null,
     requestId: res?.ok ? null : res?.requestId || null,
+    // Which of the case's photos the gallery was given, and what it made of
+    // each (shared/photo-set.js ids; 'main' is the main photo).
+    photos: set.map((p, i) => ({
+      photoId: p.id || null,
+      status: each[i]?.status || (res?.ok ? 'enrolled' : null),
+      faceId: each[i]?.faceId || null,
+      quality: Number.isFinite(each[i]?.quality) ? each[i].quality : null,
+      warnings: Array.isArray(each[i]?.warnings) && each[i].warnings.length ? each[i].warnings : null,
+    })),
     at: new Date().toISOString(),
   };
   if (typeof updateReport === 'function') updateReport(report.id, { faceIndex: entry });

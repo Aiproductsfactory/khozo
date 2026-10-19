@@ -42,6 +42,7 @@ import {
   safeFaceIndex,
 } from '../face-index.js';
 import { readFields } from '../case-domain.js';
+import { loadPhotos } from '../photo-set.js';
 
 export const INDEX_BATCH_MAX = 20;
 const INDEX_BATCH_DEFAULT = 10;
@@ -254,15 +255,16 @@ export default function registerFaceIndexAdminRoutes(router, deps) {
       .sort((a, b) => timeOf(b.createdAt) - timeOf(a.createdAt));
     for (const report of pending) {
       if (budget() <= 0 || rateLimited) break;
+      // Every photo of the case, the main one first (shared/photo-set.js).
       // eslint-disable-next-line no-await-in-loop
-      const photo = await readPhoto(report.photoFile).catch(() => null);
-      if (!photo?.length) {
+      const photos = await loadPhotos(report, readPhoto).catch(() => []);
+      if (!photos.length) {
         updateReport(report.id, { faceIndex: { provider: index.name, status: 'failed', reason: 'photo_missing', at: new Date().toISOString() } });
         rejected += 1;
         continue;
       }
       // eslint-disable-next-line no-await-in-loop
-      const entry = await enrollCaseInIndex(index, findReport(report.id) || report, photo, updateReport);
+      const entry = await enrollCaseInIndex(index, findReport(report.id) || report, photos, updateReport);
       calls += 1;
       if (entry?.status === 'enrolled') enrolled += 1;
       else if (entry && !isRetryableIndexFailure(entry.reason)) rejected += 1;

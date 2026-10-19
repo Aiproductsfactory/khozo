@@ -11,6 +11,7 @@ import { PHOTO_TOO_LARGE } from '../../../shared/case-domain.js';
 import { createFaceIndex } from '../../../shared/face-index.js';
 import { privacySecrets } from '../../../shared/privacy.js';
 import { PHOTO_MAX_BYTES } from '../../../shared/photo-format.js';
+import { EXTRA_PHOTO_FIELD, MAX_EXTRA_FILES, MULTIPART_MAX_BYTES, PHOTOS_TOO_LARGE, TOO_MANY_PHOTOS } from '../../../shared/photo-set.js';
 import {
   listReports, addReport, findReport, updateReport,
   listFoundReports, addFoundReport, findFoundReport, updateFoundReport,
@@ -21,18 +22,44 @@ import { authRequired, optionalAuth, passwordChangeRequired, requireRole } from 
 import { rankMatches, rankSightingMatches, detectPerson, matchEngineInfo } from '../match.js';
 import { auditPublicRateLimit, clientIp, fixedWindowRateLimit } from '../rateLimit.js';
 
-const multipart = multer({ storage: multer.memoryStorage(), limits: { fileSize: PHOTO_MAX_BYTES } });
+const multipart = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: PHOTO_MAX_BYTES, files: 1 + MAX_EXTRA_FILES },
+});
 
 /**
  * multer, answering as the Worker's router does: a photo over 8 MB is a 413
  * with a sentence the console can show, not Express's default error page.
+ *
+ * `single(field)` takes the main photo from `field` and, alongside it, up to
+ * MAX_EXTRA_FILES more under EXTRA_PHOTO_FIELD (shared/photo-set.js), as
+ * `req.extraFiles`. Each route decides how many extras it keeps; a client
+ * that sends only `photo` is served exactly as before.
  */
 const upload = {
-  single: (field) => (req, res, next) => multipart.single(field)(req, res, (err) => {
-    if (!err) return next();
-    if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: PHOTO_TOO_LARGE });
-    return res.status(400).json({ error: 'The upload could not be read' });
-  }),
+  single: (field) => {
+    const parse = multipart.fields([
+      { name: field, maxCount: 1 },
+      { name: EXTRA_PHOTO_FIELD, maxCount: MAX_EXTRA_FILES },
+    ]);
+    return (req, res, next) => {
+      if (Number(req.headers['content-length']) > MULTIPART_MAX_BYTES) {
+        return res.status(413).json({ error: PHOTOS_TOO_LARGE });
+      }
+      return parse(req, res, (err) => {
+        if (err) {
+          if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: PHOTO_TOO_LARGE });
+          if (err.code === 'LIMIT_FILE_COUNT' || (err.code === 'LIMIT_UNEXPECTED_FILE' && err.field === EXTRA_PHOTO_FIELD)) {
+            return res.status(400).json({ error: TOO_MANY_PHOTOS });
+          }
+          return res.status(400).json({ error: 'The upload could not be read' });
+        }
+        req.file = req.files?.[field]?.[0] || null;
+        req.extraFiles = req.files?.[EXTRA_PHOTO_FIELD] || [];
+        return next();
+      });
+    };
+  },
 };
 
 export default registerReportRoutes(Router(), {

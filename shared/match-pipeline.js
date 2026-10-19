@@ -34,6 +34,7 @@
  */
 import { DISAGREEMENT_GAP, MAX_MATCH_CANDIDATES, thresholdsOf } from './match-config.js';
 import { isWeakFace } from './face-screen.js';
+import { MAIN_PHOTO, leadPhotoOf, loadPhotos, photoCountOf } from './photo-set.js';
 
 export const ENGINES = {
   aarakshak: {
@@ -115,37 +116,175 @@ function rounded(value) {
 }
 
 /**
+ * Step 1b of comparePhotos: compares the other photo pairs of the records
+ * most like the probe, and moves each record's row to its best answered pair.
+ * Mutates `rows`. Returns how many pairs were compared and what they found.
+ */
+async function compareOtherPairs({ rows, photoBuf, probeId, probeExtras, direction, aarakshak, concurrency, budget }) {
+  const limit = Math.max(0, Math.floor(Number(budget) || 0));
+  const probes = [{ id: probeId, buffer: photoBuf }, ...(Array.isArray(probeExtras) ? probeExtras : []).filter((p) => p?.buffer?.length)];
+  const loadable = (row) => typeof row.extras === 'function' || Array.isArray(row.extras);
+  if (!limit || (!rows.some(loadable) && probes.length < 2)) return { compared: 0, answered: 0, improved: 0 };
+
+  // The best five by their first pair, then those whose first pair found no
+  // face (the record's other photos, or the probe's, may show one).
+  const shortlist = [
+    ...rows.filter((row) => row.aarakshak.status === 'answered').sort((a, b) => b.aarakshak.score - a.aarakshak.score).slice(0, MAX_MATCH_CANDIDATES),
+    ...rows.filter((row) => row.aarakshak.status === 'no_face').slice(0, MAX_MATCH_CANDIDATES),
+  ];
+  if (!shortlist.length) return { compared: 0, answered: 0, improved: 0 };
+
+  // Each shortlisted record's other photos, read only now.
+  const targetsOf = await mapLimit(shortlist, concurrency, async (row) => {
+    let extras = [];
+    try {
+      extras = typeof row.extras === 'function' ? await row.extras() : row.extras || [];
+    } catch {
+      extras = [];
+    }
+    return [{ id: row.targetId, buffer: row.targetBuf }, ...(Array.isArray(extras) ? extras : []).filter((p) => p?.buffer?.length && p.id !== row.targetId)];
+  });
+
+  // Every pair not yet compared, per record; then one pair per record a
+  // round, in the shortlist's order, so the best five get their next pair
+  // before any gets two.
+  const queues = shortlist.map((row, i) => {
+    const queue = [];
+    for (const target of targetsOf[i]) {
+      for (const probe of probes) {
+        if (probe.id === probeId && target.id === row.targetId) continue;
+        queue.push({ row, probe, target });
+      }
+    }
+    return queue;
+  });
+  const spend = [];
+  for (let round = 0; spend.length < limit && queues.some((q) => q.length > round); round += 1) {
+    for (const queue of queues) {
+      if (spend.length >= limit) break;
+      if (queue[round]) spend.push(queue[round]);
+    }
+  }
+  if (!spend.length) return { compared: 0, answered: 0, improved: 0 };
+
+  const results = await mapLimit(spend, concurrency, async (item) => answer(await aarakshak.compare(...orient(direction, item.probe.buffer, item.target.buffer))));
+  let answeredCount = 0;
+  const improvedRows = new Set();
+  results.forEach((result, i) => {
+    if (result.status !== 'answered') return;
+    answeredCount += 1;
+    const { row, probe, target } = spend[i];
+    if (row.aarakshak.status === 'answered' && row.aarakshak.score >= result.score) return;
+    row.aarakshak = result;
+    row.buffers = orient(direction, probe.buffer, target.buffer);
+    row.pair = photoPairOf(direction, probe.id, target.id);
+    improvedRows.add(row);
+  });
+  return { compared: spend.length, answered: answeredCount, improved: improvedRows.size };
+}
+
+/**
+ * The most extra photo pairs one search compares, by default, beyond the one
+ * pair per record it always compares (KHOZO_EXTRA_PAIR_BUDGET). Each is a paid
+ * Aarakshak call; twenty is four more rounds for five cases.
+ */
+export const EXTRA_PAIR_BUDGET = 20;
+
+/** KHOZO_EXTRA_PAIR_BUDGET as read: a number of pairs, 0 to compare no other pair. */
+export function extraPairBudgetOf(value) {
+  if (value == null || value === '') return EXTRA_PAIR_BUDGET;
+  const n = Math.floor(Number(value));
+  return Number.isFinite(n) && n >= 0 ? n : EXTRA_PAIR_BUDGET;
+}
+
+/**
+ * The records of a search as comparePhotos takes them: each one's lead photo
+ * (shared/photo-set.js leadPhotoOf) read now, its other photos only if it is
+ * shortlisted. A record whose lead photo cannot be read is left out, as one
+ * whose only photo could not be read always was.
+ */
+export async function loadComparable(stored, readPhoto, concurrency) {
+  const loaded = await mapLimit(stored, concurrency, async (report) => {
+    const lead = leadPhotoOf(report) || { id: MAIN_PHOTO, file: report.photoFile };
+    const targetBuf = lead.file ? await readPhoto(lead.file) : null;
+    return {
+      report,
+      targetId: lead.id,
+      targetBuf,
+      extras: photoCountOf(report) > 1
+        ? async () => (await loadPhotos(report, readPhoto, { [lead.id]: targetBuf })).filter((p) => p.id !== lead.id)
+        : null,
+    };
+  });
+  return loaded.filter((row) => row.targetBuf);
+}
+
+/**
+ * Which of a record's photos was compared, by shared/photo-set.js id, oriented
+ * as a sighting and a case: the probe is the sighting going forward and the
+ * case in reverse (orient).
+ */
+function photoPairOf(direction, probeId, targetId) {
+  return direction === 'reverse'
+    ? { sighting: targetId, case: probeId }
+    : { sighting: probeId, case: targetId };
+}
+
+/**
  * Compares a probe photo with each loaded record.
  *
- * `comparable` is `[{ report, targetBuf }]`. `providers.aarakshak` and
+ * `comparable` is `[{ report, targetBuf, targetId?, extras? }]`. `providers.aarakshak` and
  * `providers.rekognition` are `{ ready, compare(sourceBuf, targetBuf) }`, with
  * `compare` resolving to a normalised answer. Returns the candidates (best
  * first, at most five, each carrying its record under `report`) and a summary
  * of what answered.
+ *
+ * Several photos (shared/photo-set.js). `photoBuf` is the probe's lead photo
+ * (`probeId`) and `targetBuf` each record's (`targetId`); every record is
+ * compared on that one pair, as it always was. Then the records most like the
+ * probe - the best five, and those whose pair found no face - are compared on
+ * their other pairs (`probeExtras` against each record's `extras()`), one more
+ * pair per record a round, best first, until `extraPairBudget` pairs have been
+ * spent. Each record keeps its best pair, and the second opinion and every
+ * count after that see one pair per record, exactly as before. A probe and
+ * records with one photo each cost nothing more.
  */
 export async function comparePhotos({
   photoBuf,
+  probeId = 'main',
+  probeExtras = [],
   comparable,
   direction = 'forward',
   providers,
   confirmThreshold = 0.8,
   secondOpinionTopN = MAX_MATCH_CANDIDATES,
   concurrency = 5,
+  extraPairBudget = EXTRA_PAIR_BUDGET,
 }) {
   const { aarakshak, rekognition } = providers;
-  const pairs = comparable.map(({ report, targetBuf }) => ({ report, buffers: orient(direction, photoBuf, targetBuf) }));
+  const pairs = comparable.map(({ report, targetBuf, targetId = 'main', extras = null }) => ({
+    report,
+    buffers: orient(direction, photoBuf, targetBuf),
+    targetBuf,
+    targetId,
+    extras,
+    pair: photoPairOf(direction, probeId, targetId),
+  }));
 
-  // 1. Aarakshak, on every pair.
+  // 1. Aarakshak, on every record's one pair.
   const first = aarakshak.ready
     ? await mapLimit(pairs, concurrency, async (pair) => answer(await aarakshak.compare(...pair.buffers)))
     : pairs.map(() => ({ status: 'not_configured' }));
+  const rows = pairs.map((pair, i) => ({ ...pair, aarakshak: first[i] }));
+
+  // 1b. The other photo pairs of the records most like the probe.
+  const extraPairs = aarakshak.ready
+    ? await compareOtherPairs({ rows, photoBuf, probeId, probeExtras, direction, aarakshak, concurrency, budget: extraPairBudget })
+    : { compared: 0, answered: 0, improved: 0 };
 
   const answered = [];
   const unanswered = [];
-  pairs.forEach((pair, i) => {
-    const row = { ...pair, aarakshak: first[i] };
-    (first[i].status === 'answered' ? answered : unanswered).push(row);
-  });
+  for (const row of rows) (row.aarakshak.status === 'answered' ? answered : unanswered).push(row);
 
   // 2. Rekognition's second opinion on Aarakshak's best five.
   const proposals = answered
@@ -172,6 +311,7 @@ export async function comparePhotos({
     const r = row.rekognition;
     const base = {
       report: row.report,
+      photoPair: row.pair,
       primaryScore: rounded(a.score),
       band: a.band || null,
       sourceFaces: a.sourceFaces ?? null,
@@ -243,6 +383,7 @@ export async function comparePhotos({
     if (score < confirmThreshold) continue;
     candidates.push({
       report: row.report,
+      photoPair: row.pair,
       score,
       primaryScore: null,
       secondOpinionScore: score,
@@ -276,17 +417,18 @@ export async function comparePhotos({
   const loneStatus = new Map(alone.map((row) => [row.report, row.rekognition.status]));
   // Pairs no engine answered for and no engine found "no face" in: a fault,
   // not an answer. A search with any is worth running again (the re-match
-  // batch); a case photo with no face in it is not.
+  // batch); a case photo with no face in it is not. One row per record, its
+  // best pair (1b).
   const answeredSet = new Set(answeredReports);
-  const failedPairs = pairs.filter((pair, i) => {
-    if (answeredSet.has(pair.report)) return false;
-    return ![first[i].status, loneStatus.get(pair.report)].includes('no_face');
+  const failedPairs = rows.filter((row) => {
+    if (answeredSet.has(row.report)) return false;
+    return ![row.aarakshak.status, loneStatus.get(row.report)].includes('no_face');
   }).length;
   const noFaceEverywhere =
-    pairs.length > 0 &&
+    rows.length > 0 &&
     !answeredReports.length &&
-    pairs.every((pair, i) => {
-      const statuses = [first[i].status, loneStatus.get(pair.report)].filter(Boolean);
+    rows.every((row) => {
+      const statuses = [row.aarakshak.status, loneStatus.get(row.report)].filter(Boolean);
       return statuses.includes('no_face') && statuses.every((s) => ['no_face', 'not_configured', 'not_asked'].includes(s));
     });
 
@@ -301,6 +443,9 @@ export async function comparePhotos({
       secondOpinion,
       disagreements: candidates.filter((c) => c.enginesDisagree).length,
       noFace: noFaceEverywhere,
+      // The other photo pairs compared (1b), and how many found a better
+      // pair than the records' first one.
+      extraPairs: { ...extraPairs, budget: Math.max(0, Number(extraPairBudget) || 0) },
       // The sighting photo is always the source (orient), whichever direction.
       sightingQuality: proposals[0]?.aarakshak?.sourceQuality ?? null,
       qualityWarnings: [...new Set(answered.flatMap((row) => row.aarakshak.warnings || []))],
@@ -351,6 +496,8 @@ export function rankResult({ outcome, pool, settings, started, rekognitionReady,
         disagreements: s.disagreements,
         sightingQuality: s.sightingQuality,
         qualityWarnings: s.qualityWarnings,
+        // The other photo pairs compared beside each record's first one.
+        extraPairs: s.extraPairs || null,
         ...(!viaAarakshak && !outcome.candidates.length
           ? { note: `Compared against ${s.comparedAgainst} ${noun}${s.comparedAgainst === 1 ? '' : 's'}; none reached the confirmation threshold.` }
           : {}),

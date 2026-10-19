@@ -60,6 +60,14 @@ try {
         continue;
       }
       if (rows[0].photo) await client.query('delete from public.photo_blobs where key = $1', [rows[0].photo]);
+      // And the other photos the reporter sent (shared/photo-set.js).
+      await client.query(
+        `delete from public.photo_blobs where key in (
+           select jsonb_array_elements(data->'extraPhotos')->>'file' from public.found_reports
+           where id = $1 and jsonb_typeof(data->'extraPhotos') = 'array'
+         )`,
+        [id]
+      );
       await client.query('delete from public.found_reports where id = $1', [id]);
       console.log(`  ${id.padEnd(14)} removed  (${rows[0].location || ''})`);
     }

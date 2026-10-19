@@ -213,10 +213,15 @@ function memoryIndex() {
     faces,
     log,
     failSearch: false,
+    // One photo, or a case's set of them (shared/face-index.js): `faces`
+    // holds the first photo's person, `sets` every person enrolled.
+    sets: new Map(),
     async enroll(caseId, buf) {
-      log.push(['enroll', caseId]);
-      faces.set(caseId, personIn(buf));
-      return { ok: true };
+      const bufs = Array.isArray(buf) ? buf : [buf];
+      log.push(['enroll', caseId, bufs.length]);
+      faces.set(caseId, personIn(bufs[0]));
+      this.sets.set(caseId, bufs.map(personIn));
+      return { ok: true, photos: bufs.map(() => ({ status: 'enrolled' })) };
     },
     async search(buf, topK) {
       log.push(['search', topK]);
@@ -224,7 +229,7 @@ function memoryIndex() {
       const probe = personIn(buf);
       return [...faces.entries()]
         .filter(([caseId]) => !this.hidden?.has(caseId))
-        .map(([caseId, person]) => ({ caseId, score: person === probe ? 0.97 : 0.1 }))
+        .map(([caseId, person]) => ({ caseId, score: (this.sets.get(caseId) || [person]).includes(probe) ? 0.97 : 0.1 }))
         .sort((a, b) => b.score - a.score)
         .slice(0, topK);
     },

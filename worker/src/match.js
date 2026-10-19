@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import { compareFacesRekognition, rekognitionConfigured } from './rekognition.js';
 import { selectMatchCandidates, selectSightingCandidates } from '../../shared/match-pool.js';
 import { engineSettings } from '../../shared/match-config.js';
-import { ENGINES, comparePhotos, mapLimit, rankResult, screenPhoto } from '../../shared/match-pipeline.js';
+import { ENGINES, comparePhotos, extraPairBudgetOf, loadComparable, rankResult, screenPhoto } from '../../shared/match-pipeline.js';
 import { detectImageMime, imageExtension } from '../../shared/photo-format.js';
 
 // The rules - who proposes, who confirms, what happens when an engine does not
@@ -353,25 +353,28 @@ function confirmThreshold(env) {
  * the engine's notes. Each candidate carries the stored record under `report`,
  * whichever kind of record it is.
  */
-async function rankStored(env, photoBuf, stored, readPhoto, { direction = 'forward', pool, noun = 'open case' } = {}) {
+async function rankStored(env, photoBuf, stored, readPhoto, { direction = 'forward', pool, noun = 'open case', probeId = 'main', probeExtras = [] } = {}) {
   const cfg = config(env);
   const started = Date.now();
   let outcome = null;
   if (stored.length) {
-    const loaded = await mapLimit(stored, cfg.concurrency, async (report) => ({
-      report,
-      targetBuf: await readPhoto(report.photoFile),
-    }));
-    const comparable = loaded.filter((row) => row.targetBuf);
+    // Each record's lead photo; its others read only if it is shortlisted
+    // (shared/match-pipeline.js, several photos a record).
+    const comparable = await loadComparable(stored, readPhoto, cfg.concurrency);
     if (comparable.length) {
       outcome = await comparePhotos({
         photoBuf,
+        probeId,
+        probeExtras,
         comparable,
         direction,
         providers: providersFor(env, cfg),
         confirmThreshold: cfg.confirmThreshold,
         secondOpinionTopN: cfg.secondOpinionTopN,
         concurrency: cfg.concurrency,
+        // Kept out of the engine settings, so a search's configuration hash
+        // does not change with it and no stored sighting is re-matched for it.
+        extraPairBudget: extraPairBudgetOf(read(env, 'KHOZO_EXTRA_PAIR_BUDGET')),
       });
     }
   }
@@ -406,7 +409,13 @@ export async function rankMatches(env, photoBuf, hints = {}, source = {}) {
   const readPhoto = source.readPhoto || (async () => null);
   const maxCandidates = Number(read(env, 'KHOZO_MATCH_CANDIDATES') || 25);
   const { reports: withPhotos, pool } = selectMatchCandidates(reports, hints, maxCandidates);
-  return rankStored(env, photoBuf, withPhotos, readPhoto, { direction: 'forward', pool, noun: 'open case' });
+  return rankStored(env, photoBuf, withPhotos, readPhoto, {
+    direction: 'forward',
+    pool,
+    noun: 'open case',
+    probeId: hints.probeId || 'main',
+    probeExtras: hints.probeExtras || [],
+  });
 }
 
 /**
@@ -436,6 +445,8 @@ export async function rankSightingMatches(env, casePhotoBuf, hints = {}, source 
     direction: 'reverse',
     pool,
     noun: 'stored sighting',
+    probeId: hints.probeId || 'main',
+    probeExtras: hints.probeExtras || [],
   });
   return {
     candidates: ranked.candidates.map(({ report, ...rest }) => ({ ...rest, sighting: report })),

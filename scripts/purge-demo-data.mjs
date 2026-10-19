@@ -178,6 +178,9 @@ try {
     await client.query(
       `delete from public.photo_blobs where key in (
          select data->>'photoFile' from public.reports where id = any($1::text[]) and data->>'photoFile' is not null
+         union all
+         select jsonb_array_elements(data->'extraPhotos')->>'file' from public.reports
+         where id = any($1::text[]) and jsonb_typeof(data->'extraPhotos') = 'array'
        )`,
       [reportIds]
     );
@@ -196,6 +199,9 @@ try {
     await client.query(
       `delete from public.photo_blobs where key in (
          select data->>'photoFile' from public.found_reports where id = any($1::text[]) and data->>'photoFile' is not null
+         union all
+         select jsonb_array_elements(data->'extraPhotos')->>'file' from public.found_reports
+         where id = any($1::text[]) and jsonb_typeof(data->'extraPhotos') = 'array'
        )`,
       [sightingIds]
     );
