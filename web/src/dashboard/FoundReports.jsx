@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api.js';
 import { asList, CategoryBadge, coordsOf, isAdultCase, MapsLink, personCategoryOf, PhoneLink, ProtectedImage, StatusBadge, timeAgo, txt } from '../lib.jsx';
+import { CONCERN_REASON_LABELS, DISMISSAL_OPTIONS } from '../sightingConcern.js';
 import { useAuth } from '../auth.jsx';
 import { ErrorBoundary } from '../components.jsx';
 import { currentLocale, msg, t, useT } from '../i18n.jsx';
@@ -74,7 +75,7 @@ const VIEWS = {
     filters: [
       { id: 'needs_review', label: msg('Needs follow-up'), match: (f) => ['no_match', 'referred_cwc'].includes(f.status) },
       { id: 'matched', label: msg('Actioned'), match: (f) => ['cwc_followup_complete', 'formalized_case'].includes(f.status) },
-      { id: 'closed', label: msg('Closed'), match: (f) => f.status === 'rejected' },
+      { id: 'closed', label: msg('Closed'), match: (f) => ['rejected', 'dismissed'].includes(f.status) },
       { id: 'all', label: msg('All'), match: () => true },
     ],
     empty: msg('No unmatched sightings are waiting.'),
@@ -200,6 +201,8 @@ export default function FoundReports({ view = 'matches' }) {
   const [searches, setSearches] = useState({});
   // { [sightingId]: { state, district } } while "Set district" is open.
   const [placements, setPlacements] = useState({});
+  // Sightings an officer is closing as "Not a concern": id -> chosen reason.
+  const [dismissing, setDismissing] = useState({});
   // The national re-match batch: { processed, linked, remaining, running }.
   const [batch, setBatch] = useState(null);
   // The face search gallery (GET /dashboard/face-index), for the national
@@ -343,6 +346,21 @@ export default function FoundReports({ view = 'matches' }) {
     setSearches((rows) => ({ ...rows, [f.id]: { linked: Boolean(data?.linked), engine: data?.engine && typeof data.engine === 'object' ? data.engine : null } }));
     load();
   });
+
+  // "Not a concern": closes the sighting and deletes its photo now
+  // (POST /reports/found/:id/dismiss, shared/sighting-misuse.js).
+  const dismissSighting = (f) => {
+    const reason = dismissing[f.id];
+    return action.run(`dismiss:${f.id}`, async () => {
+      await api.post(`/reports/found/${f.id}/dismiss`, { reason });
+      setDismissing((rows) => {
+        const next = { ...rows };
+        delete next[f.id];
+        return next;
+      });
+      load();
+    }, reason === 'misuse' ? msg('Dismissed as misuse. The photo was deleted.') : msg('Closed as not a concern. The photo was deleted.'));
+  };
 
   // Places a sighting the reporter gave no district for.
   const placeSighting = (f) => action.run(`place:${f.id}`, async () => {
@@ -804,6 +822,17 @@ export default function FoundReports({ view = 'matches' }) {
                   </p>
                   {coordsOf(f) && <MapsLink lat={f.lat} lng={f.lng} />}
                   {txt(f.note) && <p className="text-sm italic text-slate-600">“{d(f.note)}”</p>}
+                  {/* For an adult, why the reporter thought they need help (shared/sighting-misuse.js). */}
+                  {sightingAdult && !f.anonymizedAt && (
+                    <p className="text-xs text-slate-600">
+                      {CONCERN_REASON_LABELS[f.concernReason]
+                        ? t('Why the reporter thought they need help: {reason}', { reason: t(CONCERN_REASON_LABELS[f.concernReason]) })
+                        : t('The reporter gave no reason for thinking they need help.')}
+                    </p>
+                  )}
+                  {['missing', 'expired', 'unavailable'].includes(f.humanCheck) && (
+                    <p className="text-xs text-amber-700">{t('Sent without passing the bot check: from an offline phone, an older page, or while the check could not be reached.')}</p>
+                  )}
                   {screen && (
                     <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
                       <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${screen.className}`}>
@@ -1023,6 +1052,67 @@ export default function FoundReports({ view = 'matches' }) {
                   </div>
                   <ActionMessage action={action} id={`review:${f.id}`} />
                 </>
+              )}
+
+              {/*
+                "Not a concern": a stranger photographed in the street is not a
+                missing person. Closing it deletes the photo at once instead of
+                keeping it for 180 days. Not while a possible match is open,
+                and not once the sighting is part of a case.
+              */}
+              {!f.anonymizedAt && !['pending_review', 'matched', 'dismissed'].includes(f.status) && !f.formalReportId && (
+                <div className="mt-3">
+                  {dismissing[f.id] === undefined ? (
+                    <button
+                      type="button"
+                      className="inline-flex min-h-11 items-center text-xs font-semibold text-gray-500 underline hover:text-ink sm:min-h-0"
+                      onClick={() => setDismissing((rows) => ({ ...rows, [f.id]: '' }))}
+                    >
+                      {t('Not a concern…')}
+                    </button>
+                  ) : (
+                    <div className="rounded-xl border border-black/10 bg-gray-50 p-3 text-xs">
+                      <p className="font-semibold text-gray-800">{t('Close this sighting and delete its photo now?')}</p>
+                      <p className="mt-0.5 text-gray-500">{t('For a photo of someone who is not missing and not in need. This cannot be undone, and the audit log records who decided.')}</p>
+                      <div role="radiogroup" className="mt-2 grid gap-1.5">
+                        {DISMISSAL_OPTIONS.map((option) => (
+                          <label key={option.id} className="flex items-start gap-2 text-gray-700">
+                            <input
+                              type="radio"
+                              name={`dismiss-${f.id}`}
+                              className="mt-0.5"
+                              checked={dismissing[f.id] === option.id}
+                              onChange={() => setDismissing((rows) => ({ ...rows, [f.id]: option.id }))}
+                            />
+                            <span>{t(option.label)}</span>
+                          </label>
+                        ))}
+                      </div>
+                      <div className="mt-2.5 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          className="btn-primary px-4 py-2 text-xs"
+                          disabled={action.pending || !dismissing[f.id]}
+                          onClick={() => dismissSighting(f)}
+                        >
+                          {t('Close and delete photo')}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-ghost px-4 py-2 text-xs"
+                          onClick={() => setDismissing((rows) => {
+                            const next = { ...rows };
+                            delete next[f.id];
+                            return next;
+                          })}
+                        >
+                          {t('Cancel')}
+                        </button>
+                      </div>
+                      <ActionMessage action={action} id={`dismiss:${f.id}`} />
+                    </div>
+                  )}
+                </div>
               )}
               {matchedAdult && ['pending_review', 'matched'].includes(f.status) && (
                 <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900">

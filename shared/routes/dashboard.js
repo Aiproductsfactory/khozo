@@ -36,6 +36,7 @@ import { anonymisedLabel, deskCaseView, fieldKeyId, isFullAadhaar } from '../pri
 import { assessTraffickingRisk, buildPersonIndex, detectPatterns } from '../trafficking.js';
 import { outcomeMeasures } from '../outcomes.js';
 import { photoNeedCounts } from '../photo-need.js';
+import { dismissalApproval } from '../sighting-misuse.js';
 import { anonymiseCase, anonymiseSighting, runRetentionSweep } from '../retention.js';
 
 export default function registerDashboardRoutes(router, deps) {
@@ -229,6 +230,9 @@ export default function registerDashboardRoutes(router, deps) {
     'security.public_rate_limited',
     'auth.otp_failed',
     'auth.privileged_registration_blocked',
+    // An officer found a sighting's photo was not taken to help anyone
+    // (POST /reports/found/:id/dismiss, shared/sighting-misuse.js).
+    'sighting.dismissed_misuse',
   ]);
   const ABUSE_DISPOSITION_ACTIONS = new Set([
     'security.abuse_signal_reviewed',
@@ -1863,6 +1867,13 @@ export default function registerDashboardRoutes(router, deps) {
         foundReports.filter((f) => !f.anonymizedAt),
         (f) => f.campaignSource || 'No poster code'
       ),
+      // Sightings an officer closed as "Not a concern", their photo deleted,
+      // and how many of those were misuse (shared/sighting-misuse.js). A
+      // rising misuse count is the signal to tighten the public form.
+      sightingsDismissed: {
+        total: foundReports.filter((f) => f.status === 'dismissed').length,
+        misuse: foundReports.filter((f) => f.status === 'dismissed' && f.anonymizationApproval === dismissalApproval('misuse')).length,
+      },
       demographics: {
         byCategory: groupCounts(reports, (r) => PERSON_CATEGORIES[personCategoryOf(r)]),
         byAgeBand: groupCounts(reports, (r) => ageBand(r.age)),

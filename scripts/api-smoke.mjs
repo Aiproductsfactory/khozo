@@ -58,8 +58,23 @@ async function sleep(ms) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// The public sighting limit is keyed on the network address alone, as for real
+// reporters, who arrive from different addresses. So each sighting the suite
+// sends comes from its own documentation address, unless a check sets one:
+// only the checks about that limit share an address.
+let sightingSender = 0;
+function nextSightingAddress() {
+  sightingSender += 1;
+  return `198.51.${100 + Math.floor(sightingSender / 250)}.${(sightingSender % 250) + 1}`;
+}
+
 async function request(method, pathName, { token, body, form, headers: extraHeaders = {} } = {}) {
   const headers = { ...extraHeaders };
+  if (method === 'POST' && pathName === '/reports/found' && !headers['x-forwarded-for'] && !headers['cf-connecting-ip']) {
+    const address = nextSightingAddress();
+    headers['x-forwarded-for'] = address;
+    headers['cf-connecting-ip'] = address;
+  }
   let payload;
   if (token) headers.Authorization = `Bearer ${token}`;
   if (form) {
@@ -689,6 +704,38 @@ async function personCategoryChecks({ superAdmin, sjpu, cwc, parent }) {
   const posterMis = await request('GET', '/dashboard/mis', { token: superAdmin.token });
   assert(posterMis.sightingsBySource?.find((row) => row.name === 'kalupur-platform-1')?.count === 1, 'MIS should count sightings by poster code');
   assert(posterMis.sightingsBySource?.find((row) => row.name === 'No poster code')?.count >= 1, 'MIS should count sightings sent without a poster code');
+
+  // --- Misuse: the reason asked for an adult, and "Not a concern" ------------
+  const humanCheckInfo = await request('GET', '/reports/public/human-check');
+  assert(humanCheckInfo.siteKey === null, 'the bot check should be off without its keys, and say so');
+  const reasonGiven = await request('POST', '/reports/found', { form: sightingForm({ personCategory: 'adult', ageApprox: '70', concernReason: 'lost_or_confused' }, '9000000709') });
+  const reasonOdd = await request('POST', '/reports/found', { form: sightingForm({ personCategory: 'woman', ageApprox: '30', concernReason: 'looked nice' }, '9000000710') });
+  const reasonRows = (await request('GET', '/reports/found/all', { token: superAdmin.token })).foundReports;
+  const reasonGivenRow = reasonRows.find((row) => row.id === reasonGiven.foundReport.id);
+  assert(reasonGivenRow?.concernReason === 'lost_or_confused', 'an adult sighting should keep why the reporter thought they need help');
+  assert(reasonGivenRow.humanCheck === null, 'with the bot check off, a sighting records no result');
+  assert(reasonRows.find((row) => row.id === reasonOdd.foundReport.id)?.concernReason === null, 'a reason the form does not offer should be dropped without refusing the report');
+  const dismissPath = `/reports/found/${reasonOdd.foundReport.id}/dismiss`;
+  await expectStatus(401, () => request('POST', dismissPath, { body: { reason: 'misuse' } }), 'dismissing a sighting without signing in');
+  await expectStatus(403, () => request('POST', dismissPath, { token: parent.token, body: { reason: 'misuse' } }), 'a parent dismissing a sighting');
+  await expectStatus(400, () => request('POST', dismissPath, { token: superAdmin.token, body: { reason: 'boring' } }), 'a dismissal without a known reason');
+  const dismissed = await request('POST', dismissPath, { token: superAdmin.token, body: { reason: 'misuse' } });
+  assert(dismissed.foundReport.status === 'dismissed' && dismissed.foundReport.anonymizedAt, 'a dismissed sighting should be closed and anonymised');
+  assert(
+    dismissed.foundReport.foundLocation === 'Location removed' && !JSON.stringify(dismissed.foundReport).includes('Smoke category sighting'),
+    'a dismissed sighting should keep no place and no note'
+  );
+  await expectStatus(409, () => request('POST', dismissPath, { token: superAdmin.token, body: { reason: 'misuse' } }), 'dismissing a sighting twice');
+  const misuseMis = await request('GET', '/dashboard/mis', { token: superAdmin.token });
+  assert(
+    misuseMis.sightingsDismissed?.misuse >= 1 && misuseMis.sightingsDismissed.total >= misuseMis.sightingsDismissed.misuse,
+    'MIS should count sightings dismissed as misuse'
+  );
+  const misuseQueue = await request('GET', '/dashboard/fraud', { token: superAdmin.token });
+  assert(
+    misuseQueue.signals.some((row) => row.action === 'sighting.dismissed_misuse' && row.targetId === reasonOdd.foundReport.id),
+    'a misuse dismissal should reach the public-abuse queue'
+  );
 
   // --- A confirmation records how the identity was verified ------------------
   const confirmWoman = (body) => request('POST', `/reports/${woman.report.id}/confirm-match`, { token: sjpu.token, body });
@@ -2655,6 +2702,8 @@ async function run() {
     'Mumbai CWC should not see Goa sighting activity'
   );
 
+  // One sender, one address: the limit (2 in this suite) is per address.
+  const floodFrom = { 'x-forwarded-for': '203.0.113.250', 'cf-connecting-ip': '203.0.113.250' };
   for (let i = 0; i < 2; i++) {
     const floodForm = new FormData();
     floodForm.set('foundLocation', `Rate limit smoke location ${i}`);
@@ -2662,7 +2711,7 @@ async function run() {
     floodForm.set('district', 'Mumbai');
     floodForm.set('note', 'Repeated public sighting test');
     floodForm.set('reporterPhone', '9000000999');
-    await request('POST', '/reports/found', { form: floodForm });
+    await request('POST', '/reports/found', { form: floodForm, headers: floodFrom });
   }
   const blockedFlood = new FormData();
   blockedFlood.set('foundLocation', 'Rate limit smoke location blocked');
@@ -2670,7 +2719,10 @@ async function run() {
   blockedFlood.set('district', 'Mumbai');
   blockedFlood.set('note', 'Repeated public sighting test');
   blockedFlood.set('reporterPhone', '9000000999');
-  await expectStatus(429, () => request('POST', '/reports/found', { form: blockedFlood }), 'public sighting rate limit');
+  await expectStatus(429, () => request('POST', '/reports/found', { form: blockedFlood, headers: floodFrom }), 'public sighting rate limit');
+  // Typing a different phone number once opened a fresh allowance.
+  blockedFlood.set('reporterPhone', '9000000998');
+  await expectStatus(429, () => request('POST', '/reports/found', { form: blockedFlood, headers: floodFrom }), 'a new phone number does not reset the public sighting rate limit');
   const publicAbuse = await request('GET', '/dashboard/fraud', { token: superAdmin.token });
   assert(publicAbuse.totals.rateLimited >= 4, 'public abuse queue should include rate-limit signals');
   assert(publicAbuse.totals.otpFailures >= 1, 'public abuse queue should include OTP failure signals');

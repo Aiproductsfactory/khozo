@@ -20,6 +20,9 @@ import InstallPrompt from '../InstallPrompt.jsx';
 import { currentLocale, msg, useT } from '../i18n.jsx';
 import { PublicHeader, PublicIcon, ShareKhozo, usePageMeta } from '../PublicChrome.jsx';
 import { campaignSourceOf } from '../../../shared/campaign-source.js';
+import { HUMAN_CHECK_FIELD } from '../../../shared/human-check.js';
+import HumanCheck from '../HumanCheck.jsx';
+import { CONCERN_REASON_LABELS } from '../sightingConcern.js';
 
 // The poster code in the address when the form was opened by scanning one
 // (khozo.org/report?src=kalupur), or null. It goes with the report so the MIS
@@ -65,6 +68,9 @@ const SEEN_COPY = {
     noPhoto: msg('No photo attached. This will be sent as a text sighting for police review and no match search will run.'),
     consent: msg('I confirm this photo may be used only for police review, follow-up, and match search. The sighting image is retained for 180 days unless escalated.'),
     danger: msg('If she is in immediate danger, call 112. The Women Helpline 181 and the One Stop Centre (Sakhi) can also help.'),
+    // An adult has the right to be left alone (shared/sighting-misuse.js).
+    why: msg('What made you think she needs help?'),
+    photoRule: msg('Photograph a woman only if she has asked for help or cannot look after herself.'),
   },
   adult: {
     title: msg('Spotted a person who may be missing?'),
@@ -75,6 +81,8 @@ const SEEN_COPY = {
     noPhoto: msg('No photo attached. This will be sent as a text sighting for police review and no match search will run.'),
     consent: msg('I confirm this photo may be used only for police review, follow-up, and match search. The sighting image is retained for 180 days unless escalated.'),
     danger: msg('If the person is in immediate danger, call 112.'),
+    why: msg('What made you think this person needs help?'),
+    photoRule: msg('Photograph an adult only if they have asked for help or cannot look after themselves.'),
   },
 };
 
@@ -146,6 +154,7 @@ export default function Capture() {
   const [posterSource] = useState(posterSourceFromUrl);
   const [form, setForm] = useState({
     campaignSource: posterSource || '',
+    concernReason: '',
     personCategory: 'child',
     foundLocation: '',
     state: '',
@@ -178,18 +187,35 @@ export default function Capture() {
   const locateRun = useRef(0);
   const photoRun = useRef(0);
   const autoLocationText = useRef('');
+  // The bot check (shared/human-check.js): a site key only when it is on. Its
+  // token travels in the form and is cleared after each send attempt, since a
+  // token is redeemed once; a stale one in the offline queue is accepted.
+  const [humanSiteKey, setHumanSiteKey] = useState(null);
+  const [humanReset, setHumanReset] = useState(0);
+  const wasBusy = useRef(false);
+  const setHumanToken = (token) => setForm((f) => (f[HUMAN_CHECK_FIELD] === token ? f : { ...f, [HUMAN_CHECK_FIELD]: token }));
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const setChecked = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.checked }));
   const seen = form.personCategory;
   const copy = SEEN_COPY[seen] || SEEN_COPY.child;
   const ageLimits = SEEN_AGE_LIMITS[seen] || SEEN_AGE_LIMITS.child;
+  // For a woman or an adult, why the reporter thinks they need help. Asked
+  // here, not required by the server, so a report from an older page or an
+  // offline queue still arrives (shared/sighting-misuse.js).
+  const reasonMissing = !isAdultCategory(seen)
+    ? null
+    : !form.concernReason
+      ? msg('Say what made you think they need help.')
+      : form.concernReason === 'other' && !String(form.note || '').trim()
+        ? msg('Say in the note what made you think they need help.')
+        : null;
   // Why the report cannot be sent yet, matching the server's own checks
   // (shared/routes/reports.js): a photo needs the consent box, and a report
   // without one needs a place or a note to act on.
-  const blocked = file
+  const blocked = reasonMissing || (file
     ? (form.photoConsent ? null : msg('Tick the box above to send the photo.'))
-    : (String(form.note || '').trim() || String(form.foundLocation || '').trim() ? null : msg('Add the place or a note so an officer can act on it.'));
+    : (String(form.note || '').trim() || String(form.foundLocation || '').trim() ? null : msg('Add the place or a note so an officer can act on it.')));
 
   // A guessed age outside the new range is dropped rather than sent and
   // refused; a woman's gender is implied.
@@ -200,6 +226,7 @@ export default function Capture() {
       return {
         ...f,
         personCategory: next,
+        concernReason: isAdultCategory(next) ? f.concernReason : '',
         ageApprox,
         gender: next === 'woman' ? 'Female' : f.personCategory === 'woman' ? '' : f.gender,
       };
@@ -283,6 +310,18 @@ export default function Capture() {
   useEffect(() => {
     getQueuedSightings().then(setQueued).catch(() => setQueued([]));
   }, []);
+
+  useEffect(() => {
+    api.get('/reports/public/human-check')
+      .then((data) => setHumanSiteKey(typeof data?.siteKey === 'string' && data.siteKey ? data.siteKey : null))
+      .catch(() => {});
+  }, []);
+
+  // After every send attempt, a fresh token for the next one.
+  useEffect(() => {
+    if (wasBusy.current && !busy) setHumanReset((n) => n + 1);
+    wasBusy.current = busy;
+  }, [busy]);
 
   useEffect(() => {
     const flush = () => {
@@ -412,6 +451,10 @@ export default function Capture() {
                 ? t('Capture a photo when it is safe, or continue with location details for police review.')
                 : t('Capture a photo when it is safe, or continue with location details for CWC/Childline review.')}
             </p>
+            {/* Said before the camera opens, when it can still change what is photographed. */}
+            {copy.photoRule && (
+              <p className="mt-2 text-sm font-medium text-amber-900">{t(copy.photoRule)}</p>
+            )}
             {/*
               Who was seen. Child stays the default, so the flow a reporter has
               always used is one tap shorter than any other; the choice only
@@ -633,6 +676,30 @@ export default function Capture() {
                   </div>
                 </div>
               </details>
+              {/*
+                For a woman or an adult: what made the reporter think they need
+                help. A photo of a stranger who is fine is a photo of someone
+                who is not missing (shared/sighting-misuse.js).
+              */}
+              {isAdultCategory(seen) && (
+                <fieldset>
+                  <legend className="label">{t(copy.why)}</legend>
+                  <div className="mt-1 grid gap-2 sm:grid-cols-2">
+                    {Object.entries(CONCERN_REASON_LABELS).map(([id, label]) => (
+                      <label
+                        key={id}
+                        className={`flex min-h-11 items-start gap-2.5 rounded-xl px-3 py-2.5 text-sm ring-1 ${
+                          form.concernReason === id ? 'bg-khozo-light/60 text-ink ring-khozo/40' : 'bg-white text-gray-700 ring-black/10'
+                        }`}
+                      >
+                        <input type="radio" name="concernReason" className="mt-0.5" value={id} checked={form.concernReason === id} onChange={set('concernReason')} />
+                        <span>{t(label)}</span>
+                      </label>
+                    ))}
+                  </div>
+                  {file && <p className="mt-2 text-xs text-gray-600">{t(copy.photoRule)}</p>}
+                </fieldset>
+              )}
               {file && (
                 <label className={`flex gap-3 rounded-xl p-3 text-sm text-gray-800 ring-1 ${form.photoConsent ? 'bg-khozo-light/50 ring-khozo/30' : 'bg-amber-50/70 ring-amber-200'}`}>
                   <input type="checkbox" className="mt-1" checked={form.photoConsent} onChange={setChecked('photoConsent')} required />
@@ -641,6 +708,8 @@ export default function Capture() {
                   </span>
                 </label>
               )}
+              {/* Shows itself only when Cloudflare needs the reporter to tick a box. */}
+              <HumanCheck siteKey={humanSiteKey} onToken={setHumanToken} resetKey={humanReset} />
               {/*
                 The send button stays at the bottom of the screen on a phone,
                 with the upload's progress on it, so a long form never hides it.

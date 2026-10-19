@@ -80,6 +80,7 @@ Runs with no server, database or network:
 | `smoke:privacy`       | anonymisation, Aadhaar fingerprints, desk views and the retention job |
 | `smoke:photo-strip`   | uploads lose GPS and device metadata and keep their orientation      |
 | `smoke:trafficking`   | trafficking-risk prompts, cross-case patterns and outcome measures   |
+| `smoke:misuse`        | the bot check, the reason asked for an adult, and "Not a concern" deleting the photo |
 
 Two more need something running, so they are not in `test:all`:
 
@@ -149,6 +150,19 @@ npx wrangler secret put KHOZO_EXPORT_SIGNING_KEY
 npx wrangler secret put AARAKSHAK_API_KEY
 npx wrangler secret put KHOZO_FIELD_HASH_KEY      # set before migrating: keys Aadhaar fingerprints (derived from the JWT secret if unset, which breaks matching if that secret rotates)
 ```
+
+Cloudflare Turnstile on the public sighting form (`shared/human-check.js`) stays off until
+all three are set. Create a managed widget for the production hostname first:
+
+```bash
+npx wrangler secret put TURNSTILE_SITE_KEY      # the widget's site key (public, sent to the form)
+npx wrangler secret put TURNSTILE_SECRET        # the widget's secret
+npx wrangler secret put TURNSTILE_HOSTNAMES     # e.g. khozo.org,www.khozo.org; never localhost on production
+```
+
+With it on, a report that did not pass the check (sent from an offline queue, or while
+Cloudflare could not answer) is accepted but held to `KHOZO_UNVERIFIED_FOUND_REPORT_LIMIT`
+(default 3 per 15 minutes per address); only a false token is refused.
 
 Retention (see `docs/governance/retention-schedule.md`). Leave these unset until the
 Department approves the schedule; the nightly job then only reports what is due:

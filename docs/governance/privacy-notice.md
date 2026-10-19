@@ -27,7 +27,7 @@ data, not for watching people, and not for training AI models.
 
 | When you... | We collect | Why |
 |---|---|---|
-| **Send a sighting** (no login needed) | The photo, if you add one. The place, taken from the photo's GPS, your phone's location, or what you type. Who you saw (child, woman or adult), rough age, gender and a note. If you opened the form by scanning a poster, which poster it was (a short code such as "kalupur"), to count which posters help. *Optional:* your name and phone, and the type of a photo ID with **only its last 4 digits** (we never store the full number). | To compare the face with missing persons, send the report to the right desk, and call you if an officer needs more detail. If you tick "keep my identity confidential", desks see "Confidential citizen" instead of your name and phone. |
+| **Send a sighting** (no login needed) | The photo, if you add one. The place, taken from the photo's GPS, your phone's location, or what you type. Who you saw (child, woman or adult), rough age, gender and a note. If you opened the form by scanning a poster, which poster it was (a short code such as "kalupur"), to count which posters help. If you saw a woman or an adult, what made you think they need help: an adult may choose not to be found, so a photo of someone who is fine should not be sent. *Optional:* your name and phone, and the type of a photo ID with **only its last 4 digits** (we never store the full number). | To compare the face with missing persons, send the report to the right desk, and call you if an officer needs more detail. If you tick "keep my identity confidential", desks see "Confidential citizen" instead of your name and phone. |
 | **Register a missing person** (parent, NGO or police) | Name, photo, age, gender, height, weight, marks, clothing, languages, health or safety needs, date missing, Aadhaar number (optional), the guardian's name, phone, email and address, and your declaration. | To search for the person and contact the family. |
 | **A department loads its own register** | The same details, from the department's records. Some records are marked **police-only**: only police desks can see them. | To search the department's existing cases. |
 | **Have an account** (officer, parent, NGO) | Name, email, phone, password (stored scrambled), role and office. Every action an officer takes is recorded under the officer's name. The public list of desks shows offices, never officers' names or phones. | To let you sign in, and to keep an honest record of who did what. |
@@ -72,7 +72,7 @@ only what they entered, never where you were found.
 
 ## Who handles your information
 
-[Operator] runs Khozo · **Cloudflare** runs the website and servers · **Supabase** hosts the
+[Operator] runs Khozo · **Cloudflare** runs the website and servers, and (when switched on) checks that a sighting was sent by a person rather than a program · **Supabase** hosts the
 database that holds all records and photos · **Aarakshak** compares faces · **Amazon Web
 Services** (Rekognition, Mumbai region) makes a second face check on the current service ·
 **OpenStreetMap Nominatim** turns a sighting's map position into a district · **Google

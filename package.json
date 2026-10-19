@@ -17,7 +17,7 @@
     "dev:web": "npm run dev -w web",
     "seed:test-data": "node scripts/seed-test-data.mjs",
     "test:accounts": "node scripts/test-accounts.mjs",
-    "test:all": "npm run test:coverage && npm run smoke:api && npm run smoke:worker && npm run smoke:alerts && npm run smoke:intake && npm run smoke:match-pool && npm run smoke:match-engines && npm run smoke:face-index && npm run smoke:geo && npm run smoke:scope && npm run smoke:store && npm run smoke:web-routes && npm run smoke:pwa && npm run smoke:bulk-import && npm run smoke:audit-chain && npm run smoke:script-display && npm run smoke:ops && npm run smoke:privacy && npm run smoke:photo-strip && npm run smoke:trafficking && npm run smoke:multi-photo",
+    "test:all": "npm run test:coverage && npm run smoke:api && npm run smoke:worker && npm run smoke:alerts && npm run smoke:intake && npm run smoke:match-pool && npm run smoke:match-engines && npm run smoke:face-index && npm run smoke:geo && npm run smoke:scope && npm run smoke:store && npm run smoke:web-routes && npm run smoke:pwa && npm run smoke:bulk-import && npm run smoke:audit-chain && npm run smoke:script-display && npm run smoke:ops && npm run smoke:privacy && npm run smoke:photo-strip && npm run smoke:trafficking && npm run smoke:multi-photo && npm run smoke:misuse",
     "test:coverage": "node scripts/api-coverage.mjs",
     "smoke:store": "node scripts/store-replica-smoke.mjs",
     "smoke:api": "node scripts/api-smoke.mjs",
@@ -45,7 +45,8 @@
     "smoke:privacy": "node scripts/privacy-smoke.mjs",
     "smoke:photo-strip": "node scripts/photo-strip-smoke.mjs",
     "smoke:trafficking": "node scripts/trafficking-smoke.mjs",
-    "smoke:multi-photo": "node scripts/multi-photo-smoke.mjs"
+    "smoke:multi-photo": "node scripts/multi-photo-smoke.mjs",
+    "smoke:misuse": "node scripts/misuse-smoke.mjs"
   },
   "devDependencies": {
     "concurrently": "^10.0.3",

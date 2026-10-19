@@ -26,6 +26,7 @@ import { createRequestStore } from './src/store-sync.js';
 import { checkDatabase, scheduled as runScheduledChecks } from './src/ops.js';
 import { detectPerson, matchEngineInfo, probeMatchProviders, rankMatches, rankSightingMatches } from './src/match.js';
 import { createFaceIndex } from '../shared/face-index.js';
+import { humanCheckConfig } from '../shared/human-check.js';
 import { privacySecrets } from '../shared/privacy.js';
 
 const CORS_HEADERS = {
@@ -131,6 +132,11 @@ function buildDeps(env, store, ctx) {
     settings: {
       nodeEnv: env.NODE_ENV || 'production',
       foundReportLimit: env.KHOZO_FOUND_REPORT_LIMIT,
+      unverifiedFoundReportLimit: env.KHOZO_UNVERIFIED_FOUND_REPORT_LIMIT,
+      // Cloudflare Turnstile on the public sighting form; off unless
+      // TURNSTILE_SITE_KEY, TURNSTILE_SECRET and TURNSTILE_HOSTNAMES are set
+      // (shared/human-check.js).
+      humanCheck: humanCheckConfig(env),
       caseStatusLimit: env.KHOZO_CASE_STATUS_LIMIT,
       sightingStatusLimit: env.KHOZO_SIGHTING_STATUS_LIMIT,
       bulletinLimit: env.KHOZO_BULLETIN_LIMIT,

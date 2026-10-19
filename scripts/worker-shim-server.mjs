@@ -38,6 +38,7 @@ import * as store from '../server/src/store.js';
 import { isPostgres } from '../server/src/db.js';
 import { detectPerson, matchEngineInfo, probeMatchProviders, rankMatches, rankSightingMatches } from '../server/src/match.js';
 import { createFaceIndex } from '../shared/face-index.js';
+import { humanCheckConfig } from '../shared/human-check.js';
 import { privacySecrets } from '../shared/privacy.js';
 
 const PORT = Number(process.env.PORT || 4500);
@@ -111,6 +112,8 @@ function buildDeps(env) {
     settings: {
       nodeEnv: env.NODE_ENV,
       foundReportLimit: env.KHOZO_FOUND_REPORT_LIMIT,
+      unverifiedFoundReportLimit: env.KHOZO_UNVERIFIED_FOUND_REPORT_LIMIT,
+      humanCheck: humanCheckConfig(env),
       caseStatusLimit: env.KHOZO_CASE_STATUS_LIMIT,
       sightingStatusLimit: env.KHOZO_SIGHTING_STATUS_LIMIT,
       bulletinLimit: env.KHOZO_BULLETIN_LIMIT,

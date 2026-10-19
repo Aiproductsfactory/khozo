@@ -9,6 +9,7 @@ import multer from 'multer';
 import registerReportRoutes from '../../../shared/routes/reports.js';
 import { PHOTO_TOO_LARGE } from '../../../shared/case-domain.js';
 import { createFaceIndex } from '../../../shared/face-index.js';
+import { humanCheckConfig } from '../../../shared/human-check.js';
 import { privacySecrets } from '../../../shared/privacy.js';
 import { PHOTO_MAX_BYTES } from '../../../shared/photo-format.js';
 import { EXTRA_PHOTO_FIELD, MAX_EXTRA_FILES, MULTIPART_MAX_BYTES, PHOTOS_TOO_LARGE, TOO_MANY_PHOTOS } from '../../../shared/photo-set.js';
@@ -16,7 +17,7 @@ import {
   listReports, addReport, findReport, updateReport,
   listFoundReports, addFoundReport, findFoundReport, updateFoundReport,
   listUsers, addActivity, addAudit, addNotification,
-  savePhoto, readPhoto, deletePhoto, photoMimeType,
+  savePhoto, readPhoto, deletePhoto, photoMimeType, rewriteActivity,
 } from '../store.js';
 import { authRequired, optionalAuth, passwordChangeRequired, requireRole } from '../auth.js';
 import { rankMatches, rankSightingMatches, detectPerson, matchEngineInfo } from '../match.js';
@@ -77,9 +78,15 @@ export default registerReportRoutes(Router(), {
   // AARAKSHAK_GALLERY_KEY are set (shared/face-index.js).
   faceIndex: createFaceIndex(process.env),
   deletePhoto,
+  // Dismissing a sighting anonymises it, activity rows included (shared/retention.js).
+  rewriteActivity,
   upload,
   settings: {
     foundReportLimit: process.env.KHOZO_FOUND_REPORT_LIMIT,
+    unverifiedFoundReportLimit: process.env.KHOZO_UNVERIFIED_FOUND_REPORT_LIMIT,
+    // Cloudflare Turnstile on the public sighting form; off unless all three
+    // TURNSTILE_* variables are set (shared/human-check.js).
+    humanCheck: humanCheckConfig(process.env),
     caseStatusLimit: process.env.KHOZO_CASE_STATUS_LIMIT,
     sightingStatusLimit: process.env.KHOZO_SIGHTING_STATUS_LIMIT,
     bulletinLimit: process.env.KHOZO_BULLETIN_LIMIT,

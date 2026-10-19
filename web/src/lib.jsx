@@ -158,6 +158,7 @@ export function StatusBadge({ status }) {
     cwc_followup_complete: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20',
     formalized_case: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20',
     rejected: 'bg-gray-100 text-gray-600 ring-gray-500/20',
+    dismissed: 'bg-gray-100 text-gray-600 ring-gray-500/20',
     no_match: 'bg-gray-100 text-gray-600 ring-gray-500/20',
   };
   const label = {
@@ -172,6 +173,8 @@ export function StatusBadge({ status }) {
     cwc_followup_complete: msg('CWC follow-up complete'),
     formalized_case: msg('Formal intake opened'),
     rejected: msg('Rejected'),
+    // Closed as "Not a concern", its photo deleted (shared/sighting-misuse.js).
+    dismissed: msg('Dismissed'),
     no_match: msg('No match'),
   };
   return (

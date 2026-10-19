@@ -26,7 +26,7 @@ No analytics, advertising or crash-reporting service was found in `web/` or `mob
 
 | | |
 |---|---|
-| What it does | Runs the Khozo API and serves the web app (Cloudflare Workers and static assets, `wrangler.jsonc`); connects the Worker to Postgres (Hyperdrive); keeps Worker logs (`"observability": { "enabled": true }`). |
+| What it does | Runs the Khozo API and serves the web app (Cloudflare Workers and static assets, `wrangler.jsonc`); connects the Worker to Postgres (Hyperdrive); keeps Worker logs (`"observability": { "enabled": true }`). When switched on, Turnstile checks that a public sighting was sent by a person: the reporter's browser runs Cloudflare's script, and the Worker sends the resulting token and the reporter's IP address to Cloudflare's siteverify (`shared/human-check.js`). |
 | What it receives | Every request and response: photographs, sighting details, case records shown to officers, sign-in tokens, and the user's IP address. TLS ends at Cloudflare. |
 | What it stores | No case records (Hyperdrive query caching must stay off: `wrangler.jsonc`, `docs/DEPLOYMENT.md` §1). Worker logs: [retention per plan, location — confirm]. |
 | Where | The Cloudflare data centre nearest the user; Indian users are usually served in India, but this is not guaranteed. [Regional processing (Data Localisation Suite) is not configured — confirm and decide.] |

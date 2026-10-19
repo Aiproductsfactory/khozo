@@ -174,6 +174,11 @@ export default function MisReport() {
         rows={report.sightingsBySource || []}
         translate
       />
+      {/* Closed by an officer as "Not a concern", photo deleted; a rising misuse count means tighten the form. */}
+      <div className="grid grid-cols-2 gap-3">
+        <Stat label={t('Sightings closed as not a concern')} value={report.sightingsDismissed?.total ?? 0} />
+        <Stat label={t('Dismissed as misuse')} value={report.sightingsDismissed?.misuse ?? 0} />
+      </div>
 
       <div className="grid gap-4 lg:grid-cols-4">
         {/* Child / Woman / Adult person — the server sends these fixed English names. */}

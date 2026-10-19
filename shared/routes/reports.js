@@ -17,6 +17,9 @@ import { POLICE_ROLES, canAccessReport, isPoliceOnly, sameDistrict, sameState, s
 import { resolveSightingLocation, reverseGeocode } from '../geocode.js';
 import { sightingScreenVerdict } from '../face-screen.js';
 import { campaignSourceOf } from '../campaign-source.js';
+import { createHumanCheck, HUMAN_CHECK_ACTION } from '../human-check.js';
+import { concernReasonOf, dismissalApproval, dismissalReasonOf } from '../sighting-misuse.js';
+import { anonymiseSighting } from '../retention.js';
 import { canonicalPlace, placeFields } from '../geo/index.js';
 import { expectedAgeAt, isForwardPoolCase, isFoundChildIntake, isRematchEligible, isReverseMatchCandidate, wasLinkRejected } from '../match-pool.js';
 import { createSightingMatcher, engineRecordOf, engineSummary, evidenceOf, isReverseLinked } from '../sighting-matching.js';
@@ -291,6 +294,8 @@ export default function registerReportRoutes(router, deps) {
     photoConsent: 'flag',
     // The poster code the form was opened from (shared/campaign-source.js).
     campaignSource: ['text', 80],
+    // Why the reporter thought a woman or adult needs help (shared/sighting-misuse.js).
+    concernReason: ['text', 40],
   };
 
   /** The fields a formal found-child intake reads. */
@@ -686,12 +691,31 @@ export default function registerReportRoutes(router, deps) {
     return officers;
   }
 
+  // Keyed on the network address alone. It once included the phone number
+  // typed into the form, which is optional free text: a different number on
+  // each request made the limit no limit at all.
   const foundReportLimit = fixedWindowRateLimit({
     name: 'public_found_report',
     limit: 10,
     envLimit: settings.foundReportLimit,
-    key: (req) => `${clientIp(req)}:${String(req.body?.reporterPhone || '').trim()}`,
+    key: (req) => clientIp(req),
     onLimit: auditPublicRateLimit,
+  });
+  // With the bot check on (shared/human-check.js), a report that did not pass
+  // it - sent from an offline queue, or while Cloudflare could not answer - is
+  // accepted but held to this tighter limit.
+  const unverifiedFoundReportLimit = fixedWindowRateLimit({
+    name: 'public_found_report_unverified',
+    limit: 3,
+    envLimit: settings.unverifiedFoundReportLimit,
+    key: (req) => clientIp(req),
+    onLimit: auditPublicRateLimit,
+  });
+  const humanCheck = createHumanCheck({
+    config: settings.humanCheck || null,
+    fetchImpl,
+    clientIp,
+    strictLimit: unverifiedFoundReportLimit,
   });
   const publicCaseStatusLimit = fixedWindowRateLimit({
     name: 'public_case_status',
@@ -922,6 +946,12 @@ export default function registerReportRoutes(router, deps) {
    *
    * Counts only, never a record: nothing here identifies a child.
    */
+  // The bot check's public site key for the sighting form, or null when the
+  // check is off (shared/human-check.js). Only the site key: it is public.
+  router.get('/public/human-check', (_req, res) => {
+    res.json({ siteKey: settings.humanCheck?.siteKey || null, action: HUMAN_CHECK_ACTION });
+  });
+
   router.get('/public/summary', publicBulletinLimit, (req, res) => {
     const rows = listReports().filter((r) => !r.anonymizedAt);
     const active = rows.filter((r) => r.status === 'missing' || r.status === 'under_review');
@@ -1336,7 +1366,7 @@ export default function registerReportRoutes(router, deps) {
   // Public endpoint (no auth): citizen uploads a photo and gets a review-safe receipt.
   // optionalAuth only so that an officer filing a sighting from the console is
   // shown the match result; a member of the public never is (see the response).
-  router.post('/found', optionalAuth, upload.single('photo'), withoutPhotoMetadata, foundReportLimit, async (req, res) => {
+  router.post('/found', optionalAuth, upload.single('photo'), withoutPhotoMetadata, foundReportLimit, humanCheck, async (req, res) => {
     const read = readFields(req.body, FOUND_FIELDS);
     if (read.error) return res.status(400).json({ error: read.error, errors: [read.error] });
     const b = read.body;
@@ -1513,6 +1543,12 @@ export default function registerReportRoutes(router, deps) {
       // Which poster's code opened the form, for the MIS report's count of
       // which posters work. Not in the reporter's receipt.
       campaignSource: campaignSourceOf(b.campaignSource),
+      // Why the reporter thought this person needs help; the form asks it for
+      // a woman or an adult (shared/sighting-misuse.js).
+      concernReason: concernReasonOf(b.concernReason),
+      // The bot check's result: null when it is off or the sender is signed in
+      // (shared/human-check.js).
+      humanCheck: req.humanCheck ?? null,
       createdAt: Date.now(),
     };
     addFoundReport(fr);
@@ -2484,6 +2520,60 @@ export default function registerReportRoutes(router, deps) {
       engine: search?.ok ? engineSummary(search.engine) : null,
       linked: Boolean(search?.linked),
     });
+  });
+
+  /**
+   * "Not a concern": a sighting of someone who is not missing and not in need,
+   * such as a stranger photographed in the street, is closed and its photo
+   * deleted at once, instead of being kept for 180 days and compared with
+   * every case registered meanwhile. The record keeps only what anonymisation
+   * keeps (shared/privacy.js), the audit log says who decided and why, and the
+   * public receipt is unchanged (its stage depends only on time).
+   *
+   * "Misuse" says the photo was not taken to help anyone: counted in the MIS
+   * report and raised in the public-abuse queue for the command desks.
+   *
+   * Not for a sighting whose possible match is still to be decided (decide
+   * that first), a confirmed one, or one a found-person case was opened from.
+   */
+  router.post('/found/:id/dismiss', protectedRoute, requireRole(...REVIEW_ROLES), async (req, res) => {
+    const read = readFields(req.body, { reason: ['text', 20] });
+    if (read.error) return res.status(400).json({ error: read.error });
+    const reason = dismissalReasonOf(read.body.reason);
+    if (!reason) return res.status(400).json({ error: 'Say whether the sighting is not a concern or misuse' });
+    const f = findFoundReport(req.params.id);
+    if (!f || scopeFoundReports(req.user, [f], listReports()).length !== 1) {
+      return res.status(404).json({ error: 'Found report not found' });
+    }
+    if (f.anonymizedAt) return res.status(409).json({ error: 'This sighting is already closed and its details removed' });
+    if (f.status === 'pending_review') return res.status(409).json({ error: 'Decide on the possible match first' });
+    if (f.status === 'matched' || f.formalReportId) {
+      return res.status(409).json({ error: 'This sighting is part of a case and cannot be dismissed' });
+    }
+    updateFoundReport(f.id, {
+      status: 'dismissed',
+      referralStatus: reason === 'misuse' ? 'Dismissed as misuse' : 'Dismissed: not a concern',
+    });
+    await anonymiseSighting(
+      { updateFoundReport, deletePhoto, rewriteActivity: deps.rewriteActivity },
+      findFoundReport(f.id),
+      { approval: dismissalApproval(reason) }
+    );
+    addAudit({
+      actorId: req.user.id,
+      actorName: req.user.name,
+      actorRole: req.user.role,
+      action: reason === 'misuse' ? 'sighting.dismissed_misuse' : 'sighting.dismissed',
+      targetType: 'foundReport',
+      targetId: f.id,
+      summary: reason === 'misuse'
+        ? `Dismissed sighting ${f.id} as misuse; its photo was deleted`
+        : `Closed sighting ${f.id} as not a concern; its photo was deleted`,
+      scope: { state: f.state || null, district: f.district || null },
+      // Nothing that names a place or a person: the audit log is permanent.
+      metadata: { reason, personCategory: personCategoryOf(f), hadPhoto: Boolean(f.photoFile) },
+    });
+    res.json({ foundReport: reviewerSightingFor(req.user, findFoundReport(f.id)) });
   });
 
   /**

@@ -8,6 +8,7 @@ const ACTION_LABELS = {
   'security.public_rate_limited': msg('Rate limit exceeded'),
   'auth.otp_failed': msg('OTP failure'),
   'auth.privileged_registration_blocked': msg('Privileged signup blocked'),
+  'sighting.dismissed_misuse': msg('Sighting dismissed as misuse'),
 };
 
 // Display names for the enum values the API returns; the values stay English.
