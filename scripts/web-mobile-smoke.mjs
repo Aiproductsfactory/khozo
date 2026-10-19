@@ -89,6 +89,7 @@ const SHOTS = [
   { name: 'bulletins', path: '/bulletins' },
   { name: 'child-case', path: '/child/r_5' },
   { name: 'grievance', path: '/grievance' },
+  { name: 'privacy', path: '/privacy' },
   { name: 'login', path: '/login' },
   { name: 'register', path: '/register' },
   { name: 'change-password', path: '/change-password', user: 'police@khozo.org' },

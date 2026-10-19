@@ -48,6 +48,7 @@ const ChangePassword = page(() => import('./pages/ChangePassword.jsx'));
 const Bulletins = page(() => import('./pages/Bulletins.jsx'));
 const ChildCase = page(() => import('./pages/ChildCase.jsx'));
 const Services = page(() => import('./pages/Services.jsx'));
+const Privacy = page(() => import('./pages/Privacy.jsx'));
 const TrackSighting = page(() => import('./pages/TrackSighting.jsx'));
 const TrackCase = page(() => import('./pages/TrackCase.jsx'));
 const Grievance = page(() => import('./pages/Grievance.jsx'));
@@ -111,6 +112,7 @@ const router = createBrowserRouter([
       { path: '/track-sighting', element: <TrackSighting /> },
       { path: '/track-case', element: <TrackCase /> },
       { path: '/grievance', element: <Grievance /> },
+      { path: '/privacy', element: <Privacy /> },
       {
         path: '/app',
         element: (

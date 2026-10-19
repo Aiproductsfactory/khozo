@@ -783,6 +783,9 @@ export default function Capture() {
                   </span>
                 </label>
               )}
+              <p className="text-sm">
+                <Link to="/privacy" className="inline-flex min-h-11 items-center font-semibold text-khozo-dark underline sm:min-h-0">{t('How we use your information')}</Link>
+              </p>
               {/* Shows itself only when Cloudflare needs the reporter to tick a box. */}
               <HumanCheck siteKey={humanSiteKey} onToken={setHumanToken} resetKey={humanReset} />
               {/*

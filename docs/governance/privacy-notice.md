@@ -3,6 +3,10 @@
 > **DRAFT for legal review — not legal advice.**
 > Version 0.1 · 17 October 2026 · Fill every `[placeholder]` before publishing.
 > Publish in English, Gujarati, Hindi and Marathi, the languages the app already offers.
+>
+> The plain-language public version is live in the app as the Privacy page (`/privacy`,
+> `web/src/pages/Privacy.jsx`), in all four languages. Until a department signs an MoU for its
+> area it names Khozo as responsible; this longer draft is the department version for legal review.
 
 **Who is responsible.** [Department name and address] (the "Department") decides how your
 information is used. It is the **data fiduciary**. [Operator legal name] runs the Khozo

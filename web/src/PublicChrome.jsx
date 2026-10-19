@@ -301,6 +301,7 @@ const FOOTER_LINKS = [
   { to: '/#families', label: msg('If someone is missing') },
   { to: '/bulletins', label: msg('How we protect privacy') },
   { to: '/grievance', label: msg('Raise a grievance') },
+  { to: '/privacy', label: msg('Privacy policy') },
   { to: '/login', label: msg('Officer log in') },
 ];
 

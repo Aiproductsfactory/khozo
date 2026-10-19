@@ -26,6 +26,16 @@
     <xhtml:link rel="alternate" hreflang="x-default" href="https://khozo.org/report" />
   </url>
   <url>
+    <loc>https://khozo.org/privacy</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://khozo.org/privacy" />
+    <xhtml:link rel="alternate" hreflang="gu" href="https://khozo.org/privacy?lang=gu" />
+    <xhtml:link rel="alternate" hreflang="hi" href="https://khozo.org/privacy?lang=hi" />
+    <xhtml:link rel="alternate" hreflang="mr" href="https://khozo.org/privacy?lang=mr" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://khozo.org/privacy" />
+  </url>
+  <url>
     <loc>https://khozo.org/track-case</loc>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
