@@ -1,0 +1,1010 @@
+{
+ "substring": [
+  [
+   "legacy Gujarati font",
+   "old Gujarati font"
+  ],
+  [
+   "from legacy font",
+   "from the old font"
+  ],
+  [
+   "uses the legacy font",
+   "uses the old Gujarati font"
+  ],
+  [
+   "to Unicode Gujarati",
+   "to standard Gujarati"
+  ],
+  [
+   "authorized police",
+   "authorised police"
+  ]
+ ],
+ "web": [
+  [
+   "Public rate limit exceeded",
+   "Too many reports from one connection"
+  ],
+  [
+   "Export signature verified",
+   "Seal on a downloaded file checked"
+  ],
+  [
+   "Audit integrity checked",
+   "Record checked for changes"
+  ],
+  [
+   "Audit report exported",
+   "Record of actions downloaded"
+  ],
+  [
+   "Case escalated to state",
+   "Case referred to the State"
+  ],
+  [
+   "State escalation recorded",
+   "Referral to the State recorded"
+  ],
+  [
+   "Queued for 1098/CWC",
+   "Sent to 1098 or the CWC"
+  ],
+  [
+   "Checked audit integrity: valid",
+   "Checked the record for changes: none found"
+  ],
+  [
+   "Checked audit integrity: failed",
+   "Checked the record for changes: a problem was found"
+  ],
+  [
+   "Exported audit log with {n} events",
+   "Downloaded the record of actions ({n} entries)"
+  ],
+  [
+   "Verified {type} export signature: valid",
+   "Checked the seal on a {type} file: genuine"
+  ],
+  [
+   "Verified {type} export signature: failed",
+   "Checked the seal on a {type} file: not genuine"
+  ],
+  [
+   "Audit log",
+   "Record of actions"
+  ],
+  [
+   "Case, sighting, referral, SMS, and access-control events in your scope.",
+   "Every action on cases, sightings, referrals and messages, and every sign-in, in your area."
+  ],
+  [
+   "Export JSON",
+   "Download"
+  ],
+  [
+   "Audit chain verified",
+   "No changes found in the record"
+  ],
+  [
+   "Audit chain check failed",
+   "The record shows a change or a gap"
+  ],
+  [
+   "head {hash}",
+   "latest entry {hash}"
+  ],
+  [
+   "Export signature failed",
+   "Seal check failed"
+  ],
+  [
+   "digest {hash}",
+   "seal {hash}"
+  ],
+  [
+   "Scope",
+   "Area"
+  ],
+  [
+   "No audit events in your scope yet.",
+   "No actions recorded in your area yet."
+  ],
+  [
+   "Our own column layout. Download the blank template, fill one row per person and save it as CSV or Excel.",
+   "Khozo’s own columns. Download the blank form, fill in one row per person and save it as Excel or CSV."
+  ],
+  [
+   "Download blank template (CSV)",
+   "Download the blank form (CSV)"
+  ],
+  [
+   "Direct connection awaiting API access — import their exports here meanwhile",
+   "A direct link is waiting for their permission; until then, import their files here"
+  ],
+  [
+   "Defaults to your own jurisdiction. A State or District column in the file overrides this for its row.",
+   "Uses your own area, unless a row gives its own State or District."
+  ],
+  [
+   "The server is busy; trying again in {s} s (attempt {n}).",
+   "Khozo is busy; trying again in {s} s (try {n})."
+  ],
+  [
+   "Your session has expired. Log in again in another tab, then press Import remaining rows: rows already imported are skipped.",
+   "You have been signed out. Sign in again in another tab, then press Import remaining rows: rows already imported are skipped."
+  ],
+  [
+   "Escalate State",
+   "Refer to the State"
+  ],
+  [
+   "Intake",
+   "Report check"
+  ],
+  [
+   "SAA intake",
+   "SAA admission"
+  ],
+  [
+   "Produced for CCI intake",
+   "Produced for CCI admission"
+  ],
+  [
+   "Intake verified.",
+   "Report checked."
+  ],
+  [
+   "1 record in your scope",
+   "1 record in your area"
+  ],
+  [
+   "{n} records in your scope",
+   "{n} records in your area"
+  ],
+  [
+   "Intake pending",
+   "Waiting to be checked"
+  ],
+  [
+   "two engines",
+   "two checks"
+  ],
+  [
+   "not checked by a second engine",
+   "not checked a second time"
+  ],
+  [
+   "Workflow",
+   "Steps taken"
+  ],
+  [
+   "Verify citizen / NGO intake",
+   "Check this citizen or NGO report"
+  ],
+  [
+   "Convert this intake into a formal missing-child case before handoff, closure, or alerts.",
+   "Check this report and make it a formal missing-child case before it is handed over, closed or used for alerts."
+  ],
+  [
+   "Verify intake",
+   "Check report"
+  ],
+  [
+   "Compare this case photo with sightings already received that are not linked to a case. Possible matches go to the Matches queue; an officer confirms each one, and the person who sent the sighting is not told anything.",
+   "Compare this case photo with sightings already received that are not linked to a case. Possible matches go to Matches; an officer confirms each one, and the person who sent the sighting is told nothing."
+  ],
+  [
+   "Open the Matches queue",
+   "Open Matches"
+  ],
+  [
+   "Engine: {engine}",
+   "Matched by: {engine}"
+  ],
+  [
+   "No scoped assignees available",
+   "No officer in this area to assign"
+  ],
+  [
+   "Institutional workflow",
+   "Care in an institution"
+  ],
+  [
+   "State escalation",
+   "Referral to the State"
+  ],
+  [
+   "Record state escalation",
+   "Record referral to the State"
+  ],
+  [
+   "Export TrackChild handoff JSON",
+   "Download the file for TrackChild"
+  ],
+  [
+   "Record CWC orders, legally-free declarations, SAA intake, SARA review, CARINGS updates, or pre-adoption foster care follow-up.",
+   "Record CWC orders, declarations that a child is free for adoption, SAA admission, SARA review, CARINGS updates, or foster care before adoption."
+  ],
+  [
+   "Transfer jurisdiction",
+   "Transfer to another area"
+  ],
+  [
+   "1 jurisdiction transfer recorded.",
+   "1 transfer recorded."
+  ],
+  [
+   "{n} jurisdiction transfers recorded.",
+   "{n} transfers recorded."
+  ],
+  [
+   "Case handoff exported",
+   "Case file handed over"
+  ],
+  [
+   "Handoff recorded.",
+   "Handover recorded."
+  ],
+  [
+   "Handoff file downloaded.",
+   "Handover file downloaded."
+  ],
+  [
+   "Add handoff context for police, CWC, CCI, JJB, and command review.",
+   "Add a note about the handover for the police, CWC, CCI, JJB and senior officers."
+  ],
+  [
+   "Record a state or crime-records handoff without confirming that the person has been found.",
+   "Record a handover to the State or the crime records bureau, without confirming that the person has been found."
+  ],
+  [
+   "Record CWC, CCI, JJB, state, or crime-records handoff without confirming reunification.",
+   "Record a handover to the CWC, CCI, JJB, the State or the crime records bureau, without confirming that the child is home."
+  ],
+  [
+   "Record admission, care plan, and next welfare review after CWC/DCPU handoff.",
+   "Record admission, care plan and next welfare review after the CWC or DCPU hands the child over."
+  ],
+  [
+   "Children in CCI care workflow",
+   "Children in CCI care"
+  ],
+  [
+   "Jurisdiction",
+   "Area"
+  ],
+  [
+   "ACTIVE JURISDICTION",
+   "WORKING AREA"
+  ],
+  [
+   "Shelter / CCI intake",
+   "Shelter or CCI admission"
+  ],
+  [
+   "Escalate police",
+   "Refer to police"
+  ],
+  [
+   "Sightings a face-comparison engine linked to an open case. A score is a prompt to look, never a decision — you confirm, and only then is a family contacted.",
+   "Sightings that face matching linked to an open case. A score is a reason to look, never a decision: you confirm, and only then is a family contacted."
+  ],
+  [
+   "Reports from the public that matched no open case. They are welfare intake — Childline and CWC follow-up — not identification decisions.",
+   "Reports from the public that matched no open case. They need welfare follow-up by Childline and the CWC, not a decision on who the person is."
+  ],
+  [
+   "Below threshold",
+   "Score too low"
+  ],
+  [
+   "No candidate",
+   "No possible match"
+  ],
+  [
+   "Clear face found · engine quality {q}%",
+   "Clear face found · quality {q}%"
+  ],
+  [
+   "Not screened — no detection provider answered",
+   "Not checked: the face check did not answer"
+  ],
+  [
+   "Biometric · {provider}",
+   "Face match · {provider}"
+  ],
+  [
+   "Non-biometric · {provider}",
+   "Compared by details · {provider}"
+  ],
+  [
+   "Formal intake opened",
+   "Formal case opened"
+  ],
+  [
+   "Filling the face search gallery…",
+   "Adding case photos to face search…"
+  ],
+  [
+   "Fill the face search gallery",
+   "Add case photos to face search"
+  ],
+  [
+   "{enrolled} of {open} open cases in the face search gallery, {needsPhoto} need a better photo",
+   "{enrolled} of {open} open cases are in face search; {needsPhoto} need a better photo"
+  ],
+  [
+   "{refused} photos refused by the gallery",
+   "{refused} photos not accepted by face search"
+  ],
+  [
+   "The face search gallery did not answer",
+   "Face search did not answer"
+  ],
+  [
+   "The gallery key belongs to another gallery: {name}",
+   "The face search key belongs to another account: {name}"
+  ],
+  [
+   "Could not load the review queue: {error}.",
+   "Could not load the list: {error}."
+  ],
+  [
+   "Loading the review queue…",
+   "Loading the list…"
+  ],
+  [
+   "No jurisdiction given — visible to every review desk",
+   "No place given, so every review desk can see it"
+  ],
+  [
+   "Candidates, best first",
+   "Possible matches, best first"
+  ],
+  [
+   "{n} candidate(s) already marked as not this person",
+   "{n} possible match(es) already marked as not this person"
+  ],
+  [
+   "No face comparison was made, so no candidate is offered.",
+   "No faces were compared, so no possible match is shown."
+  ],
+  [
+   "Searched again: no new candidate.",
+   "Searched again: no new possible match."
+  ],
+  [
+   "A sighting of an adult is followed up by the police station for the area. Childline/CWC and shelter-intake steps do not apply.",
+   "A sighting of an adult is followed up by the police station for the area. The Childline, CWC and shelter steps do not apply."
+  ],
+  [
+   "Follow-up disposition note",
+   "Note on the follow-up"
+  ],
+  [
+   "Formal child protection intake",
+   "Formal child-protection case"
+  ],
+  [
+   "Open a formal case for CCI shelter intake when no missing match exists.",
+   "Open a formal case so the child can be admitted to a CCI, when no missing case matches."
+  ],
+  [
+   "Intake note, rehabilitation plan, family tracing action",
+   "Note, rehabilitation plan and steps to trace the family"
+  ],
+  [
+   "Open formal intake",
+   "Open formal case"
+  ],
+  [
+   "engine not recorded",
+   "matcher not recorded"
+  ],
+  [
+   "Rate limit exceeded",
+   "Too many requests"
+  ],
+  [
+   "Escalated",
+   "Referred up"
+  ],
+  [
+   "Public abuse queue",
+   "Public abuse"
+  ],
+  [
+   "Redacted public intake, OTP, and rate-limit signals for command review.",
+   "Warnings about misuse of the public forms, failed OTPs and too many requests, for senior officers to review. Personal details are hidden."
+  ],
+  [
+   "{n} signals",
+   "{n} warnings"
+  ],
+  [
+   "{n} SLA breached",
+   "{n} past the time limit"
+  ],
+  [
+   "Signals",
+   "Warnings"
+  ],
+  [
+   "SLA breached",
+   "Past the time limit"
+  ],
+  [
+   "Open overdue signals",
+   "Overdue warnings"
+  ],
+  [
+   "Awaiting disposition",
+   "Waiting for a decision"
+  ],
+  [
+   "Top signal sources",
+   "Where warnings come from"
+  ],
+  [
+   "Signal",
+   "Warning"
+  ],
+  [
+   "SLA",
+   "Time limit"
+  ],
+  [
+   "Disposition",
+   "Decision"
+  ],
+  [
+   "Disposition note",
+   "Decision note"
+  ],
+  [
+   "No public abuse signals yet.",
+   "No warnings yet."
+  ],
+  [
+   "redacted",
+   "hidden"
+  ],
+  [
+   "Public grievance and feedback receipts in your operational scope.",
+   "Complaints and feedback from the public in your area."
+  ],
+  [
+   "No grievances in your scope yet.",
+   "No complaints in your area yet."
+  ],
+  [
+   "Signed {type} / {algorithm} / digest {digest}...",
+   "Sealed {type} · {algorithm} · {digest}…"
+  ],
+  [
+   "Pending intake",
+   "Waiting to be checked"
+  ],
+  [
+   "Median days to first match candidate",
+   "Median days to the first possible match"
+  ],
+  [
+   "Workflow actions",
+   "Steps taken"
+  ],
+  [
+   "No workflow activity yet",
+   "No steps recorded yet"
+  ],
+  [
+   "Recent audit",
+   "Recent actions"
+  ],
+  [
+   "No audit activity in scope.",
+   "No actions recorded in your area."
+  ],
+  [
+   "Production compliance",
+   "Production within 24 hours"
+  ],
+  [
+   "Network alert queued for 1 recipient.",
+   "Alert sent to 1 recipient."
+  ],
+  [
+   "Network alert queued for {n} recipients.",
+   "Alert sent to {n} recipients."
+  ],
+  [
+   "Provision official accounts, drill down the access pyramid, and reach out directly.",
+   "Create official accounts, see who is set up at each level, and contact offices directly."
+  ],
+  [
+   "Provision stakeholder account",
+   "Create an official account"
+  ],
+  [
+   "Queue a scoped coordination alert to official stakeholders or NGO partners.",
+   "Send an alert to officials or partner NGOs in your area."
+  ],
+  [
+   "{pct}% of required state and district desks are present in {scope}.",
+   "{pct}% of the state and district offices needed are set up in {scope}."
+  ],
+  [
+   "All operational stakeholders",
+   "All official offices"
+  ],
+  [
+   "Stakeholder network",
+   "Offices on Khozo"
+  ],
+  [
+   "Stakeholder coverage",
+   "Offices set up"
+  ],
+  [
+   "Stakeholders on the network",
+   "Offices on Khozo"
+  ],
+  [
+   "Your jurisdiction",
+   "Your area"
+  ],
+  [
+   "Jurisdiction overview",
+   "Your area at a glance"
+  ],
+  [
+   "CCI intake overview",
+   "CCI admissions at a glance"
+  ],
+  [
+   "Adoption follow-up, SAA intake, and CARINGS coordination.",
+   "Adoption follow-up, SAA admissions and CARINGS updates."
+  ],
+  [
+   "Statewide adoption governance, SAA coordination, and review queues.",
+   "Adoption across the State, SAA coordination and lists to review."
+  ],
+  [
+   "Statewide missing-child records and review queues.",
+   "Missing-child records across the State, and lists to review."
+  ],
+  [
+   "Intakes to verify",
+   "Reports to check"
+  ],
+  [
+   "Abuse signals to review",
+   "Misuse warnings to review"
+  ],
+  [
+   "Scope:",
+   "Area:"
+  ],
+  [
+   "Scoped to {scope}",
+   "Showing {scope}"
+  ],
+  [
+   "Pilot readiness",
+   "Pilot checklist"
+  ],
+  [
+   "Within your scope",
+   "In your area"
+  ],
+  [
+   "National command",
+   "National desk"
+  ],
+  [
+   "Command follow-up",
+   "Follow-up by senior officers"
+  ],
+  [
+   "Cases and stations under your command.",
+   "Cases and stations in your charge."
+  ],
+  [
+   "Statewide cases, referrals, privacy review, and stakeholder coordination.",
+   "Cases, referrals, privacy review and offices across the State."
+  ],
+  [
+   "No retention date",
+   "No delete-by date"
+  ],
+  [
+   "Review photo consent, purpose, and retention dates for cases and sightings in your scope.",
+   "Review photo consent, purpose, and how long cases and sightings in your area are kept."
+  ],
+  [
+   "Anonymization authorization",
+   "Approval to remove details"
+  ],
+  [
+   "Specify an approval or court order reference for anonymization decisions.",
+   "Give an approval or court order number before removing a person’s details."
+  ],
+  [
+   "{n} anonymized",
+   "{n} with details removed"
+  ],
+  [
+   "{n} missing retention",
+   "{n} with no delete-by date"
+  ],
+  [
+   "Retention",
+   "Keep until"
+  ],
+  [
+   "Retention policy",
+   "How long records are kept"
+  ],
+  [
+   "Anonymize",
+   "Remove details"
+  ],
+  [
+   "No privacy retention records in your scope.",
+   "No records to review in your area."
+  ],
+  [
+   "Not enrolled",
+   "Not in face search"
+  ],
+  [
+   "Face search gallery: no face was found in this photo",
+   "Face search: no face was found in this photo"
+  ],
+  [
+   "Face search gallery: several faces in this photo — use a photo of the person alone",
+   "Face search: several faces in this photo — use a photo of the person alone"
+  ],
+  [
+   "Face search gallery: the face is too small — use a closer, sharper photo",
+   "Face search: the face is too small — use a closer, sharper photo"
+  ],
+  [
+   "Face search gallery: the photo file could not be read — upload it again",
+   "Face search: the photo file could not be read — upload it again"
+  ],
+  [
+   "In the face search gallery, but the face is small or unclear — a larger, sharper photo will match better",
+   "In face search, but the face is small or unclear — a larger, sharper photo will match better"
+  ],
+  [
+   "Face search gallery refused this photo — use a clearer, larger photo of the face",
+   "Face search did not accept this photo — use a clearer, larger photo of the face"
+  ],
+  [
+   "Both engines agree",
+   "Both checks agree"
+  ],
+  [
+   "Not checked by a second engine",
+   "Not checked a second time"
+  ],
+  [
+   "One engine only",
+   "Checked once only"
+  ],
+  [
+   "Not corroborated by a second engine",
+   "Not confirmed by a second check"
+  ],
+  [
+   "The engines disagree — look closely",
+   "The two checks disagree — look closely"
+  ],
+  [
+   "Treat it as a lead from one engine; it has not been confirmed.",
+   "Treat it as a lead from one check only; it has not been confirmed."
+  ],
+  [
+   "The SMS gateway accepted the message. Delivery is not confirmed: call the family as well.",
+   "The SMS service accepted the message, but delivery is not confirmed: call the family as well."
+  ],
+  [
+   "No SMS was sent: no SMS gateway is connected. Call the family instead.",
+   "No SMS was sent: no SMS service is connected. Call the family instead."
+  ],
+  [
+   "Confidence: {pct}%",
+   "Score: {pct}%"
+  ],
+  [
+   "Could not reach the server. Check the connection and try again.",
+   "Could not connect to Khozo. Check your internet connection and try again."
+  ],
+  [
+   "Asst. Commissioner of Police - jurisdiction view",
+   "Assistant Commissioner of Police - their area"
+  ],
+  [
+   "Child Care Institution - intake and care oversight for children in shelter",
+   "Child Care Institution - admission and care of children in shelter"
+  ],
+  [
+   "Names and photos of missing persons are never shown to the public. If you have seen someone who seems lost, send a photo — the engines compare it and only authorised officers see who matched.",
+   "Names and photos of missing persons are never shown to the public. If you have seen someone who seems lost, send a photo: it is compared with missing cases, and only authorised officers see who matched."
+  ],
+  [
+   "If you have seen someone who seems lost, send a photo — the engines compare it and only authorised officers see who matched.",
+   "If you have seen someone who seems lost, send a photo: it is compared with missing cases, and only authorised officers see who matched."
+  ],
+  [
+   "No photo attached. This will be sent as a text sighting to Childline/CWC intake and no match search will run.",
+   "No photo attached. This will go to Childline and the CWC as a written report, and no face search will run."
+  ],
+  [
+   "No photo attached. This will be sent as a text sighting for police review and no match search will run.",
+   "No photo attached. This will go to the police as a written report, and no face search will run."
+  ],
+  [
+   "I confirm this photo may be used only for child-protection review, police/CWC follow-up, and match search. The sighting image is retained for 180 days unless escalated.",
+   "I agree this photo may be used only to protect the child, for follow-up by the police or CWC, and to search for a match. It is kept for 180 days, or longer if a case needs it."
+  ],
+  [
+   "I confirm this photo may be used only for police review, follow-up, and match search. The sighting image is retained for 180 days unless escalated.",
+   "I agree this photo may be used only for police review and follow-up, and to search for a match. It is kept for 180 days, or longer if a case needs it."
+  ],
+  [
+   "Keep my identity confidential in the review queue.",
+   "Hide my name and phone from the officers who review it."
+  ],
+  [
+   "Photo review retention until {date}",
+   "Your photo is kept until {date}"
+  ],
+  [
+   "Your official account was provisioned with a one-time password. Set a new password before opening case workflows.",
+   "Your official account was created with a one-time password. Set a new password before opening any case."
+  ],
+  [
+   "Your grievance is recorded and queued for review.",
+   "Your complaint is recorded and will be reviewed."
+  ],
+  [
+   "The Indian engine compares the face with open cases, the same district first, and proposes candidates.",
+   "An Indian face-matching service compares the face with open cases, the same district first, and suggests possible matches."
+  ],
+  [
+   "Faces are compared by the engines, and only authorised officers see who matched.",
+   "Faces are compared by face-matching services, and only authorised officers see who matched."
+  ],
+  [
+   "Indian recognition engine",
+   "Indian face matching"
+  ],
+  [
+   "Face comparison is performed by {aarakshak}, an Indian sovereign face-recognition model, under Government authorisation.",
+   "Faces are compared by {aarakshak}, an Indian face-recognition service, with Government approval."
+  ],
+  [
+   "This demo also uses AWS Rekognition as the confirming engine, pinned to the Mumbai {region} region. It will not be used in production, where matching runs on Aarakshak alone.",
+   "During the trial, AWS Rekognition gives a second check, kept to its Mumbai {region} region. It will not be used once Khozo is live, when Aarakshak alone compares faces."
+  ],
+  [
+   "An auditable record",
+   "A record that can be checked"
+  ],
+  [
+   "Every action on a case — who looked, who confirmed, when a family was contacted — is written to a tamper-evident audit chain the Department can verify later.",
+   "Every action on a case — who looked, who confirmed, when a family was contacted — is written into a record that shows any change, which the Department can check later."
+  ],
+  [
+   "Cases, photographs and the audit trail remain in the Department’s own database, on Indian infrastructure, under its jurisdiction.",
+   "Cases, photos and the record of actions stay in the Department’s own database, in India, under its control."
+  ],
+  [
+   "Biometric matching for missing children runs on Aarakshak, an Indian provider, on Indian infrastructure. Nothing about a child is shipped abroad to be compared.",
+   "Face matching for missing children runs on Aarakshak, an Indian service, in India. Nothing about a child is sent abroad to be compared."
+  ],
+  [
+   "Khozo handles biometric data about children. These are the rules it holds itself to, and they are enforced in the software rather than promised in a policy.",
+   "Khozo handles children’s face data. These are the rules it keeps, and the software enforces them; they are not just promises in a policy."
+  ],
+  [
+   "Register FIRs, review citizen sightings, confirm a match and alert the family — with every action written to a tamper-evident record.",
+   "Register FIRs, review citizen sightings, confirm a match and alert the family — with every action written into a record that shows any change."
+  ],
+  [
+   "Khozo is one workflow from a citizen’s photograph to a restored child — report, verify, match, refer, restore — not a police tool with welfare bolted on.",
+   "Khozo takes a case from a citizen’s photo to a child safely home — report, check, match, refer, return — built for child welfare as much as for the police."
+  ],
+  [
+   "Direct live connections to those portals, as each one grants API access.",
+   "Direct links to those portals, as each one gives permission."
+  ],
+  [
+   "Native roles for the child-protection desks the Juvenile Justice Act actually names, with production-compliance and care registers.",
+   "Screens for each child-protection office the Juvenile Justice Act names, with registers for production on time and for care."
+  ],
+  [
+   "Caseload, reunification and coverage by district, so gaps are visible before a pilot begins rather than after it fails.",
+   "Cases, children returned home and offices set up in each district, so gaps are seen before a pilot begins, not after it fails."
+  ],
+  [
+   "Emergency routing",
+   "Emergency numbers"
+  ],
+  [
+   "Public registration is for parents, citizens, and NGOs. Police and government accounts are provisioned by an administrator.",
+   "Public sign-up is for parents, citizens and NGOs. An administrator creates police and government accounts."
+  ],
+  [
+   "Call 1098 first for child-protection intake; call 112 immediately if there is active danger.",
+   "Call 1098 first for child protection; call 112 at once if someone is in danger."
+  ],
+  [
+   "Backup numbers",
+   "Other numbers to try"
+  ]
+ ],
+ "server": [
+  [
+   "No strong match yet. The report is saved and queued for Childline/CWC follow-up.",
+   "No strong match yet. The report is saved and sent to Childline and the CWC for follow-up."
+  ],
+  [
+   "Your text sighting is saved and queued for Childline/CWC follow-up. No face-match search was run because no photo was uploaded.",
+   "Your written report is saved and sent to Childline and the CWC. No face search was run because there was no photo."
+  ],
+  [
+   "Childline/CWC intake queued",
+   "Sent to Childline and the CWC",
+   "legacy"
+  ],
+  [
+   "Formal found-child intake opened",
+   "Formal found-child case opened",
+   "legacy"
+  ],
+  [
+   "Anonymised cases are not compared with sightings",
+   "Cases whose details were removed are not compared with sightings"
+  ],
+  [
+   "Citizen/NGO intake must be verified before it is compared with sightings",
+   "A citizen or NGO report must be checked before it is compared with sightings"
+  ],
+  [
+   "No biometric provider answered, so no face comparison was made and no candidate is offered.",
+   "No face-matching service answered, so no faces were compared and no possible match is shown."
+  ],
+  [
+   "Citizen/NGO intake pending verification",
+   "Citizen or NGO report waiting to be checked",
+   "legacy"
+  ],
+  [
+   "Police intake queued",
+   "Sent to the police",
+   "legacy"
+  ],
+  [
+   "No strong match yet. The report is saved and queued for police follow-up.",
+   "No strong match yet. The report is saved and sent to the police for follow-up."
+  ],
+  [
+   "Your text sighting is saved and queued for police follow-up. No face-match search was run because no photo was uploaded.",
+   "Your written report is saved and sent to the police. No face search was run because there was no photo."
+  ],
+  [
+   "Anonymised cases cannot be reopened",
+   "A case whose details were removed cannot be reopened"
+  ],
+  [
+   "Report is outside your jurisdiction",
+   "This report is outside your area"
+  ],
+  [
+   "No SMS gateway is connected. Call the family directly and record the call.",
+   "No SMS service is connected. Call the family directly and record the call."
+  ],
+  [
+   "The SMS gateway did not accept the message. Call the family directly and record the call.",
+   "The SMS service did not accept the message. Call the family directly and record the call."
+  ],
+  [
+   "Citizen/NGO intake must be verified before parent SMS alerts",
+   "A citizen or NGO report must be checked before the family is sent an SMS"
+  ],
+  [
+   "Requested jurisdiction is outside your provisioning scope",
+   "You cannot create accounts for that area"
+  ],
+  [
+   "You cannot provision this role",
+   "You cannot create an account with this role"
+  ],
+  [
+   "Anonymised sightings are not compared with cases",
+   "Sightings whose details were removed are not compared with cases"
+  ],
+  [
+   "Anonymised cases cannot be given a new photo",
+   "A case whose details were removed cannot be given a new photo"
+  ],
+  [
+   "A found-child intake is not compared with sightings",
+   "A found-child case is not compared with sightings"
+  ],
+  [
+   "A found-child intake is compared with missing cases as they are registered, not with sightings.",
+   "A found-child case is compared with missing cases as they are registered, not with sightings."
+  ],
+  [
+   "No face could be found in the photo by any engine, so no face comparison was possible.",
+   "No face could be found in the photo, so no comparison was possible."
+  ],
+  [
+   "Anonymized citizen",
+   "Anonymised citizen"
+  ]
+ ],
+ "mobile": [
+  [
+   "Allow location so the nearest team can be dispatched, or type the place manually.",
+   "Allow location so the nearest team can be sent, or type the place yourself."
+  ],
+  [
+   "Helps dispatch the nearest team",
+   "Helps send the nearest team"
+  ],
+  [
+   "It has been queued for Childline / CWC follow-up.",
+   "It has been sent to Childline and the CWC for follow-up."
+  ],
+  [
+   "New sightings in your jurisdiction will appear here for review.",
+   "New sightings in your area will appear here for review."
+  ],
+  [
+   "Scoped to your jurisdiction",
+   "Your area only"
+  ],
+  [
+   "The review has been saved to the case audit log.",
+   "Your decision has been saved to the case’s record of actions."
+  ],
+  [
+   "This sighting is outside your jurisdiction, or has been removed.",
+   "This sighting is outside your area, or has been removed."
+  ],
+  [
+   "Your report has been received and queued for review.",
+   "Your report has been received and will be reviewed."
+  ],
+  [
+   "Your decision is recorded in the audit log against your name and role.",
+   "Your decision is recorded against your name and role."
+  ],
+  [
+   "You will need your official credentials to sign in again.",
+   "You will need your official email and password to sign in again."
+  ],
+  [
+   "The Khozo server did not respond in time. Check your connection and try again — a sighting you submit offline is saved and sent automatically.",
+   "Khozo did not answer in time. Check your connection and try again — a sighting you send offline is saved and sent automatically."
+  ],
+  [
+   "You are offline or the server could not be reached. Khozo will send this report automatically as soon as you have a connection.",
+   "You are offline or Khozo could not be reached. Khozo will send this report automatically as soon as you have a connection."
+  ],
+  [
+   "Close this sighting as not a match? It stays in the audit record.",
+   "Close this sighting as not a match? It stays in the record of actions."
+  ],
+  [
+   "Anti Human Trafficking Unit",
+   "Anti-Human Trafficking Unit"
+  ]
+ ]
+}
