@@ -12,6 +12,7 @@ import { useT, msg, currentLocale } from '../i18n.jsx';
 import { useDisplay } from '../useDisplay.js';
 import { useBackClose } from '../useBackClose.js';
 import { POLICE_ROLES } from '../../../shared/scope.js';
+import { photoNeedOf } from '../../../shared/photo-need.js';
 import { ActionMessage, ActionToast, useAction } from './useAction.jsx';
 import { ConfirmMatchDialog, FamilyContactList, FamilyContactPanel, ReopenCasePanel, faceIndexFlag, photoCheckFlag } from './Reunite.jsx';
 import { preparePhoto } from '../photoPrep.js';
@@ -1513,9 +1514,18 @@ export default function Cases() {
               here, and police can replace it. The face search gallery may
               refuse a photo the check passed (a face too small to enrol).
             */}
-            {(photoCheckFlag(selected.photoCheck) || faceIndexFlag(selected.faceIndex) || (canReplacePhoto && !selected.anonymizedAt)) && (
+            {(photoCheckFlag(selected.photoCheck) || faceIndexFlag(selected.faceIndex) || photoNeedOf(selected) || (canReplacePhoto && !selected.anonymizedAt)) && (
               <div className="mt-6 rounded-xl border border-black/5 p-4">
                 <p className="text-sm font-medium">{t('Case photo')}</p>
+                {/* What to do about a photo that will not match: the family
+                    is the one who has a better one (shared/photo-need.js). */}
+                {photoNeedOf(selected) && (
+                  <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900 ring-1 ring-amber-200">
+                    {photoNeedOf(selected) === 'no_photo'
+                      ? t('No photo: no sighting can be matched with this case by face. Ask the family for a recent, clear photo of the face.')
+                      : t('Ask the family for a better photo: recent, the face clearly visible and large, the person alone, in good light. If they have several, use the clearest.')}
+                  </p>
+                )}
                 {photoCheckFlag(selected.photoCheck) ? (
                   <p className={`mt-2 rounded-lg px-3 py-2 text-xs font-semibold ring-1 ${photoCheckFlag(selected.photoCheck).className}`}>
                     {t(photoCheckFlag(selected.photoCheck).label)}
@@ -1531,7 +1541,9 @@ export default function Cases() {
                 {canReplacePhoto && !selected.anonymizedAt && (
                   <>
                     <p className="mt-2 text-xs text-gray-600">
-                      {t('Replace it with a clear, recent photo of the person alone. The new photo is checked for a face and compared with the sightings already received.')}
+                      {txt(selected.photoUrl)
+                        ? t('Replace it with a clear, recent photo of the person alone. The new photo is checked for a face and compared with the sightings already received.')
+                        : t('Add a clear, recent photo of the person alone. It is checked for a face and compared with the sightings already received.')}
                     </p>
                     <input
                       type="file"
@@ -1556,7 +1568,7 @@ export default function Cases() {
                       disabled={action.pending || photoReplace.caseId !== selected.id || !photoReplace.file || (!selected.photoConsent && !photoReplace.consent)}
                       onClick={() => replacePhoto(selected)}
                     >
-                      {action.busy('photo') ? t('Uploading the photo…') : t('Replace photo')}
+                      {action.busy('photo') ? t('Uploading the photo…') : txt(selected.photoUrl) ? t('Replace photo') : t('Add photo')}
                     </button>
                     <ActionMessage action={action} id="photo" />
                     {photoResult?.caseId === selected.id && !action.busy('photo') && (

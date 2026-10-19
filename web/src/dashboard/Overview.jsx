@@ -80,6 +80,7 @@ const DETAIL = {
   cciActive: { kind: 'cci', filter: (r) => !['found', 'closed'].includes(r.caseStatus) },
   cciOverdue: { kind: 'cci', filter: (r) => r.reviewStatus === 'overdue' },
   cciDueSoon: { kind: 'cci', filter: (r) => r.reviewStatus === 'due_soon' },
+  photos: { kind: 'photos' },
 };
 
 /**
@@ -95,21 +96,29 @@ const DETAIL = {
 // of them is compared with a sighting until an officer does.
 const INTAKE_WORK = { label: msg('Intakes to verify'), from: (s) => s.intakes?.pending, to: '/app/cases?status=intake_pending', detail: DETAIL.intakes };
 
+// Open cases whose photo will not find the person in a sighting: no photo, no
+// face, a group photo, a face too small (shared/photo-need.js). For the desks
+// that can replace a case photo, and the state desk that follows them up.
+const PHOTO_WORK = { label: msg('Cases that need a better photo'), from: (s) => s.cards.photoNeeded, to: '/app/cases', detail: DETAIL.photos };
+
 const ROLE_WORK = {
   police: [
     INTAKE_WORK,
     { label: msg('Sightings to review'), from: (s) => s.cards.pendingMatches, to: '/app/matches', detail: DETAIL.sightings },
     { label: msg('Cases open past 30 days'), from: (s, f) => f?.totals.caseOverdue, to: '/app/cases', detail: DETAIL.overdue },
     { label: msg('Cases with no recent note'), from: (s, f) => f?.totals.staleUpdates, to: '/app/cases', detail: DETAIL.stale },
+    PHOTO_WORK,
   ],
   sjpu: [
     INTAKE_WORK,
     { label: msg('Sightings to review'), from: (s) => s.cards.pendingMatches, to: '/app/matches', detail: DETAIL.sightings },
     { label: msg('Cases needing a follow-up note'), from: (s, f) => f?.totals.staleUpdates, to: '/app/cases', detail: DETAIL.stale },
+    PHOTO_WORK,
   ],
   ahtu: [
     { label: msg('Sightings to review'), from: (s) => s.cards.pendingMatches, to: '/app/matches', detail: DETAIL.sightings },
     { label: msg('Cases open past 30 days'), from: (s, f) => f?.totals.caseOverdue, to: '/app/cases', detail: DETAIL.overdue },
+    PHOTO_WORK,
   ],
   rpf: [
     { label: msg('Sightings to review'), from: (s) => s.cards.pendingMatches, to: '/app/matches', detail: DETAIL.sightings },
@@ -152,29 +161,34 @@ const ROLE_WORK = {
   dcrb: [
     { label: msg('Bureau records due'), from: (s, f) => f?.totals.formalFollowups, to: '/app/cases', detail: DETAIL.formal },
     { label: msg('Cases open past 30 days'), from: (s, f) => f?.totals.caseOverdue, to: '/app/cases', detail: DETAIL.overdue },
+    PHOTO_WORK,
   ],
   crime_bureau: [
     { label: msg('Bureau records due'), from: (s, f) => f?.totals.formalFollowups, to: '/app/cases', detail: DETAIL.formal },
     { label: msg('Statewide active cases'), from: (s) => s.cards.activeCases, to: '/app/cases', detail: DETAIL.active },
     { label: msg('Abuse signals to review'), from: (s, f) => f?.totals.high, to: '/app/fraud' },
+    PHOTO_WORK,
   ],
   state_nodal: [
     INTAKE_WORK,
     { label: msg('Statewide active cases'), from: (s) => s.cards.activeCases, to: '/app/cases', detail: DETAIL.active },
     { label: msg('Sightings awaiting review'), from: (s) => s.cards.pendingMatches, to: '/app/matches', detail: DETAIL.sightings },
     { label: msg('High-priority follow-ups'), from: (s, f) => f?.totals.high, to: '/app/cases', detail: DETAIL.high },
+    PHOTO_WORK,
   ],
   admin: [
     INTAKE_WORK,
     { label: msg('Sightings awaiting review'), from: (s) => s.cards.pendingMatches, to: '/app/matches', detail: DETAIL.sightings },
     { label: msg('High-priority follow-ups'), from: (s, f) => f?.totals.high, to: '/app/cases', detail: DETAIL.high },
     { label: msg('Stakeholders on the network'), from: (s, f, c, n) => n?.users.length, to: '/app/network', detail: DETAIL.network },
+    PHOTO_WORK,
   ],
   super_admin: [
     INTAKE_WORK,
     { label: msg('Sightings awaiting review'), from: (s) => s.cards.pendingMatches, to: '/app/matches', detail: DETAIL.sightings },
     { label: msg('High-priority follow-ups'), from: (s, f) => f?.totals.high, to: '/app/cases', detail: DETAIL.high },
     { label: msg('Stakeholders on the network'), from: (s, f, c, n) => n?.users.length, to: '/app/network', detail: DETAIL.network },
+    PHOTO_WORK,
   ],
 };
 
@@ -359,7 +373,7 @@ export default function Overview() {
           <p className="text-xs text-gray-500">{t('Scoped to {scope}', { scope })}</p>
           {/* Two to a row on a phone: three left "Cases with no recent note"
               four lines tall in a 90 px column. */}
-          <div className={`mt-4 grid grid-cols-2 gap-2 sm:gap-3 ${work.length >= 4 ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
+          <div className={`mt-4 grid grid-cols-2 gap-2 sm:gap-3 ${work.length >= 5 ? 'lg:grid-cols-5' : work.length === 4 ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
             {work.map((item) => {
               const tileClass = 'group flex min-w-0 flex-col rounded-xl border border-slate-200 bg-slate-50/70 p-3 text-left transition hover:border-khozo/40 hover:bg-khozo-light/50 sm:p-4';
               const inner = (

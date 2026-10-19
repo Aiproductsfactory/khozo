@@ -35,6 +35,7 @@ import {
 import { anonymisedLabel, deskCaseView, fieldKeyId, isFullAadhaar } from '../privacy.js';
 import { assessTraffickingRisk, buildPersonIndex, detectPatterns } from '../trafficking.js';
 import { outcomeMeasures } from '../outcomes.js';
+import { photoNeedCounts } from '../photo-need.js';
 import { anonymiseCase, anonymiseSighting, runRetentionSweep } from '../retention.js';
 
 export default function registerDashboardRoutes(router, deps) {
@@ -980,6 +981,12 @@ export default function registerDashboardRoutes(router, deps) {
     // reunification rate included, becomes fiction.
     const totalMissing = missing.length + review.length;
     const totalFound = found.length + closed.length;
+
+    // Open cases whose photo is unlikely to find the person in a sighting -
+    // none, no face, a group photo, a face too small - by reason
+    // (shared/photo-need.js), so the desk asks the family for a better one.
+    // Not for a family or NGO: their view of a case carries no photo checks.
+    const photoNeeds = isCitizenRole(req.user.role) ? null : photoNeedCounts([...missing, ...review]);
   
     // State-wise breakdown.
     const byState = {};
@@ -1038,11 +1045,13 @@ export default function registerDashboardRoutes(router, deps) {
         totalFound,
         activeCases: missing.length + review.length,
         intakesToVerify: intakeQueue ? intakeQueue.length : null,
+        photoNeeded: photoNeeds ? photoNeeds.total : null,
         pendingMatches: scopedFound.filter((f) => f.status === 'pending_review').length,
         reunificationRate: totalMissing + totalFound ? Math.round((totalFound / (totalMissing + totalFound)) * 100) : 0,
       },
       byState: Object.values(byState).sort((a, b) => b.missing + b.found - (a.missing + a.found)),
       categorySplit: categorySplit(all),
+      photoNeeds,
       trend: months,
       statusSplit: [
         { name: 'Missing', value: missing.length },

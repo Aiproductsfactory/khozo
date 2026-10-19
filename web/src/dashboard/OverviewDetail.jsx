@@ -7,6 +7,7 @@ import {
 import { msg, useT } from '../i18n.jsx';
 import { useDisplay } from '../useDisplay.js';
 import { useBackClose } from '../useBackClose.js';
+import { photoNeedOf } from '../../../shared/photo-need.js';
 
 /*
  * What is behind a figure on the Overview. An officer who sees "220 still
@@ -100,6 +101,18 @@ const ALERT_TYPES = [
 ];
 const PRIORITY = [['high', msg('high')], ['medium', msg('medium')], ['low', msg('low')]];
 
+// Why a case's photo will not find the person (shared/photo-need.js).
+const PHOTO_NEED = [
+  ['no_photo', msg('No photo')],
+  ['no_face', msg('No face found')],
+  ['group', msg('Group photo')],
+  ['weak', msg('Face small or unclear')],
+  ['ok', msg('No problem found')],
+];
+const PHOTO_NEED_LABEL = Object.fromEntries(PHOTO_NEED);
+const PHOTO_ADVICE = msg('Ask the family for a recent, clear photo of the face alone, and replace it from the case.');
+const isOpen = (r) => r.status === 'missing' || r.status === 'under_review';
+
 const REVIEW_STATUS = [
   ['overdue', msg('Review overdue')],
   ['due_soon', msg('Review due within 7 days')],
@@ -123,10 +136,10 @@ function groupSpecs({ t, d, now, rows }) {
     gender: { title: msg('By gender'), of: (r) => txt(r.gender), label: (id) => (id ? genderLabel(id) : t('Not recorded')) },
     age: { title: msg('Age'), order: AGE_BANDS, of: ageKey },
     photo: {
-      title: msg('Photo on record'),
-      note: msg('A case with no photo cannot be matched with a sighting by face.'),
-      order: [['yes', msg('With a photo')], ['no', msg('No photo')]],
-      of: (r) => (txt(r.photoUrl) ? 'yes' : 'no'),
+      title: msg('Photo for matching'),
+      note: PHOTO_ADVICE,
+      order: PHOTO_NEED,
+      of: (r) => photoNeedOf(r) || 'ok',
     },
     who: { title: msg('Who is missing'), order: PERSON_CATEGORY_OPTIONS.map((o) => [o.id, o.label]), of: personCategoryOf, hideSingle: true },
     closure: {
@@ -174,7 +187,7 @@ const KINDS = {
   active: {
     source: 'reports',
     explain: msg('Cases in {scope} whose status is Missing or Under review.'),
-    pick: (rows) => rows.filter((r) => r.status === 'missing' || r.status === 'under_review'),
+    pick: (rows) => rows.filter(isOpen),
     groups: ['missingFor', 'place', 'status', 'gender', 'age', 'photo', 'who'],
     sort: (a, b) => (timeOf(b.dateOfMissing) ?? 0) - (timeOf(a.dateOfMissing) ?? 0),
     sortNote: msg('Most recently missing first'),
@@ -182,6 +195,20 @@ const KINDS = {
     to: '/app/cases',
     toLabel: msg('Open in Cases & FIRs'),
     empty: msg('No case in {scope} is open.'),
+  },
+  photos: {
+    source: 'reports',
+    explain: msg('Open cases in {scope} whose photo is unlikely to find the person in a sighting: no photo, no face in it, a group photo, or a face too small or unclear.'),
+    advice: PHOTO_ADVICE,
+    pick: (rows) => rows.filter((r) => isOpen(r) && photoNeedOf(r)),
+    groups: ['photo', 'place', 'missingFor'],
+    sort: (a, b) => (timeOf(b.dateOfMissing) ?? 0) - (timeOf(a.dateOfMissing) ?? 0),
+    sortNote: msg('Most recently missing first'),
+    row: 'case',
+    rowNote: (r) => PHOTO_NEED_LABEL[photoNeedOf(r)],
+    to: '/app/cases',
+    toLabel: msg('Open in Cases & FIRs'),
+    empty: msg('No open case in {scope} needs a better photo.'),
   },
   reunited: {
     source: 'reports',
@@ -304,7 +331,7 @@ function Group({ group, active, onPick }) {
   );
 }
 
-function CaseRow({ r }) {
+function CaseRow({ r, note }) {
   const t = useT();
   const d = useDisplay();
   const category = personCategoryOf(r);
@@ -316,6 +343,7 @@ function CaseRow({ r }) {
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-semibold capitalize text-ink">{d(r.childName) || r.id}</span>
         <span className="block truncate text-xs text-gray-500">{[who, where].filter(Boolean).join(' · ') || r.id}</span>
+        {note && <span className="block truncate text-xs font-semibold text-amber-700">{note}</span>}
       </span>
       <span className="shrink-0 text-right">
         <StatusBadge status={r.status} />
@@ -453,6 +481,8 @@ export default function OverviewDetail({ detail, scope, load, lists, onClose }) 
     const specs = groupSpecs({ t, d, now, rows: picked });
     return kind.groups
       .map((id) => ({ id, ...buildGroup(specs[id], picked, t) }))
+      // A sheet that already gives the advice does not repeat it in a group.
+      .map((g) => (kind.advice && g.note === kind.advice ? { ...g, note: null } : g))
       .filter((g) => g.buckets.length > 0 && !(g.hideSingle && g.buckets.length < 2));
   }, [picked, t]);
 
@@ -476,6 +506,7 @@ export default function OverviewDetail({ detail, scope, load, lists, onClose }) 
             <p className="text-sm font-medium text-gray-500">{detail.label}</p>
             <p className="text-3xl font-bold tracking-tight">{detail.value}</p>
             <p className="mt-1 text-xs text-gray-500">{t(kind.explain, { scope })}</p>
+            {kind.advice && <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900 ring-1 ring-amber-200">{t(kind.advice)}</p>}
           </div>
           <button
             type="button"
@@ -538,7 +569,7 @@ export default function OverviewDetail({ detail, scope, load, lists, onClose }) 
               </div>
               <ul className="mt-1 divide-y divide-black/5">
                 {listed.slice(0, limit).map((row, i) => (
-                  <li key={txt(row.id) || i}><Row {...{ [prop]: row }} /></li>
+                  <li key={txt(row.id) || i}><Row {...{ [prop]: row }} note={kind.rowNote ? t(kind.rowNote(row)) : null} /></li>
                 ))}
               </ul>
               {listed.length > limit && (

@@ -1787,6 +1787,18 @@ async function jurisdictionApiChecks({ superAdmin, parent, police, cwc }) {
   }
   const stats = await request('GET', '/dashboard/stats', { token: police.token });
   assert(stats.intakes?.pending >= 1 && stats.intakes.oldest.some((row) => row.id === family.report.id), 'the station overview should list the intake waiting on it');
+  // Open cases whose photo will not match (shared/photo-need.js): counted by
+  // reason for the desk, and the reasons add up to the figure on the tile.
+  const needs = stats.photoNeeds;
+  assert(needs && Number.isInteger(needs.total), 'the station overview should count the open cases that need a better photo');
+  assert(stats.cards.photoNeeded === needs.total, 'the photo tile should show the same total as the breakdown');
+  assert(needs.no_photo + needs.no_face + needs.group + needs.weak === needs.total, 'the photo reasons should add up to the total');
+  const reports = (await request('GET', '/reports', { token: police.token })).reports;
+  const open = reports.filter((r) => ['missing', 'under_review'].includes(r.status));
+  const noPhoto = open.filter((r) => !r.photoFile && !r.photoUrl && !r.anonymizedAt).length;
+  assert(needs.no_photo >= noPhoto, `every open case with no photo should be counted (${noPhoto} in the list, ${needs.no_photo} counted)`);
+  const familyStats = await request('GET', '/dashboard/stats', { token: parent.token });
+  assert(familyStats.photoNeeds === null && familyStats.cards.photoNeeded === null, 'a family overview should carry no photo checks');
 }
 
 async function run() {

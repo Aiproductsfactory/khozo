@@ -225,6 +225,11 @@ export default function RegisterChild() {
         id: data.report?.id || null,
         sightingMatches: Number(data.sightingMatches) || 0,
         pendingVerification: data.report?.status === 'intake_pending',
+        // Whether the photo will find the person in a sighting. The face check
+        // runs only on a case matched at once (an officer's); a family's
+        // report is checked when an officer verifies it.
+        hadPhoto: Boolean(file),
+        photoVerdict: data.report?.photoCheck?.verdict || null,
         place: [data.report?.district || data.report?.districtText, data.report?.state].filter(Boolean).join(', '),
       });
       try { window.scrollTo({ top: 0 }); } catch {}
@@ -283,6 +288,31 @@ export default function RegisterChild() {
                 <li>{t('Matching with sightings starts once an officer verifies your report. The police and child-welfare desks of the district have been told it is waiting.')}</li>
                 <li className="font-semibold">{t('In an emergency, call 112.')}</li>
               </ol>
+            </div>
+          )}
+          {/*
+            The moment to ask for a better photo is now, while the family is
+            still at the desk or the form: later it means finding them again.
+          */}
+          {(!created.hadPhoto || ['no_face', 'multiple_faces'].includes(created.photoVerdict)) && (
+            <div role="status" className="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900 ring-1 ring-amber-200">
+              <p className="font-semibold">
+                {!created.hadPhoto
+                  ? t('No photo was added, so no sighting can be matched with this case by face.')
+                  : created.photoVerdict === 'no_face'
+                    ? t('No face was found in this photo, so it cannot be matched with a sighting.')
+                    : t('This is a group photo: the match cannot tell which face is the missing person.')}
+              </p>
+              <p className="mt-1">
+                {isPolice
+                  ? t('Ask the family for a recent, clear photo of the face alone, and add it from the case.')
+                  : t('If you have a recent, clear photo of the face alone, take it to the police station with this Case ID.')}
+              </p>
+              {isPolice && created.id && (
+                <Link to={`/app/cases?id=${encodeURIComponent(created.id)}`} className="mt-2 inline-block font-semibold text-khozo-dark hover:underline">
+                  {t('Open the case')}
+                </Link>
+              )}
             </div>
           )}
           {canReviewMatches && created.sightingMatches > 0 && (
