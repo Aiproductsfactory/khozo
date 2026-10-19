@@ -27,8 +27,8 @@ data, not for watching people, and not for training AI models.
 
 | When you... | We collect | Why |
 |---|---|---|
-| **Send a sighting** (no login needed) | The photo, if you add one. The place, taken from the photo's GPS, your phone's location, or what you type. Who you saw (child, woman or adult), rough age, gender and a note. If you opened the form by scanning a poster, which poster it was (a short code such as "kalupur"), to count which posters help. If you saw a woman or an adult, what made you think they need help: an adult may choose not to be found, so a photo of someone who is fine should not be sent. *Optional:* your name and phone, and the type of a photo ID with **only its last 4 digits** (we never store the full number). | To compare the face with missing persons, send the report to the right desk, and call you if an officer needs more detail. If you tick "keep my identity confidential", desks see "Confidential citizen" instead of your name and phone. |
-| **Register a missing person** (parent, NGO or police) | Name, photo, age, gender, height, weight, marks, clothing, languages, health or safety needs, date missing, Aadhaar number (optional), the guardian's name, phone, email and address, and your declaration. | To search for the person and contact the family. |
+| **Send a sighting** (no login needed) | Up to three photos, if you add them. The place, taken from the photo's GPS, your phone's location, or what you type. Who you saw (child, woman or adult), rough age, gender and a note. If you opened the form by scanning a poster, which poster it was (a short code such as "kalupur"), to count which posters help. If you saw a woman or an adult, what made you think they need help: an adult may choose not to be found, so a photo of someone who is fine should not be sent. *Optional:* your name and phone, and the type of a photo ID with **only its last 4 digits** (we never store the full number). | To compare the face with missing persons, send the report to the right desk, and call you if an officer needs more detail. If you tick "keep my identity confidential", desks see "Confidential citizen" instead of your name and phone. |
+| **Register a missing person** (parent, NGO or police) | Name, up to five photos, age, gender, height, weight, marks, clothing, languages, health or safety needs, date missing, Aadhaar number (optional), the guardian's name, phone, email and address, and your declaration. | To search for the person and contact the family. |
 | **A department loads its own register** | The same details, from the department's records. Some records are marked **police-only**: only police desks can see them. | To search the department's existing cases. |
 | **Have an account** (officer, parent, NGO) | Name, email, phone, password (stored scrambled), role and office. Every action an officer takes is recorded under the officer's name. The public list of desks shows offices, never officers' names or phones. | To let you sign in, and to keep an honest record of who did what. |
 | **File a grievance** | Name (optional), phone, email, district, and what happened. | To answer your complaint. |
@@ -87,8 +87,8 @@ Cloudflare's network, Nominatim and Google Fonts may handle some data outside In
 
 | Record | Kept for |
 |---|---|
-| A sighting and its photo | 180 days, unless an officer extends it because a case needs it |
-| A missing-person case and its photo | 10 years from registration [Department may set less] |
+| A sighting and its photos | 180 days, unless an officer extends it because a case needs it |
+| A missing-person case and its photos | 10 years from registration [Department may set less] |
 | The record of officers' actions | Permanently; it cannot be changed |
 | Accounts and grievances | [Department to set] |
 | A sighting waiting to send on your device (website) | 72 hours, encrypted |

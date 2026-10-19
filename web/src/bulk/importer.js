@@ -108,8 +108,11 @@ export function makeRequest({ base = '/api', fetchImpl, headers = () => ({}), sl
   };
 }
 
-/** The multipart body for one row, as the CLI builds it. */
-export function buildForm({ fields, categories }, photo, { allowDuplicate = false, photoName = 'photo.jpg' } = {}) {
+/**
+ * The multipart body for one row, as the CLI builds it. The row's other
+ * pictures go beside its main photo as `extraPhotos` (shared/photo-set.js).
+ */
+export function buildForm({ fields, categories }, photo, { allowDuplicate = false, photoName = 'photo.jpg', extraPhotos = [] } = {}) {
   const fd = new FormData();
   for (const [k, v] of Object.entries(fields)) if (v !== '' && v != null) fd.append(k, String(v));
   for (const cat of categories || []) fd.append('vulnerabilityCategories', cat);
@@ -119,6 +122,7 @@ export function buildForm({ fields, categories }, photo, { allowDuplicate = fals
     // record says where it came from instead (DPIA G15).
     fd.append('photoBasis', 'department_register');
     fd.append('photo', photo, photoName);
+    extraPhotos.forEach((extra, i) => fd.append('extraPhotos', extra, photoName.replace(/(\.\w+)?$/, `-${i + 2}$1`)));
   }
   return fd;
 }
@@ -130,10 +134,11 @@ export function buildForm({ fields, categories }, photo, { allowDuplicate = fals
  * Items that already have a created/skipped result are passed over, so a
  * stopped run can be started again.
  *
- *   getPhoto(item)  -> Promise<Blob|null>  (downscaled JPEG)
+ *   getPhoto(item)        -> Promise<Blob|null>  (downscaled JPEG)
+ *   getExtraPhotos(item)  -> Promise<Blob[]>     (the row's other pictures, optional)
  *   onEvent({ type: 'row' | 'result' | 'retry' | 'stopped', ... })
  */
-export async function runImport({ items, request, control, getPhoto, onEvent = () => {}, delayMs = 1200, results = {} }) {
+export async function runImport({ items, request, control, getPhoto, getExtraPhotos = async () => [], onEvent = () => {}, delayMs = 1200, results = {} }) {
   let existing = (await request('/reports'))?.reports || [];
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
@@ -155,9 +160,15 @@ export async function runImport({ items, request, control, getPhoto, onEvent = (
         } catch {
           photo = null;
         }
+        let extraPhotos = [];
+        try {
+          extraPhotos = photo ? (await getExtraPhotos(item)).filter(Boolean) : [];
+        } catch {
+          extraPhotos = [];
+        }
         const post = (allowDuplicate) => request('/reports', {
           method: 'POST',
-          form: () => buildForm(item, photo, { allowDuplicate, photoName: item.photoName }),
+          form: () => buildForm(item, photo, { allowDuplicate, photoName: item.photoName, extraPhotos }),
         });
         let out;
         let afterDuplicateWarning = false;

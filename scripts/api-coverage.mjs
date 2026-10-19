@@ -105,7 +105,7 @@ function normalisePath(raw) {
   return value;
 }
 
-const WEB_CALL = /\bapi\.(get|post|postForm|blob)\(\s*[`'"]([^`'"]+)[`'"]/g;
+const WEB_CALL = /\bapi\.(get|post|postForm|postFormWithProgress|del|blob)\(\s*[`'"]([^`'"]+)[`'"]/g;
 const MOBILE_CALL = /\brequest\(\s*[`'"]([^`'"]+)[`'"]([^)]*)\)/g;
 
 function webCalls() {
@@ -116,7 +116,7 @@ function webCalls() {
       const normalised = normalisePath(rawPath);
       if (!normalised) continue;
       calls.push({
-        method: kind === 'get' || kind === 'blob' ? 'GET' : 'POST',
+        method: kind === 'get' || kind === 'blob' ? 'GET' : kind === 'del' ? 'DELETE' : 'POST',
         path: normalised,
         client: 'web',
         file: path.relative(root, file),

@@ -18,6 +18,7 @@ import { asList, fmtDate, isAdultCase, personCategoryOf, ProtectedImage, txt, ge
 import { currentLocale, msg, useT } from '../i18n.jsx';
 import { expectedAgeAt } from '../../../shared/match-pool.js';
 import { WEAK_FACE_WARNINGS } from '../../../shared/face-index.js';
+import { photoUrlOf } from '../../../shared/photo-set.js';
 import { useDisplay } from '../useDisplay.js';
 import { useBackClose } from '../useBackClose.js';
 import { ActionMessage } from './useAction.jsx';
@@ -345,8 +346,16 @@ export function ConfirmMatchDialog({ report, sighting, action, onSubmit, onCance
     );
   };
 
-  const sightingSrc = sighting ? txt(sighting.photoUrl) || (sighting.id ? `/api/reports/photo/${sighting.id}` : null) : null;
-  const caseSrc = report ? txt(report.photoUrl) || (report.id ? `/api/reports/photo/${report.id}` : null) : null;
+  // The pair of photos the score is for (shared/photo-set.js): the officer
+  // confirms on the photos the match was made on, not on whichever is main.
+  const pair = asList(sighting?.matchCandidates).find((c) => c?.reportId === report?.id)?.photoPair
+    || (sighting?.matchedReportId === report?.id ? sighting?.matchedPhotoPair : null)
+    || sighting?.photoPair
+    || null;
+  const sightingSrc = sighting
+    ? photoUrlOf(sighting, pair?.sighting) || txt(sighting.photoUrl) || (sighting.id ? `/api/reports/photo/${sighting.id}` : null)
+    : null;
+  const caseSrc = report ? photoUrlOf(report, pair?.case) || txt(report.photoUrl) || (report.id ? `/api/reports/photo/${report.id}` : null) : null;
   const score = sighting ? Math.round((Number(sighting.matchScore) || 0) * 100) : 0;
 
   /*

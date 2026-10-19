@@ -5,7 +5,7 @@ import { useAuth } from '../auth.jsx';
 import {
   fmtDate, StatusBadge, Avatar, roleLabel,
   CategoryBadge, genderLabel, isAdultCase, personCategoryOf, PERSON_CATEGORY_OPTIONS,
-  asList, txt, txtList, PhoneLink,
+  asList, txt, txtList, PhoneLink, ProtectedImage,
 } from '../lib.jsx';
 import { ErrorBoundary } from '../components.jsx';
 import { useT, msg, currentLocale } from '../i18n.jsx';
@@ -13,6 +13,7 @@ import { useDisplay } from '../useDisplay.js';
 import { useBackClose } from '../useBackClose.js';
 import { POLICE_ROLES } from '../../../shared/scope.js';
 import { photoNeedOf } from '../../../shared/photo-need.js';
+import { MAIN_PHOTO, MAX_CASE_PHOTOS, extraPhotoUrl, viewPhotosOf } from '../../../shared/photo-set.js';
 import { ActionMessage, ActionToast, useAction } from './useAction.jsx';
 import { ConfirmMatchDialog, FamilyContactList, FamilyContactPanel, ReopenCasePanel, faceIndexFlag, photoCheckFlag } from './Reunite.jsx';
 import { preparePhoto } from '../photoPrep.js';
@@ -368,8 +369,9 @@ export default function Cases() {
     }
   });
   const [selected, setSelected] = useState(null);
-  // The id of the case whose photo is open full size (PhotoViewer).
-  const [photoView, setPhotoView] = useState('');
+  // The case whose photos are open full size (PhotoViewer), and the photo
+  // it opens on: { caseId, startId }.
+  const [photoView, setPhotoView] = useState(null);
   // Phone only: the area and date filters are folded away until asked for.
   const [filtersOpen, setFiltersOpen] = useState(false);
   useBackClose(!!selected, () => setSelected(null));
@@ -508,6 +510,8 @@ export default function Cases() {
   const [rematch, setRematch] = useState(null);
   // A replacement case photo being chosen, and what the server said of it.
   const [photoReplace, setPhotoReplace] = useState({ caseId: '', file: null, consent: false });
+  // Photos the family brought, to add beside the others (POST /:id/photos).
+  const [photoAdd, setPhotoAdd] = useState({ caseId: '', files: [], consent: false });
   const [photoResult, setPhotoResult] = useState(null);
   const canAct = FORMAL_ACTION_ROLES.includes(user.role);
 
@@ -793,6 +797,40 @@ export default function Cases() {
     setPhotoResult({ caseId: r.id, photoCheck: data?.photoCheck || null, sightingMatches: Number(data?.sightingMatches) || 0 });
     load();
   }, msg('Photo replaced.'));
+
+  /*
+   * More photos of the person (shared/photo-set.js): each is checked for a
+   * face, the gallery is given the whole set, and the stored sightings are
+   * searched again with the clearest new one.
+   */
+  const addPhotos = (r) => action.run('photos', async () => {
+    const chosen = photoAdd.caseId === r.id ? photoAdd.files : [];
+    if (!chosen.length) return;
+    const form = new FormData();
+    for (const file of chosen) form.append('extraPhotos', await preparePhoto(file));
+    if (photoAdd.consent) form.set('photoConsent', 'true');
+    const data = await api.postForm(`/reports/${r.id}/photos`, form);
+    if (data?.report) showReport(data.report);
+    setPhotoAdd({ caseId: '', files: [], consent: false });
+    setPhotoResult({ caseId: r.id, photoCheck: data?.mainPhotoCheck || null, sightingMatches: Number(data?.sightingMatches) || 0 });
+    load();
+  }, msg('Photos added.'));
+
+  /** Makes one of the other photos the main one: shown on the case, compared first. */
+  const makeMainPhoto = (r, photoId) => action.run('photos', async () => {
+    const data = await api.post(`/reports/${r.id}/photos/${encodeURIComponent(photoId)}/main`, {});
+    if (data?.report) showReport(data.report);
+    load();
+  }, msg('Main photo changed.'));
+
+  const removePhoto = (r, photoId) => {
+    if (!window.confirm(t('Remove this photo from the case? It is deleted.'))) return;
+    action.run('photos', async () => {
+      const data = await api.del(`/reports/${r.id}/photos/${encodeURIComponent(photoId)}`);
+      if (data?.report) showReport(data.report);
+      load();
+    }, msg('Photo removed.'));
+  };
 
   const exportHandoff = (r, targetSystem = 'trackchild') => action.run('export', async () => {
     const params = new URLSearchParams({
@@ -1411,12 +1449,17 @@ export default function Cases() {
                 {txt(selected.photoUrl) ? (
                   <button
                     type="button"
-                    onClick={() => setPhotoView(selected.id)}
+                    onClick={() => setPhotoView({ caseId: selected.id, startId: selected.pendingMatch?.photoPair?.case || MAIN_PHOTO })}
                     className="group relative shrink-0 rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-khozo"
                     aria-label={t('View full photo')}
                     title={t('View full photo')}
                   >
                     <Avatar name={d(selected.childName)} src={selected.photoUrl} size={96} />
+                    {viewPhotosOf(selected).length > 1 && (
+                      <span className="absolute left-1 top-1 rounded-md bg-black/60 px-1.5 py-0.5 text-[11px] font-bold text-white">
+                        {t('{n} photos', { n: viewPhotosOf(selected).length })}
+                      </span>
+                    )}
                     <span className="absolute bottom-1 right-1 grid h-7 w-7 place-items-center rounded-md bg-black/60 text-white transition group-hover:bg-black/80">
                       <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" /></svg>
                     </span>
@@ -1437,10 +1480,12 @@ export default function Cases() {
                   {txt(selected.photoUrl) && (
                     <button
                       type="button"
-                      onClick={() => setPhotoView(selected.id)}
+                      onClick={() => setPhotoView({ caseId: selected.id, startId: selected.pendingMatch?.photoPair?.case || MAIN_PHOTO })}
                       className="mt-1 text-sm font-semibold text-khozo-dark underline decoration-dotted underline-offset-2 hover:text-khozo"
                     >
-                      {selected.pendingMatch?.foundReportId ? t('Compare with the sighting') : t('View full photo')}
+                      {selected.pendingMatch?.foundReportId
+                        ? t('Compare with the sighting')
+                        : viewPhotosOf(selected).length > 1 ? t('View all {n} photos', { n: viewPhotosOf(selected).length }) : t('View full photo')}
                     </button>
                   )}
                 </div>
@@ -1514,9 +1559,12 @@ export default function Cases() {
               here, and police can replace it. The face search gallery may
               refuse a photo the check passed (a face too small to enrol).
             */}
-            {(photoCheckFlag(selected.photoCheck) || faceIndexFlag(selected.faceIndex) || photoNeedOf(selected) || (canReplacePhoto && !selected.anonymizedAt)) && (
+            {(photoCheckFlag(selected.photoCheck) || faceIndexFlag(selected.faceIndex) || photoNeedOf(selected) || viewPhotosOf(selected).length > 1 || (canReplacePhoto && !selected.anonymizedAt)) && (
               <div className="mt-6 rounded-xl border border-black/5 p-4">
-                <p className="text-sm font-medium">{t('Case photo')}</p>
+                <p className="text-sm font-medium">
+                  {t('Photos of the person')}{' '}
+                  <span className="font-normal text-gray-400">{t('{n} of {total}', { n: viewPhotosOf(selected).length, total: MAX_CASE_PHOTOS })}</span>
+                </p>
                 {/* What to do about a photo that will not match: the family
                     is the one who has a better one (shared/photo-need.js). */}
                 {photoNeedOf(selected) && (
@@ -1538,9 +1586,86 @@ export default function Cases() {
                     {t(faceIndexFlag(selected.faceIndex).label)}
                   </p>
                 )}
+                {/* Every photo, the main one first; each opens full size. */}
+                {viewPhotosOf(selected).length > 0 && (
+                  <ul className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5">
+                    {viewPhotosOf(selected).map((p) => (
+                      <li key={p.id} className="min-w-0">
+                        <button
+                          type="button"
+                          onClick={() => setPhotoView({ caseId: selected.id, startId: p.id })}
+                          className="relative block aspect-square w-full overflow-hidden rounded-lg bg-gray-100 ring-1 ring-black/5 hover:ring-khozo/50"
+                          aria-label={p.id === MAIN_PHOTO ? t('Main photo') : t('Other photo')}
+                        >
+                          <ProtectedImage src={p.src} alt="" className="h-full w-full object-cover" />
+                          {p.id === MAIN_PHOTO && (
+                            <span className="absolute left-1 top-1 rounded bg-khozo px-1.5 py-0.5 text-[10px] font-bold text-white">{t('Main')}</span>
+                          )}
+                          {['no_face', 'multiple_faces'].includes(p.check?.verdict) && (
+                            <span className="absolute inset-x-0 bottom-0 bg-amber-500/90 px-1 py-0.5 text-[10px] font-semibold text-white">
+                              {p.check.verdict === 'no_face' ? t('No face found') : t('Group photo')}
+                            </span>
+                          )}
+                        </button>
+                        {canReplacePhoto && !selected.anonymizedAt && p.id !== MAIN_PHOTO && (
+                          <div className="mt-1 flex flex-wrap gap-x-2 text-[11px] font-semibold">
+                            <button type="button" disabled={action.pending} onClick={() => makeMainPhoto(selected, p.id)} className="text-khozo-dark hover:underline">{t('Make main')}</button>
+                            <button type="button" disabled={action.pending} onClick={() => removePhoto(selected, p.id)} className="text-red-700 hover:underline">{t('Remove')}</button>
+                          </div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {canReplacePhoto && !selected.anonymizedAt && viewPhotosOf(selected).length < MAX_CASE_PHOTOS && (
+                  <div className="mt-4 rounded-lg bg-gray-50 p-3 ring-1 ring-black/5">
+                    <p className="text-xs font-semibold text-gray-700">{t('Add photos the family has')}</p>
+                    <p className="mt-0.5 text-xs text-gray-600">
+                      {t('Different ages and angles help. Each is checked for a face and compared with the sightings already received. Up to {n} more.', { n: MAX_CASE_PHOTOS - viewPhotosOf(selected).length })}
+                    </p>
+                    <input
+                      type="file"
+                      multiple
+                      accept="image/jpeg,image/png,image/webp"
+                      className="mt-2 block min-h-11 w-full text-sm text-gray-600 file:mr-3 file:min-h-11 file:cursor-pointer file:rounded-lg file:border-0 file:bg-white file:px-3 file:text-sm file:font-semibold file:text-ink hover:file:bg-gray-100"
+                      onChange={(e) => setPhotoAdd({
+                        caseId: selected.id,
+                        files: [...(e.target.files || [])].slice(0, MAX_CASE_PHOTOS - viewPhotosOf(selected).length),
+                        consent: photoAdd.caseId === selected.id && photoAdd.consent,
+                      })}
+                    />
+                    {!selected.photoConsent && selected.photoBasis !== 'department_register' && (
+                      <label className="mt-2 flex gap-2 text-xs">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5"
+                          checked={photoAdd.caseId === selected.id && photoAdd.consent}
+                          onChange={(e) => setPhotoAdd((prev) => ({ ...prev, caseId: selected.id, consent: e.target.checked }))}
+                        />
+                        <span>{t('Consent to use these photos has been recorded')}</span>
+                      </label>
+                    )}
+                    <button
+                      type="button"
+                      className="btn-ghost mt-2 w-full"
+                      disabled={action.pending || photoAdd.caseId !== selected.id || !photoAdd.files.length || (!selected.photoConsent && selected.photoBasis !== 'department_register' && !photoAdd.consent)}
+                      onClick={() => addPhotos(selected)}
+                    >
+                      {action.busy('photos')
+                        ? t('Uploading the photos…')
+                        : photoAdd.caseId === selected.id && photoAdd.files.length > 1
+                          ? t('Add {n} photos', { n: photoAdd.files.length })
+                          : t('Add photo')}
+                    </button>
+                    <ActionMessage action={action} id="photos" />
+                  </div>
+                )}
                 {canReplacePhoto && !selected.anonymizedAt && (
                   <>
-                    <p className="mt-2 text-xs text-gray-600">
+                    {viewPhotosOf(selected).length > 1 && (
+                      <p className="mt-4 text-xs font-semibold text-gray-700">{t('Replace the main photo')}</p>
+                    )}
+                    <p className="mt-3 text-xs text-gray-600">
                       {txt(selected.photoUrl)
                         ? t('Replace it with a clear, recent photo of the person alone. The new photo is checked for a face and compared with the sightings already received.')
                         : t('Add a clear, recent photo of the person alone. It is checked for a face and compared with the sightings already received.')}
@@ -3006,21 +3131,35 @@ export default function Cases() {
         </div>
       )}
 
-      {selected && photoView === selected.id && (
+      {selected && photoView?.caseId === selected.id && (
         <ErrorBoundary>
           <PhotoViewer
             title={d(selected.childName) || selected.id}
-            onClose={() => setPhotoView('')}
-            photos={[
+            onClose={() => setPhotoView(null)}
+            panes={[
               {
-                src: selected.photoUrl,
-                label: t('Case photo'),
-                caption: [txt(selected.age) && t('age {n}', { n: txt(selected.age) }), selected.dateOfMissing && `${t('Missing since')} ${fmtDate(selected.dateOfMissing)}`].filter(Boolean).join(' · '),
+                label: t('Case photos'),
+                startId: photoView.startId,
+                photos: viewPhotosOf(selected).map((p) => ({
+                  id: p.id,
+                  src: p.src,
+                  caption: [
+                    p.id === MAIN_PHOTO && t('Main photo'),
+                    txt(selected.age) && t('age {n}', { n: txt(selected.age) }),
+                    selected.dateOfMissing && `${t('Missing since')} ${fmtDate(selected.dateOfMissing)}`,
+                  ].filter(Boolean).join(' · '),
+                })),
               },
               selected.pendingMatch?.foundReportId && {
-                src: `/api/reports/photo/${encodeURIComponent(selected.pendingMatch.foundReportId)}`,
-                label: t('Sighting photo'),
-                caption: t('Possible match · {pct}% similar · not verified', { pct: Math.round((Number(selected.pendingMatch.score) || 0) * 100) }),
+                label: t('Sighting photos'),
+                startId: selected.pendingMatch.photoPair?.sighting || MAIN_PHOTO,
+                photos: (asList(selected.pendingMatch.sightingPhotoIds).length ? asList(selected.pendingMatch.sightingPhotoIds) : [MAIN_PHOTO]).map((id) => ({
+                  id,
+                  src: id === MAIN_PHOTO
+                    ? `/api/reports/photo/${encodeURIComponent(selected.pendingMatch.foundReportId)}`
+                    : extraPhotoUrl(encodeURIComponent(selected.pendingMatch.foundReportId), id),
+                  caption: t('Possible match · {pct}% similar · not verified', { pct: Math.round((Number(selected.pendingMatch.score) || 0) * 100) }),
+                })),
               },
             ].filter(Boolean)}
             footer={selected.pendingMatch?.foundReportId ? (
@@ -3043,7 +3182,14 @@ export default function Cases() {
           <ConfirmMatchDialog
             report={confirming.report}
             sighting={confirming.sightingId
-              ? { id: confirming.sightingId, matchScore: confirming.score, personCategory: confirming.report.personCategory }
+              ? {
+                  id: confirming.sightingId,
+                  matchScore: confirming.score,
+                  personCategory: confirming.report.personCategory,
+                  // Which photos the score is for, so the dialog shows that pair.
+                  photoPair: confirming.report.pendingMatch?.photoPair || null,
+                  extraPhotos: asList(confirming.report.pendingMatch?.sightingPhotoIds).filter((id) => id !== MAIN_PHOTO).map((id) => ({ id })),
+                }
               : null}
             action={action}
             onSubmit={submitConfirmation}

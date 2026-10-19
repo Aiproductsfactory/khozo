@@ -27,6 +27,8 @@ export const api = {
       body: JSON.stringify(body || {}),
     }).then(handle),
 
+  del: (path) => fetch(`${BASE}${path}`, { method: 'DELETE', headers: { ...authHeader() } }).then(handle),
+
   // multipart/form-data (file uploads) — don't set Content-Type, the browser adds the boundary.
   postForm: (path, formData) =>
     fetch(`${BASE}${path}`, { method: 'POST', headers: { ...authHeader() }, body: formData }).then(handle),

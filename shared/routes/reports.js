@@ -1094,6 +1094,11 @@ export default function registerReportRoutes(router, deps) {
           // Rekognition was asked and did not answer: one engine's lead only.
           notChecked: Boolean(f.matchNotChecked),
           at: f.createdAt || null,
+          // Which photo of each the score is for, and the sighting's other
+          // photos, so the case panel opens the pair side by side
+          // (shared/photo-set.js).
+          photoPair: f.matchedPhotoPair || null,
+          sightingPhotoIds: [MAIN_PHOTO, ...extraPhotosOf(f).map((p) => p.id)],
         });
       }
     }

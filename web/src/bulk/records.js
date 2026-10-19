@@ -262,7 +262,7 @@ export function checkRecord(rec, { now = Date.now() } = {}) {
   if (!rec.gender) errors.push(issue('no_gender', msg('Gender not recognised: choose boy or girl')));
   if (rec.age != null && (rec.age < 0 || rec.age > 110)) errors.push(issue('bad_age', msg('Age {age} is not possible'), { age: rec.age }));
   if (!rec.photo) warnings.push(issue('no_photo', msg('No photo: face matching cannot run for this case')));
-  if (rec.photo && rec.photoAlternatives?.length) warnings.push(issue('several_photos', msg('{n} pictures in this row; the one on top is used'), { n: rec.photoAlternatives.length + 1 }));
+  if (rec.photo && rec.photoAlternatives?.length) warnings.push(issue('several_photos', msg('{n} pictures in this row: the one on top is the main photo, and up to 4 more are added beside it'), { n: rec.photoAlternatives.length + 1 }));
   if (rec.photoError) warnings.push(issue('photo_unreadable', msg('The photo could not be read; the case will be imported without it')));
   if (rec.dateApproximate) {
     warnings.push(rec.dateSource === 'reference'

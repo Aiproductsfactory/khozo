@@ -159,3 +159,28 @@ export async function loadPhotos(record, readPhoto, given = null) {
   }
   return out;
 }
+
+/** Where to fetch one photo of a record, by id: the main photo or an extra. */
+export function photoUrlOf(record, photoId = MAIN_PHOTO) {
+  if (!record || typeof record !== 'object') return null;
+  if (!photoId || photoId === MAIN_PHOTO) {
+    return record.photoUrl || (record.photoFile ? `/api/reports/photo/${record.id}` : null);
+  }
+  const extra = (Array.isArray(record.extraPhotos) ? record.extraPhotos : []).find((p) => p?.id === photoId);
+  return extra ? extra.url || extraPhotoUrl(record.id, photoId) : null;
+}
+
+/**
+ * Every photo of a record as the console shows it, main first:
+ * [{ id, src, check }]. Reads any view of a record - a desk's, which lists
+ * the storage keys, or a review or family view, which does not.
+ */
+export function viewPhotosOf(record) {
+  if (!record || typeof record !== 'object' || record.anonymizedAt) return [];
+  const main = photoUrlOf(record, MAIN_PHOTO);
+  const out = main ? [{ id: MAIN_PHOTO, src: main, check: record.photoCheck || null }] : [];
+  for (const p of Array.isArray(record.extraPhotos) ? record.extraPhotos : []) {
+    if (p && isExtraPhotoId(p.id)) out.push({ id: p.id, src: p.url || extraPhotoUrl(record.id, p.id), check: p.check || null });
+  }
+  return out;
+}

@@ -12,6 +12,7 @@ import { GUJARAT_STATIONS } from '../bulk/gujaratRegister.js';
 import { PRESETS, assignPhotos, buildRecords, checkRecord, matchesExisting, payloadFor, personCategoryFor } from '../bulk/records.js';
 import { extOf, isShadowPicture, toJpeg } from '../bulk/photos.js';
 import { createControl, makeRequest, runImport } from '../bulk/importer.js';
+import { MAX_CASE_PHOTOS } from '../../../shared/photo-set.js';
 
 /*
  * Bulk import: a department hands over its register as a spreadsheet and it
@@ -627,6 +628,8 @@ export default function BulkImport() {
     fields: r.payload.fields,
     categories: r.payload.categories,
     photo: r.rec.photo,
+    // The row's other pictures, sent beside the main photo (shared/photo-set.js).
+    photoAlternatives: (r.rec.photoAlternatives || []).slice(0, MAX_CASE_PHOTOS - 1),
     photoName: `${r.rec.serial || `row-${r.rec.sheetRow}`}.jpg`.replace(/[^\w.\-઀-૿]/g, '_'),
     ...extra,
   });
@@ -641,6 +644,20 @@ export default function BulkImport() {
       setOverride(item.key, { photoError: true });
       return null;
     }
+  };
+
+  // The row's other pictures; one that cannot be read is left out.
+  const getExtraPhotos = async (item) => {
+    const out = [];
+    for (const p of item.photoAlternatives || []) {
+      try {
+        const bytes = p.kind === 'file' ? new Uint8Array(await p.file.arrayBuffer()) : mediaRef.current[p.media];
+        out.push(await toJpeg(bytes, p.kind === 'file' ? extOf(p.file.name) : p.ext));
+      } catch {
+        // skipped
+      }
+    }
+    return out;
   };
 
   const start = async (items) => {
@@ -665,6 +682,7 @@ export default function BulkImport() {
         request,
         control,
         getPhoto,
+        getExtraPhotos,
         delayMs: DELAY_MS,
         results: acc,
         onEvent: (e) => {

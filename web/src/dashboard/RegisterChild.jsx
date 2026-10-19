@@ -5,6 +5,7 @@ import { useAuth } from '../auth.jsx';
 import { useT, msg } from '../i18n.jsx';
 import { genderLabel, isAdultCategory, PERSON_CATEGORY_OPTIONS, PhoneLink } from '../lib.jsx';
 import { preparePhoto } from '../photoPrep.js';
+import { MAX_CASE_PHOTOS } from '../../../shared/photo-set.js';
 import DistrictPicker from '../DistrictPicker.jsx';
 import { DASHBOARD_ROUTE_ROLES } from './routes.js';
 import NavIcon from './NavIcon.jsx';
@@ -132,8 +133,11 @@ export default function RegisterChild() {
   const [form, setForm] = useState(() => initialForm(user, isPolice));
   // { id, sightingMatches } once the case is saved.
   const [created, setCreated] = useState(null);
-  const [file, setFile] = useState(null);
-  const [preview, setPreview] = useState(null);
+  // The photos of the person, the main one first (shared/photo-set.js):
+  // [{ key, file, preview }]. A family often has more than one, and a second
+  // photo - another age, another angle - is often the one that matches.
+  const [photos, setPhotos] = useState([]);
+  const file = photos[0]?.file || null;
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [duplicates, setDuplicates] = useState([]);
@@ -188,16 +192,28 @@ export default function RegisterChild() {
   };
 
   // Shrunk on the phone before upload (photoPrep.js): a camera photo is
-  // several MB, and a station's mobile data is not always fast.
-  const onFile = async (e) => {
-    const picked = e.target.files?.[0];
+  // several MB, and a station's mobile data is not always fast. Each photo is
+  // replaced by its prepared copy under its own key, so a slow one never
+  // overwrites another.
+  const onFile = (e) => {
+    const picked = [...(e.target.files || [])].slice(0, Math.max(0, MAX_CASE_PHOTOS - photos.length));
     e.target.value = '';
-    if (!picked) return;
-    setPreview(URL.createObjectURL(picked));
-    setFile(picked);
-    const ready = await preparePhoto(picked);
-    setFile(ready);
+    if (!picked.length) return;
+    const added = picked.map((raw) => ({ key: `${Date.now()}-${Math.random().toString(36).slice(2)}`, file: raw, preview: URL.createObjectURL(raw) }));
+    setPhotos((prev) => [...prev, ...added].slice(0, MAX_CASE_PHOTOS));
+    for (const photo of added) {
+      preparePhoto(photo.file).then((ready) => {
+        setPhotos((prev) => prev.map((p) => (p.key === photo.key ? { ...p, file: ready } : p)));
+      });
+    }
   };
+  const removePhoto = (key) => setPhotos((prev) => {
+    const gone = prev.find((p) => p.key === key);
+    if (gone) URL.revokeObjectURL(gone.preview);
+    return prev.filter((p) => p.key !== key);
+  });
+  // The main photo is shown on the case and compared first with every sighting.
+  const makeMain = (key) => setPhotos((prev) => [...prev.filter((p) => p.key === key), ...prev.filter((p) => p.key !== key)]);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -216,7 +232,8 @@ export default function RegisterChild() {
         else if (v != null && v !== '') fd.append(k, v);
       });
       if (allowDuplicate) fd.append('allowDuplicate', 'true');
-      if (file) fd.append('photo', file);
+      // The main photo as `photo`, the others beside it (shared/photo-set.js).
+      photos.forEach((p, i) => fd.append(i === 0 ? 'photo' : 'extraPhotos', p.file));
       // The server also compares the new photo with earlier sightings that are
       // not linked to any case, inside this request, and says how many it sent
       // for review.
@@ -250,8 +267,8 @@ export default function RegisterChild() {
 
   const registerAnother = () => {
     setForm(initialForm(user, isPolice));
-    setFile(null);
-    setPreview(null);
+    photos.forEach((p) => URL.revokeObjectURL(p.preview));
+    setPhotos([]);
     setDuplicates([]);
     setAllowDuplicate(false);
     setErr('');
@@ -412,29 +429,68 @@ export default function RegisterChild() {
           the phone (a family picture shared on WhatsApp) comes from the gallery.
         */}
         <div className="flex items-start gap-4">
-          <div className="grid h-24 w-24 shrink-0 place-items-center overflow-hidden rounded-xl border-2 border-dashed border-gray-300 text-3xl text-gray-300">
-            {preview ? <img src={preview} alt="" className="h-full w-full object-cover" /> : adult ? '👤' : '🧒'}
-          </div>
-          <div className="min-w-0 flex-1">
-            <input ref={cameraRef} type="file" accept="image/*" capture="environment" onChange={onFile} className="hidden" />
-            <input ref={fileRef} type="file" accept="image/*" onChange={onFile} className="hidden" />
-            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-              <button type="button" className="btn-ghost" onClick={() => cameraRef.current?.click()}>
-                <NavIcon name="sightings" className="h-4 w-4 shrink-0" /> {t('Take a photo')}
-              </button>
-              <button type="button" className="btn-ghost" onClick={() => fileRef.current?.click()}>
-                <NavIcon name="upload" className="h-4 w-4 shrink-0" /> {adult ? t('Upload photo') : t('Upload child image')}
-              </button>
+          {photos.length === 0 && (
+            <div className="grid h-24 w-24 shrink-0 place-items-center overflow-hidden rounded-xl border-2 border-dashed border-gray-300 text-3xl text-gray-300">
+              {adult ? '👤' : '🧒'}
             </div>
-            <p className="mt-1 text-xs text-gray-400">{t('A clear, front-facing face photo works best.')}</p>
+          )}
+          <div className="min-w-0 flex-1">
+            {photos.length > 0 && (
+              <ul className="mb-3 flex flex-wrap gap-3 pt-2" aria-label={t('Photos of the person')}>
+                {photos.map((p, i) => (
+                  <li key={p.key} className="relative">
+                    <img src={p.preview} alt="" className="h-24 w-24 rounded-xl object-cover ring-1 ring-black/10" />
+                    {i === 0 ? (
+                      <span className="absolute left-1 top-1 rounded bg-khozo px-1.5 py-0.5 text-[10px] font-bold text-white">{t('Main')}</span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => makeMain(p.key)}
+                        className="absolute inset-x-1 bottom-1 rounded bg-black/60 px-1 py-1 text-[11px] font-semibold text-white hover:bg-black/75"
+                      >
+                        {t('Make main')}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => removePhoto(p.key)}
+                      aria-label={t('Remove')}
+                      className="absolute -right-2 -top-2 grid h-8 w-8 place-items-center rounded-full bg-gray-900 text-white ring-2 ring-white hover:bg-black"
+                    >
+                      <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <input ref={cameraRef} type="file" accept="image/*" capture="environment" onChange={onFile} className="hidden" />
+            <input ref={fileRef} type="file" accept="image/*" multiple onChange={onFile} className="hidden" />
+            {photos.length < MAX_CASE_PHOTOS && (
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                <button type="button" className="btn-ghost" onClick={() => cameraRef.current?.click()}>
+                  <NavIcon name="sightings" className="h-4 w-4 shrink-0" /> {t('Take a photo')}
+                </button>
+                <button type="button" className="btn-ghost" onClick={() => fileRef.current?.click()}>
+                  <NavIcon name="upload" className="h-4 w-4 shrink-0" />{' '}
+                  {photos.length ? t('Add another photo') : adult ? t('Upload photo') : t('Upload child image')}
+                </button>
+              </div>
+            )}
+            <p className="mt-1 text-xs text-gray-400">
+              {t('A clear, front-facing face photo works best. Up to {n} photos: different ages and angles help.', { n: MAX_CASE_PHOTOS })}
+            </p>
           </div>
         </div>
         <label className="flex gap-3 rounded-xl bg-gray-50 p-3 text-sm text-gray-700">
           <input type="checkbox" className="mt-1" checked={form.photoConsent} onChange={setChecked('photoConsent')} required={!!file} />
           <span>
-            {adult
-              ? t('I confirm this photo may be used for the missing-person investigation, police review, and face-match search. The photo is kept for 10 years from registration, or longer while the case is open.')
-              : t('I confirm this photo may be used for missing-child investigation, police/CWC review, and face-match search. The photo is kept for 10 years from registration, or longer while the case is open.')}
+            {photos.length > 1
+              ? adult
+                ? t('I confirm these photos may be used for the missing-person investigation, police review, and face-match search. The photos are kept for 10 years from registration, or longer while the case is open.')
+                : t('I confirm these photos may be used for missing-child investigation, police/CWC review, and face-match search. The photos are kept for 10 years from registration, or longer while the case is open.')
+              : adult
+                ? t('I confirm this photo may be used for the missing-person investigation, police review, and face-match search. The photo is kept for 10 years from registration, or longer while the case is open.')
+                : t('I confirm this photo may be used for missing-child investigation, police/CWC review, and face-match search. The photo is kept for 10 years from registration, or longer while the case is open.')}
           </span>
         </label>
 

@@ -23,6 +23,7 @@ import { campaignSourceOf } from '../../../shared/campaign-source.js';
 import { HUMAN_CHECK_FIELD } from '../../../shared/human-check.js';
 import HumanCheck from '../HumanCheck.jsx';
 import { CONCERN_REASON_LABELS } from '../sightingConcern.js';
+import { MAX_SIGHTING_PHOTOS } from '../../../shared/photo-set.js';
 
 // The poster code in the address when the form was opened by scanning one
 // (khozo.org/report?src=kalupur), or null. It goes with the report so the MIS
@@ -138,9 +139,14 @@ function LocationStatus({ located, hasPhoto, onClear }) {
   );
 }
 
-function buildSightingFormData(form, file) {
+/**
+ * The report as it is sent: the first photo as `photo`, any others as
+ * `extraPhotos` after it (shared/photo-set.js), then the fields.
+ */
+function buildSightingFormData(form, file, extraFiles = []) {
   const fd = new FormData();
   if (file) fd.append('photo', file);
+  if (file) extraFiles.forEach((extra) => fd.append('extraPhotos', extra));
   Object.entries(form).forEach(([k, v]) => v != null && v !== '' && fd.append(k, v));
   return fd;
 }
@@ -151,6 +157,9 @@ export default function Capture() {
   const [step, setStep] = useState(1);
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
+  // Up to two more photos of the same person - another angle, a clearer face
+  // (shared/photo-set.js): [{ key, file, preview, preparing }].
+  const [extras, setExtras] = useState([]);
   const [posterSource] = useState(posterSourceFromUrl);
   const [form, setForm] = useState({
     campaignSource: posterSource || '',
@@ -184,6 +193,8 @@ export default function Capture() {
   const [located, setLocated] = useState(null);
   const fileRef = useRef(null);
   const cameraRef = useRef(null);
+  const extraFileRef = useRef(null);
+  const extraCameraRef = useRef(null);
   const locateRun = useRef(0);
   const photoRun = useRef(0);
   const autoLocationText = useRef('');
@@ -307,6 +318,26 @@ export default function Capture() {
     setPreparing(false);
   };
 
+  // Another photo of the same person. Its place is read only from the first.
+  const onExtraFile = (e) => {
+    const picked = [...(e.target.files || [])].slice(0, Math.max(0, MAX_SIGHTING_PHOTOS - 1 - extras.length));
+    e.target.value = '';
+    if (!picked.length) return;
+    const added = picked.map((raw) => ({ key: `${Date.now()}-${Math.random().toString(36).slice(2)}`, file: raw, preview: URL.createObjectURL(raw), preparing: true }));
+    setExtras((prev) => [...prev, ...added].slice(0, MAX_SIGHTING_PHOTOS - 1));
+    for (const extra of added) {
+      preparePhoto(extra.file).then((ready) => {
+        setExtras((prev) => prev.map((p) => (p.key === extra.key ? { ...p, file: ready, preparing: false } : p)));
+      });
+    }
+  };
+  const removeExtra = (key) => setExtras((prev) => {
+    const gone = prev.find((p) => p.key === key);
+    if (gone) URL.revokeObjectURL(gone.preview);
+    return prev.filter((p) => p.key !== key);
+  });
+  const preparingAny = preparing || extras.some((p) => p.preparing);
+
   useEffect(() => {
     getQueuedSightings().then(setQueued).catch(() => setQueued([]));
   }, []);
@@ -348,7 +379,7 @@ export default function Capture() {
     setErr('');
     setProgress(file ? 0 : null);
     try {
-      const fd = buildSightingFormData(form, file);
+      const fd = buildSightingFormData(form, file, extras.map((p) => p.file));
       const data = await api.postFormWithProgress('/reports/found', fd, file ? setProgress : undefined);
       setResult(data);
       if (data?.foundReport?.id) {
@@ -359,7 +390,7 @@ export default function Capture() {
     } catch (e) {
       const offlineish = e.network || !navigator.onLine || e.message === 'Failed to fetch' || String(e.message).includes('NetworkError');
       if (offlineish) {
-        const next = await enqueueSighting(form, file);
+        const next = await enqueueSighting(form, file, file ? extras.map((p) => p.file) : []);
         setQueued(next);
         setErr(msg('Network unavailable. Your report is encrypted on this device and will retry when the network returns.'));
       } else {
@@ -560,6 +591,48 @@ export default function Capture() {
                 </button>
               </p>
             )}
+            {/*
+              More photos of the same person: a second angle or a clearer face
+              is often the one that matches. Up to three in all.
+            */}
+            {file && (
+              <div className="border-b border-black/5 px-4 py-3 sm:px-6">
+                <input ref={extraCameraRef} type="file" accept="image/*" capture="environment" onChange={onExtraFile} className="hidden" />
+                <input ref={extraFileRef} type="file" accept="image/*" multiple onChange={onExtraFile} className="hidden" />
+                {extras.length > 0 && (
+                  <ul className="mb-2 flex flex-wrap gap-3 pt-2" aria-label={t('Other photos')}>
+                    {extras.map((p) => (
+                      <li key={p.key} className="relative">
+                        <img src={p.preview} alt="" className="h-20 w-20 rounded-lg object-cover ring-1 ring-black/10" />
+                        <button
+                          type="button"
+                          onClick={() => removeExtra(p.key)}
+                          aria-label={t('Remove')}
+                          className="absolute -right-2 -top-2 grid h-8 w-8 place-items-center rounded-full bg-gray-900 text-white ring-2 ring-white hover:bg-black"
+                        >
+                          <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {extras.length < MAX_SIGHTING_PHOTOS - 1 ? (
+                  <>
+                    <p className="text-xs text-gray-500">{t('Another photo from a different angle helps. Up to {n} in all.', { n: MAX_SIGHTING_PHOTOS })}</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button type="button" className="btn-ghost min-h-11 px-3 py-2 text-sm" onClick={() => extraCameraRef.current?.click()}>
+                        {t('Take another photo')}
+                      </button>
+                      <button type="button" className="btn-ghost min-h-11 px-3 py-2 text-sm" onClick={() => extraFileRef.current?.click()}>
+                        {t('Add from gallery')}
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-xs text-gray-500">{t('{n} photos will be sent.', { n: MAX_SIGHTING_PHOTOS })}</p>
+                )}
+              </div>
+            )}
             <div className="space-y-4 p-4 sm:p-6">
               <h2 className="text-lg font-bold text-ink">{t(copy.where)}</h2>
               {!file && (
@@ -732,8 +805,8 @@ export default function Capture() {
                 )}
                 <div className="flex gap-3 pb-3 sm:justify-between sm:pb-0">
                   <button className="btn-ghost" onClick={() => setStep(1)} disabled={busy}>{t('Back')}</button>
-                  <button className="btn-primary flex-1 sm:flex-none sm:px-8" onClick={submit} disabled={busy || preparing || Boolean(blocked)}>
-                    {busy ? t('Submitting...') : preparing ? t('Preparing the photo…') : t('Send report')}
+                  <button className="btn-primary flex-1 sm:flex-none sm:px-8" onClick={submit} disabled={busy || preparingAny || Boolean(blocked)}>
+                    {busy ? t('Submitting...') : preparingAny ? t('Preparing the photo…') : t('Send report')}
                   </button>
                 </div>
               </div>
@@ -782,7 +855,7 @@ export default function Capture() {
 
             <div className="grid gap-3 sm:flex sm:justify-center">
               <Link to={`/track-sighting?receipt=${encodeURIComponent(result.foundReport.id)}`} className="btn-primary sm:order-1">{t('Track status')}</Link>
-              <button className="btn-ghost sm:order-2" onClick={() => { setStep(1); setResult(null); setFile(null); setPreview(null); setOriginalSize(0); clearLocation(); }}>{t('Report another')}</button>
+              <button className="btn-ghost sm:order-2" onClick={() => { setStep(1); setResult(null); setFile(null); setPreview(null); setOriginalSize(0); extras.forEach((p) => URL.revokeObjectURL(p.preview)); setExtras([]); clearLocation(); }}>{t('Report another')}</button>
               <Link to="/" className="btn-ghost sm:order-3">{t('Done')}</Link>
             </div>
 

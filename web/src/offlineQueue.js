@@ -87,11 +87,21 @@ function fileToDataUrl(file) {
   });
 }
 
+// The report as Capture.jsx sends it: the first photo as `photo`, any others
+// as `extraPhotos` (shared/photo-set.js). A report queued before there could
+// be other photos has none, and replays as it always did. web/public/sw.js
+// builds the same body for a background retry.
 export async function queuedToFormData(item) {
   const fd = new FormData();
   if (item.file?.dataUrl) {
     const blob = await fetch(item.file.dataUrl).then((r) => r.blob());
     fd.append('photo', blob, item.file.name || 'queued-sighting.jpg');
+    for (const [i, extra] of (Array.isArray(item.extraFiles) ? item.extraFiles : []).entries()) {
+      if (!extra?.dataUrl) continue;
+      // eslint-disable-next-line no-await-in-loop
+      const extraBlob = await fetch(extra.dataUrl).then((r) => r.blob());
+      fd.append('extraPhotos', extraBlob, extra.name || `queued-sighting-${i + 2}.jpg`);
+    }
   }
   Object.entries(item.form || {}).forEach(([k, v]) => v != null && v !== '' && fd.append(k, v));
   return fd;
@@ -115,10 +125,14 @@ export async function getQueuedSightings() {
   return decrypted.sort((a, b) => b.createdAt - a.createdAt);
 }
 
-export async function enqueueSighting(form, file) {
+export async function enqueueSighting(form, file, extraFiles = []) {
   const id = `q_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   const createdAt = Date.now();
-  const encrypted = await encryptPayload({ form, file: await fileToDataUrl(file) });
+  const encrypted = await encryptPayload({
+    form,
+    file: await fileToDataUrl(file),
+    extraFiles: (await Promise.all((Array.isArray(extraFiles) ? extraFiles : []).map(fileToDataUrl))).filter(Boolean),
+  });
   const db = await openDb();
   const existing = await requestToPromise(txStore(db, STORE).getAll());
   const expired = existing.filter((record) => isExpired(record));

@@ -11,6 +11,16 @@ import { useBackClose } from '../useBackClose.js';
 import { ActionMessage, ActionToast, useAction } from './useAction.jsx';
 import { ConfirmMatchDialog, EngineScores, MatchEvidence, currentCandidate, photoCheckFlag, telHref } from './Reunite.jsx';
 import PhotoViewer from './PhotoViewer.jsx';
+import { MAIN_PHOTO, photoUrlOf, viewPhotosOf } from '../../../shared/photo-set.js';
+
+/**
+ * Which photo of the sighting and which of the case a candidate's score is
+ * for (shared/photo-set.js ids), so the comparison opens on that pair.
+ */
+function photoPairOf(sighting, matched) {
+  const candidate = asList(sighting?.matchCandidates).find((c) => c && c.reportId === matched?.id);
+  return candidate?.photoPair || (sighting?.matchedReportId === matched?.id ? sighting?.matchedPhotoPair : null) || null;
+}
 import { POLICE_ROLES } from '../../../shared/scope.js';
 import { sightingScreenVerdict } from '../../../shared/face-screen.js';
 
@@ -168,8 +178,8 @@ export default function FoundReports({ view = 'matches' }) {
   // Photos an officer chose to see despite the screen holding them back.
   const [revealed, setRevealed] = useState({});
   // The sighting whose photograph is open full size.
+  // The sighting whose photos are open full size (PhotoViewer, which closes on Back).
   const [viewing, setViewing] = useState(null);
-  useBackClose(Boolean(viewing), () => setViewing(null));
   // An officer's own reading of a photo, recorded over the face screen's.
   const recordScreening = (f, verdict) => action.run(`screening-${f.id}`, async () => {
     const data = await api.post(`/reports/found/${f.id}/screening`, { verdict });
@@ -732,7 +742,7 @@ export default function FoundReports({ view = 'matches' }) {
                   front of officers all day. Nothing is hidden from the reviewer
                   — it is one click away, with the reason it was held back.
                 */}
-                <div className="h-24 w-24 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-100 sm:h-28 sm:w-28">
+                <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-100 sm:h-28 sm:w-28">
                   {/* A text report has no photo to hold back: it falls through
                       to "No photo — text report". */}
                   {f.screening && !['person', 'no_photo'].includes(sightingScreenVerdict(f.screening)) && !revealed[f.id] ? (
@@ -767,6 +777,12 @@ export default function FoundReports({ view = 'matches' }) {
                           </div>
                         }
                       />
+                      {/* The reporter sent more than one photo. */}
+                      {viewPhotosOf(f).length > 1 && (
+                        <span className="absolute bottom-1 right-1 rounded bg-black/65 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                          {t('{n} photos', { n: viewPhotosOf(f).length })}
+                        </span>
+                      )}
                     </button>
                   )}
                 </div>
@@ -1256,35 +1272,21 @@ export default function FoundReports({ view = 'matches' }) {
         })}
       </div>
 
-      {/* The photograph a citizen sent, whole and large: a thumbnail is too
+      {/* The photographs a citizen sent, whole and large: a thumbnail is too
           small to tell a face from a reflection. */}
       {viewing && (
-        <div
-          className="fixed inset-0 z-[80] flex flex-col bg-black/85"
-          role="dialog"
-          aria-modal="true"
-          aria-label={t('Reported sighting')}
-          onClick={() => setViewing(null)}
-        >
-          <div className="flex items-center justify-between gap-3 px-4 py-3 text-white">
-            <p className="min-w-0 truncate text-sm">{txt(viewing.geoAddress) || d(viewing.foundLocation)}</p>
-            <button
-              type="button"
-              onClick={() => setViewing(null)}
-              className="grid h-11 w-11 shrink-0 place-items-center rounded-xl hover:bg-white/10"
-              aria-label={t('Close')}
-            >
-              <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
-            </button>
-          </div>
-          <div className="flex min-h-0 flex-1 items-center justify-center p-4 pt-0" onClick={(e) => e.stopPropagation()}>
-            <ProtectedImage
-              src={txt(viewing.photoUrl) || `/api/reports/photo/${viewing.id}`}
-              alt={t('Reported sighting')}
-              className="max-h-full max-w-full object-contain"
-            />
-          </div>
-        </div>
+        <ErrorBoundary>
+          <PhotoViewer
+            title={txt(viewing.geoAddress) || d(viewing.foundLocation)}
+            onClose={() => setViewing(null)}
+            panes={[{
+              label: t('Sighting photos'),
+              startId: MAIN_PHOTO,
+              photos: (viewPhotosOf(viewing).length ? viewPhotosOf(viewing) : [{ id: MAIN_PHOTO, src: `/api/reports/photo/${viewing.id}` }])
+                .map((p) => ({ id: p.id, src: p.src })),
+            }]}
+          />
+        </ErrorBoundary>
       )}
 
       {/* Side-by-side compare: both photographs whole, for looking. Confirming
@@ -1321,13 +1323,16 @@ export default function FoundReports({ view = 'matches' }) {
                   className="flex h-56 w-full cursor-zoom-in items-center justify-center overflow-hidden rounded-xl border bg-slate-100 text-xs text-slate-400 hover:ring-2 hover:ring-khozo/40 sm:h-80"
                 >
                   <ProtectedImage
-                    src={txt(compareModal.sighting.photoUrl) || (compareModal.sighting.id ? `/api/reports/photo/${compareModal.sighting.id}` : null)}
+                    src={photoUrlOf(compareModal.sighting, photoPairOf(compareModal.sighting, compareModal.matched)?.sighting) || photoUrlOf(compareModal.sighting) || (compareModal.sighting.id ? `/api/reports/photo/${compareModal.sighting.id}` : null)}
                     alt={t('Sighting')}
                     className="max-h-full max-w-full object-contain"
                     fallback={<span>{t('No sighting photo')}</span>}
                   />
                 </button>
                 <p className="mt-2 text-xs font-medium text-gray-700">{d(compareModal.sighting.foundLocation)}</p>
+                {viewPhotosOf(compareModal.sighting).length > 1 && (
+                  <p className="text-[11px] text-gray-500">{t('{n} photos sent', { n: viewPhotosOf(compareModal.sighting).length })}</p>
+                )}
               </div>
 
               <div className="min-w-0 text-center">
@@ -1341,17 +1346,26 @@ export default function FoundReports({ view = 'matches' }) {
                   className="flex h-56 w-full cursor-zoom-in items-center justify-center overflow-hidden rounded-xl border border-indigo-100 bg-indigo-50 text-xs text-indigo-400 hover:ring-2 hover:ring-khozo/40 sm:h-80"
                 >
                   <ProtectedImage
-                    src={txt(compareModal.matched.photoUrl) || (compareModal.matched.id ? `/api/reports/photo/${compareModal.matched.id}` : null)}
+                    src={photoUrlOf(compareModal.matched, photoPairOf(compareModal.sighting, compareModal.matched)?.case) || photoUrlOf(compareModal.matched) || (compareModal.matched.id ? `/api/reports/photo/${compareModal.matched.id}` : null)}
                     alt={t('Missing child')}
                     className="max-h-full max-w-full object-contain"
                     fallback={<span>{t('No case photo')}</span>}
                   />
                 </button>
                 <p className="mt-2 text-xs font-bold text-gray-900">{d(compareModal.matched.childName)}</p>
+                {viewPhotosOf(compareModal.matched).length > 1 && (
+                  <p className="text-[11px] text-gray-500">
+                    {photoPairOf(compareModal.sighting, compareModal.matched)?.case && photoPairOf(compareModal.sighting, compareModal.matched).case !== MAIN_PHOTO
+                      ? t('Matched on one of its other photos · {n} in all', { n: viewPhotosOf(compareModal.matched).length })
+                      : t('{n} photos on the case', { n: viewPhotosOf(compareModal.matched).length })}
+                  </p>
+                )}
               </div>
             </div>
             <button type="button" onClick={() => setCompareFull(true)} className="btn-ghost w-full py-2 text-xs">
-              {t('View both photos full size')}
+              {viewPhotosOf(compareModal.sighting).length + viewPhotosOf(compareModal.matched).length > 2
+                ? t('View all the photos full size')
+                : t('View both photos full size')}
             </button>
 
             <div className="rounded-xl bg-slate-50 p-3.5 text-center ring-1 ring-slate-200">
@@ -1404,16 +1418,22 @@ export default function FoundReports({ view = 'matches' }) {
           <PhotoViewer
             title={t('Face comparison')}
             onClose={() => setCompareFull(false)}
-            photos={[
+            panes={[
               {
-                src: txt(compareModal.sighting.photoUrl) || (compareModal.sighting.id ? `/api/reports/photo/${compareModal.sighting.id}` : null),
-                label: t('Sighting photo'),
-                caption: txt(compareModal.sighting.geoAddress) || d(compareModal.sighting.foundLocation),
+                label: t('Sighting photos'),
+                startId: photoPairOf(compareModal.sighting, compareModal.matched)?.sighting || MAIN_PHOTO,
+                photos: (viewPhotosOf(compareModal.sighting).length
+                  ? viewPhotosOf(compareModal.sighting)
+                  : [{ id: MAIN_PHOTO, src: compareModal.sighting.id ? `/api/reports/photo/${compareModal.sighting.id}` : null }])
+                  .map((p) => ({ id: p.id, src: p.src, caption: txt(compareModal.sighting.geoAddress) || d(compareModal.sighting.foundLocation) })),
               },
               {
-                src: txt(compareModal.matched.photoUrl) || (compareModal.matched.id ? `/api/reports/photo/${compareModal.matched.id}` : null),
                 label: isAdultCase(compareModal.matched) ? t('Missing person record') : t('Missing child record'),
-                caption: d(compareModal.matched.childName),
+                startId: photoPairOf(compareModal.sighting, compareModal.matched)?.case || MAIN_PHOTO,
+                photos: (viewPhotosOf(compareModal.matched).length
+                  ? viewPhotosOf(compareModal.matched)
+                  : [{ id: MAIN_PHOTO, src: compareModal.matched.id ? `/api/reports/photo/${compareModal.matched.id}` : null }])
+                  .map((p) => ({ id: p.id, src: p.src, caption: d(compareModal.matched.childName) })),
               },
             ]}
             footer={t('Looking at the photos does not confirm a match. Confirming asks how the person was verified: in person, by video or from documents.')}

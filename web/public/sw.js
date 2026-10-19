@@ -83,11 +83,20 @@ async function decrypt(record) {
   return JSON.parse(new TextDecoder().decode(plain));
 }
 
+// The same body web/src/offlineQueue.js queuedToFormData builds: the first
+// photo as `photo`, any others as `extraPhotos`.
 async function itemToFormData(item) {
   const fd = new FormData();
   if (item.file?.dataUrl) {
     const blob = await fetch(item.file.dataUrl).then((res) => res.blob());
     fd.append('photo', blob, item.file.name || 'queued-sighting.jpg');
+    const extraFiles = Array.isArray(item.extraFiles) ? item.extraFiles : [];
+    for (let i = 0; i < extraFiles.length; i += 1) {
+      if (!extraFiles[i]?.dataUrl) continue;
+      // eslint-disable-next-line no-await-in-loop
+      const extraBlob = await fetch(extraFiles[i].dataUrl).then((res) => res.blob());
+      fd.append('extraPhotos', extraBlob, extraFiles[i].name || `queued-sighting-${i + 2}.jpg`);
+    }
   }
   Object.entries(item.form || {}).forEach(([key, value]) => {
     if (value != null && value !== '') fd.append(key, value);
