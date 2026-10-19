@@ -24,7 +24,7 @@ function JurisdictionCard({ user }) {
   const place = [j.station, j.district].filter(Boolean).join(', ') || j.state || t('National Level');
   return (
     <div className="mx-4 mb-5 mt-1 shrink-0 rounded-2xl bg-ink p-4 text-white">
-      <p className="text-[10px] font-bold uppercase tracking-widest text-lime-300">{t('ACTIVE JURISDICTION')}</p>
+      <p className="text-[10px] font-bold uppercase tracking-widest text-lime-300">{t('WORKING AREA')}</p>
       <p className="mt-1.5 truncate text-sm font-bold">{roleLabel(user.role)}</p>
       <p className="mt-0.5 flex items-center gap-1.5 text-xs text-white/65">
         <svg aria-hidden="true" viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -304,7 +304,7 @@ export default function DashboardLayout() {
                       <span className="truncate font-semibold text-slate-700">{roleLabel(user.role)}</span>
                     </div>
                     <div className="flex items-center justify-between gap-3 rounded-lg px-2 py-1.5">
-                      <span className="font-medium text-slate-500">{t('Jurisdiction')}</span>
+                      <span className="font-medium text-slate-500">{t('Area')}</span>
                       <span className="truncate font-semibold text-slate-700">
                         {[user.jurisdiction?.station, user.jurisdiction?.district, user.jurisdiction?.state]
                           .filter(Boolean)

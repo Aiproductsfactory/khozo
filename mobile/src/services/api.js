@@ -66,7 +66,7 @@ export async function request(path, { method = 'GET', body, token, timeout, sign
     const cause = error?.message ? ` (${error.message})` : '';
     throw new ApiError(
       aborted
-        ? 'The Khozo server did not respond in time. Check your connection and try again — a sighting you submit offline is saved and sent automatically.'
+        ? 'Khozo did not answer in time. Check your connection and try again — a sighting you send offline is saved and sent automatically.'
         : `Could not reach the Khozo server. Check your connection and try again.${cause}`,
       { status: 0, code: aborted ? 'TIMEOUT' : 'NETWORK', details: error?.message || null },
     );

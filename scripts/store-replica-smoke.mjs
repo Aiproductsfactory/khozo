@@ -205,7 +205,7 @@ const raceIo = fakeIo({
 });
 const linking = await createRequestStore({}, null, raceIo);
 const officer = await createRequestStore({}, null, raceIo);
-officer.store.updateFoundReport('s_1', { reporterName: 'Anonymized citizen', reporterPhone: null, anonymizedAt: '2026-10-16T00:00:00.000Z' });
+officer.store.updateFoundReport('s_1', { reporterName: 'Anonymised citizen', reporterPhone: null, anonymizedAt: '2026-10-16T00:00:00.000Z' });
 await officer.flush();
 const linkable = (row) => !row.anonymizedAt && !row.matchedReportId;
 const link = (row) => ({ matchedReportId: 'r_9', status: 'pending_review', previousStatus: row.status });
@@ -216,7 +216,7 @@ await linking.flush();
 const s1 = raceIo.tables.found_reports.find((r) => r.id === 's_1');
 check(
   'the anonymisation is not undone by the linking request',
-  Boolean(s1.anonymizedAt) && s1.reporterName === 'Anonymized citizen' && s1.reporterPhone === null && !s1.matchedReportId,
+  Boolean(s1.anonymizedAt) && s1.reporterName === 'Anonymised citizen' && s1.reporterPhone === null && !s1.matchedReportId,
   JSON.stringify(s1)
 );
 // Read before the link below is made, as a concurrent registration would be.

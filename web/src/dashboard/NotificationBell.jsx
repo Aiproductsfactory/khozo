@@ -139,7 +139,7 @@ export default function NotificationBell({ onConnectionChange }) {
                     {timeAgo(item.ts)}
                     {item.inJurisdiction && (
                       <span className="rounded-full bg-khozo-light px-1.5 py-0.5 font-semibold text-khozo-dark">
-                        {t('Your jurisdiction')}
+                        {t('Your area')}
                       </span>
                     )}
                   </span>

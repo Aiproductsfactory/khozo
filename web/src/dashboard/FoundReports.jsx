@@ -47,8 +47,8 @@ function comparedLine(engine) {
 
 const CWC_OUTCOMES = [
   { id: 'child_located_safe', label: msg('Child located safe') },
-  { id: 'shelter_intake_required', label: msg('Shelter / CCI intake') },
-  { id: 'escalated_police', label: msg('Escalate police') },
+  { id: 'shelter_intake_required', label: msg('Shelter or CCI admission') },
+  { id: 'escalated_police', label: msg('Refer to police') },
   { id: 'duplicate_or_invalid', label: msg('Duplicate / invalid') },
 ];
 
@@ -65,7 +65,7 @@ const VIEWS = {
   matches: {
     title: msg('Matches'),
     blurb: msg(
-      'Sightings a face-comparison engine linked to an open case. A score is a prompt to look, never a decision — you confirm, and only then is a family contacted.'
+      'Sightings that face matching linked to an open case. A score is a reason to look, never a decision: you confirm, and only then is a family contacted.'
     ),
     belongs: (f) => Boolean(f.matchedReportId),
     filters: [
@@ -79,7 +79,7 @@ const VIEWS = {
   sightings: {
     title: msg('Sightings'),
     blurb: msg(
-      'Reports from the public that matched no open case. They are welfare intake — Childline and CWC follow-up — not identification decisions.'
+      'Reports from the public that matched no open case. They need welfare follow-up by Childline and the CWC, not a decision on who the person is.'
     ),
     belongs: (f) => !f.matchedReportId,
     filters: [
@@ -109,8 +109,8 @@ function confidenceBand(score) {
   // Said as similarity: next to a name, 'Strong' read as 'this is them'.
   if (value >= 0.6) return { label: t('High similarity'), className: 'text-emerald-600' };
   if (value >= 0.35) return { label: t('Worth reviewing'), className: 'text-amber-600' };
-  if (value > 0) return { label: t('Below threshold'), className: 'text-slate-400' };
-  return { label: t('No candidate'), className: 'text-slate-300' };
+  if (value > 0) return { label: t('Score too low'), className: 'text-slate-400' };
+  return { label: t('No possible match'), className: 'text-slate-300' };
 }
 
 /**
@@ -140,7 +140,7 @@ function screeningNote(screening) {
     const q = Number(screening.quality);
     return {
       label: screening.quality != null && Number.isFinite(q)
-        ? t('Clear face found · engine quality {q}%', { q: Math.round(q * 100) })
+        ? t('Clear face found · quality {q}%', { q: Math.round(q * 100) })
         : t('Clear face found'),
       className: 'bg-slate-100 text-slate-700',
     };
@@ -154,7 +154,7 @@ function screeningNote(screening) {
     return { label: t('No person detected — screened out of the general alert'), className: 'bg-amber-50 text-amber-700' };
   }
   if (screening.verdict === 'unverified') {
-    return { label: t('Not screened — no detection provider answered'), className: 'bg-slate-100 text-slate-600' };
+    return { label: t('Not checked: the face check did not answer'), className: 'bg-slate-100 text-slate-600' };
   }
   return null;
 }
@@ -329,8 +329,8 @@ export default function FoundReports({ view = 'matches' }) {
   const engineLabel = engine
     ? {
         text: engine.biometric
-          ? t('Biometric · {provider}', { provider: txt(engine.provider) })
-          : t('Non-biometric · {provider}', { provider: txt(engine.provider) }),
+          ? t('Face match · {provider}', { provider: txt(engine.provider) })
+          : t('Compared by details · {provider}', { provider: txt(engine.provider) }),
         biometric: Boolean(engine.biometric),
         provider: txt(engine.provider),
       }
@@ -498,7 +498,7 @@ export default function FoundReports({ view = 'matches' }) {
       setIntakes((rows) => ({ ...rows, [f.id]: {} }));
       load();
     },
-    msg('Formal intake opened')
+    msg('Formal case opened')
   );
 
   const setFollowup = (id, key) => (e) => {
@@ -592,11 +592,11 @@ export default function FoundReports({ view = 'matches' }) {
                 disabled={action.pending}
                 className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-indigo-600 ring-1 ring-indigo-200 hover:bg-indigo-50"
               >
-                {action.busy('index-fill') ? t('Filling the face search gallery…') : t('Fill the face search gallery')}
+                {action.busy('index-fill') ? t('Adding case photos to face search…') : t('Add case photos to face search')}
               </button>
               {gallery.counts && (
                 <p className="mt-1 text-[11px] text-slate-500">
-                  {t('{enrolled} of {open} open cases in the face search gallery, {needsPhoto} need a better photo', gallery.counts)}
+                  {t('{enrolled} of {open} open cases are in face search; {needsPhoto} need a better photo', gallery.counts)}
                 </p>
               )}
               {gallery.counts?.weak > 0 && (
@@ -604,17 +604,17 @@ export default function FoundReports({ view = 'matches' }) {
               )}
               {gallery.counts?.refused > 0 && (
                 <p className="mt-1 text-[11px] text-amber-700">
-                  {t('{refused} photos refused by the gallery', gallery.counts)}
+                  {t('{refused} photos not accepted by face search', gallery.counts)}
                   {' · '}
                   <button type="button" onClick={() => runFill(true)} disabled={action.pending} className="font-semibold underline">
                     {t('Try refused photos again')}
                   </button>
                 </p>
               )}
-              {!gallery.gallery && <p className="mt-1 text-[11px] font-semibold text-red-600">{t('The face search gallery did not answer')}</p>}
+              {!gallery.gallery && <p className="mt-1 text-[11px] font-semibold text-red-600">{t('Face search did not answer')}</p>}
               {gallery.gallery && gallery.gallery.galleryMatches === false && (
                 <p className="mt-1 text-[11px] font-semibold text-red-600">
-                  {t('The gallery key belongs to another gallery: {name}', { name: gallery.gallery.galleryId || '?' })}
+                  {t('The face search key belongs to another account: {name}', { name: gallery.gallery.galleryId || '?' })}
                 </p>
               )}
               {fill && (
@@ -650,12 +650,12 @@ export default function FoundReports({ view = 'matches' }) {
 
       {error && (
         <div className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-red-100">
-          {t('Could not load the review queue: {error}.', { error })}{' '}
+          {t('Could not load the list: {error}.', { error })}{' '}
           <button onClick={load} className="font-semibold underline">{t('Retry')}</button>
         </div>
       )}
 
-      {loading && <p className="text-sm text-gray-400">{t('Loading the review queue…')}</p>}
+      {loading && <p className="text-sm text-gray-400">{t('Loading the list…')}</p>}
 
       {!loading && !error && visible.length === 0 && (
         <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-12 text-center">
@@ -845,7 +845,7 @@ export default function FoundReports({ view = 'matches' }) {
                       )}
                       {!txt(f.state) && !txt(f.district) && (
                         <span className="block text-xs font-normal text-amber-600">
-                          {t('No jurisdiction given — visible to every review desk')}
+                          {t('No place given, so every review desk can see it')}
                         </span>
                       )}
                     </span>
@@ -914,7 +914,7 @@ export default function FoundReports({ view = 'matches' }) {
                       <div className="min-w-0">
                         <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">{t('Closest open case')}</span>
                         <p className="truncate text-base font-bold capitalize text-gray-900">
-                          {matched ? d(matched.childName) : t('No candidate')}
+                          {matched ? d(matched.childName) : t('No possible match')}
                         </p>
                         {matched && (
                           <p className="truncate text-xs text-gray-500">
@@ -951,7 +951,7 @@ export default function FoundReports({ view = 'matches' }) {
                       )}
                       {proposedCandidates.length > 1 && (
                         <div className="mt-3">
-                          <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">{t('Candidates, best first')}</p>
+                          <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">{t('Possible matches, best first')}</p>
                           <ol className="mt-1 space-y-1">
                             {proposedCandidates.map((c) => (
                               <li
@@ -965,7 +965,7 @@ export default function FoundReports({ view = 'matches' }) {
                                 </span>
                                 <span className="shrink-0 text-slate-500">
                                   {Math.round((Number(c.score) || 0) * 100)}%
-                                  {c.corroborated ? ` · ${t('two engines')}` : c.notChecked ? ` · ${t('not checked')}` : ''}
+                                  {c.corroborated ? ` · ${t('two checks')}` : c.notChecked ? ` · ${t('not checked')}` : ''}
                                 </span>
                               </li>
                             ))}
@@ -973,7 +973,7 @@ export default function FoundReports({ view = 'matches' }) {
                         </div>
                       )}
                       {rejectedCount > 0 && (
-                        <p className="mt-2 text-[11px] text-slate-500">{t('{n} candidate(s) already marked as not this person', { n: rejectedCount })}</p>
+                        <p className="mt-2 text-[11px] text-slate-500">{t('{n} possible match(es) already marked as not this person', { n: rejectedCount })}</p>
                       )}
                       <button
                         onClick={() => setCompareModal({ sighting: f, matched })}
@@ -985,7 +985,7 @@ export default function FoundReports({ view = 'matches' }) {
                   ) : (
                     <p className="mt-2 text-xs text-slate-500">
                       {f.matchEngine && !f.matchEngine.biometric
-                        ? t('No face comparison was made, so no candidate is offered.')
+                        ? t('No faces were compared, so no possible match is shown.')
                         : t('No open case was matched to this photograph.')}
                     </p>
                   )}
@@ -1007,7 +1007,7 @@ export default function FoundReports({ view = 'matches' }) {
                             ? t('A possible match was found and sent for review.')
                             : searched.engine && !searched.engine.biometric
                               ? t('No face comparison was made. Try again later.')
-                              : t('Searched again: no new candidate.')}
+                              : t('Searched again: no new possible match.')}
                         </p>
                       )}
                     </>
@@ -1179,7 +1179,7 @@ export default function FoundReports({ view = 'matches' }) {
 
               {sightingAdult && !f.matchedReportId && ['no_match', 'referred_cwc'].includes(f.status) && (
                 <p className="mt-4 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                  {t('A sighting of an adult is followed up by the police station for the area. Childline/CWC and shelter-intake steps do not apply.')}
+                  {t('A sighting of an adult is followed up by the police station for the area. The Childline, CWC and shelter steps do not apply.')}
                 </p>
               )}
 
@@ -1200,7 +1200,7 @@ export default function FoundReports({ view = 'matches' }) {
                     className="field mt-2 text-xs min-h-16 w-full"
                     value={(followups[f.id]?.note) || ''}
                     onChange={setFollowup(f.id, 'note')}
-                    placeholder={t('Follow-up disposition note')}
+                    placeholder={t('Note on the follow-up')}
                   />
                   <ActionMessage action={action} id={`cwc:${f.id}`} />
                 </div>
@@ -1220,8 +1220,8 @@ export default function FoundReports({ view = 'matches' }) {
 
               {canFormalizeIntake && !sightingAdult && ['no_match', 'referred_cwc', 'cwc_followup_complete'].includes(f.status) && !f.formalReportId && (
                 <div className="mt-4 rounded-xl border border-black/5 p-4 bg-white">
-                  <p className="text-sm font-semibold text-gray-800">{t('Formal child protection intake')}</p>
-                  <p className="text-xs text-gray-500 mt-0.5">{t('Open a formal case for CCI shelter intake when no missing match exists.')}</p>
+                  <p className="text-sm font-semibold text-gray-800">{t('Formal child-protection case')}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">{t('Open a formal case so the child can be admitted to a CCI, when no missing case matches.')}</p>
                   <div className="mt-3 grid gap-2 sm:grid-cols-2">
                     <input
                       className="field text-xs py-2"
@@ -1252,14 +1252,14 @@ export default function FoundReports({ view = 'matches' }) {
                     className="field mt-2 text-xs min-h-16 w-full"
                     value={(intakes[f.id]?.note) || ''}
                     onChange={setIntake(f.id, 'note')}
-                    placeholder={t('Intake note, rehabilitation plan, family tracing action')}
+                    placeholder={t('Note, rehabilitation plan and steps to trace the family')}
                   />
                   <button
                     className="btn-primary mt-2.5 w-full py-2 text-xs font-semibold"
                     disabled={action.pending || ((intakes[f.id]?.note) || '').trim().length < 10}
                     onClick={() => formalizeIntake(f)}
                   >
-                    {action.busy(`intake:${f.id}`) ? t('Opening case…') : t('Open formal intake')}
+                    {action.busy(`intake:${f.id}`) ? t('Opening case…') : t('Open formal case')}
                   </button>
                   <ActionMessage action={action} id={`intake:${f.id}`} />
                 </div>
@@ -1318,7 +1318,7 @@ export default function FoundReports({ view = 'matches' }) {
                 <h3 className="text-lg font-bold text-gray-900">{t('Face comparison')}</h3>
                 {/* Names the engine that produced this score, not a fixed one. */}
                 <p className="text-xs text-gray-500">
-                  {txt(compareModal.sighting.matchEngine?.provider) || t('engine not recorded')}
+                  {txt(compareModal.sighting.matchEngine?.provider) || t('matcher not recorded')}
                   {compareModal.sighting.secondOpinion === 'agrees' && ` · ${t('confirmed by AWS Rekognition')}`}
                 </p>
               </div>

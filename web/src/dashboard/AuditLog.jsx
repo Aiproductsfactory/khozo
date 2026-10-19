@@ -6,10 +6,10 @@ import { useT, msg } from '../i18n.jsx';
 const ACTION_LABELS = {
   'auth.public_user_registered': msg('Public account registered'),
   'auth.privileged_registration_blocked': msg('Privileged signup blocked'),
-  'security.public_rate_limited': msg('Public rate limit exceeded'),
-  'export.signature_verified': msg('Export signature verified'),
-  'audit.integrity_checked': msg('Audit integrity checked'),
-  'audit.report_exported': msg('Audit report exported'),
+  'security.public_rate_limited': msg('Too many reports from one connection'),
+  'export.signature_verified': msg('Seal on a downloaded file checked'),
+  'audit.integrity_checked': msg('Record checked for changes'),
+  'audit.report_exported': msg('Record of actions downloaded'),
   'case.report_registered': msg('Missing-child report registered'),
   'case.fir_registered': msg('FIR registered'),
   'case.match_confirmed': msg('Case match confirmed'),
@@ -19,18 +19,18 @@ const ACTION_LABELS = {
   'case.cci_care_recorded': msg('CCI care recorded'),
   'case.referred_jjb': msg('Case referred to JJB'),
   'case.jjb_proceeding_recorded': msg('JJB proceeding recorded'),
-  'case.escalated_state': msg('Case escalated to state'),
-  'case.state_escalation_recorded': msg('State escalation recorded'),
+  'case.escalated_state': msg('Case referred to the State'),
+  'case.state_escalation_recorded': msg('Referral to the State recorded'),
   'case.notified_crime_bureau': msg('Crime bureau notified'),
   'case.bureau_report_recorded': msg('Bureau report recorded'),
   'case.external_id_linked': msg('External ID linked'),
-  'case.handoff_exported': msg('Case handoff exported'),
+  'case.handoff_exported': msg('Case file handed over'),
   'case.welfare_referral_recorded': msg('Welfare referral recorded'),
   'case.adoption_recorded': msg('Adoption record updated'),
   'case.assessment_recorded': msg('Case assessment recorded'),
   'case.production_recorded': msg('Production recorded'),
   'sighting.submitted': msg('Public sighting submitted'),
-  'sighting.cwc_queued': msg('Queued for 1098/CWC'),
+  'sighting.cwc_queued': msg('Sent to 1098 or the CWC'),
   'sighting.referred_cwc': msg('Referred to 1098/CWC'),
   'sighting.match_confirmed': msg('Sighting match confirmed'),
   'sighting.rejected': msg('Sighting rejected'),
@@ -64,7 +64,7 @@ export default function AuditLog() {
           actorName: t('Current user'),
           actorRole: '-',
           action: 'audit.integrity_checked',
-          summary: data.integrity?.ok ? t('Checked audit integrity: valid') : t('Checked audit integrity: failed'),
+          summary: data.integrity?.ok ? t('Checked the record for changes: none found') : t('Checked the record for changes: a problem was found'),
           targetType: 'auditLog',
           scope: {},
         },
@@ -94,7 +94,7 @@ export default function AuditLog() {
           actorName: data.generatedBy?.name || t('Current user'),
           actorRole: data.generatedBy?.role || '-',
           action: 'audit.report_exported',
-          summary: t('Exported audit log with {n} events', { n: data.totals?.events || 0 }),
+          summary: t('Downloaded the record of actions ({n} entries)', { n: data.totals?.events || 0 }),
           targetType: 'auditReport',
           scope: {},
         },
@@ -123,8 +123,8 @@ export default function AuditLog() {
           actorRole: '-',
           action: 'export.signature_verified',
           summary: data.ok
-            ? t('Verified {type} export signature: valid', { type: data.type || t('unknown') })
-            : t('Verified {type} export signature: failed', { type: data.type || t('unknown') }),
+            ? t('Checked the seal on a {type} file: genuine', { type: data.type || t('unknown') })
+            : t('Checked the seal on a {type} file: not genuine', { type: data.type || t('unknown') }),
           targetType: 'signedExport',
           scope: {},
         },
@@ -141,15 +141,15 @@ export default function AuditLog() {
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-bold">{t('Audit log')}</h2>
-          <p className="text-sm text-gray-500">{t('Case, sighting, referral, SMS, and access-control events in your scope.')}</p>
+          <h2 className="text-2xl font-bold">{t('Record of actions')}</h2>
+          <p className="text-sm text-gray-500">{t('Every action on cases, sightings, referrals and messages, and every sign-in, in your area.')}</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button className="btn-ghost" disabled={checking} onClick={checkIntegrity}>
             {checking ? t('Checking...') : t('Verify')}
           </button>
           <button className="btn-ghost" disabled={exporting} onClick={exportAudit}>
-            {exporting ? t('Exporting...') : t('Export JSON')}
+            {exporting ? t('Exporting...') : t('Download')}
           </button>
           <label className={`btn-ghost ${verifying ? 'pointer-events-none opacity-50' : ''}`}>
             {verifying ? t('Verifying...') : t('Verify export')}
@@ -160,10 +160,10 @@ export default function AuditLog() {
 
       {integrity && (
         <div className={`rounded-xl border px-4 py-3 text-sm ${integrity.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-rose-200 bg-rose-50 text-rose-800'}`}>
-          <p className="font-medium">{integrity.ok ? t('Audit chain verified') : t('Audit chain check failed')}</p>
+          <p className="font-medium">{integrity.ok ? t('No changes found in the record') : t('The record shows a change or a gap')}</p>
           <p className="text-xs opacity-80">
             {integrity.checked === 1 ? t('1 event checked') : t('{n} events checked', { n: integrity.checked || 0 })}
-            {integrity.headHash ? ` / ${t('head {hash}', { hash: integrity.headHash.slice(0, 12) })}` : ''}
+            {integrity.headHash ? ` / ${t('latest entry {hash}', { hash: integrity.headHash.slice(0, 12) })}` : ''}
             {integrity.failedId ? ` / ${t('failed at {id}', { id: integrity.failedId })}` : ''}
           </p>
         </div>
@@ -171,9 +171,9 @@ export default function AuditLog() {
 
       {verification && (
         <div className={`rounded-xl border px-4 py-3 text-sm ${verification.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-rose-200 bg-rose-50 text-rose-800'}`}>
-          <p className="font-medium">{verification.ok ? t('Export signature verified') : t('Export signature failed')}</p>
+          <p className="font-medium">{verification.ok ? t('Seal on a downloaded file checked') : t('Seal check failed')}</p>
           <p className="text-xs opacity-80">
-            {[verification.type, verification.keyId ? t('key {id}', { id: verification.keyId }) : null, verification.digest ? t('digest {hash}', { hash: verification.digest.slice(0, 12) }) : null, verification.reason].filter(Boolean).join(' / ')}
+            {[verification.type, verification.keyId ? t('key {id}', { id: verification.keyId }) : null, verification.digest ? t('seal {hash}', { hash: verification.digest.slice(0, 12) }) : null, verification.reason].filter(Boolean).join(' / ')}
           </p>
         </div>
       )}
@@ -188,7 +188,7 @@ export default function AuditLog() {
                 <th className="px-4 py-3">{t('Action')}</th>
                 <th className="px-4 py-3">{t('Summary')}</th>
                 <th className="px-4 py-3">{t('Target')}</th>
-                <th className="px-4 py-3">{t('Scope')}</th>
+                <th className="px-4 py-3">{t('Area')}</th>
               </tr>
             </thead>
             <tbody>
@@ -209,14 +209,14 @@ export default function AuditLog() {
                   </td>
                   <td className="stack-full px-4 py-3 text-gray-700 max-sm:order-first">{r.summary || '-'}</td>
                   <td className="px-4 py-3 text-gray-500" data-label={t('Target')}>{[r.targetType, r.targetId].filter(Boolean).join(' / ') || '-'}</td>
-                  <td className="px-4 py-3 text-gray-500" data-label={t('Scope')}>
+                  <td className="px-4 py-3 text-gray-500" data-label={t('Area')}>
                     {[r.scope?.district, r.scope?.state].filter(Boolean).join(', ') || r.scope?.reportId || r.scope?.matchedReportId || '-'}
                   </td>
                 </tr>
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="stack-full px-4 py-10 text-center text-gray-400">{t('No audit events in your scope yet.')}</td>
+                  <td colSpan={6} className="stack-full px-4 py-10 text-center text-gray-400">{t('No actions recorded in your area yet.')}</td>
                 </tr>
               )}
             </tbody>

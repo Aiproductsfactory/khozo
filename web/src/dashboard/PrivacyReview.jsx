@@ -27,7 +27,7 @@ const STATE_LABEL = {
   expired: msg('Expired'),
   due_soon: msg('Due soon'),
   active: msg('Active'),
-  missing_retention: msg('No retention date'),
+  missing_retention: msg('No delete-by date'),
 };
 
 export default function PrivacyReview() {
@@ -81,7 +81,7 @@ export default function PrivacyReview() {
     <div className="space-y-5">
       <div>
         <h2 className="text-2xl font-bold">{t('Privacy review')}</h2>
-        <p className="text-sm text-gray-500">{t('Review photo consent, purpose, and retention dates for cases and sightings in your scope.')}</p>
+        <p className="text-sm text-gray-500">{t('Review photo consent, purpose, and how long cases and sightings in your area are kept.')}</p>
       </div>
       {capabilities.canExport && (
         <div className="flex justify-end">
@@ -93,8 +93,8 @@ export default function PrivacyReview() {
         <div className="card p-4 text-sm bg-gray-50/50">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="font-semibold text-gray-700">{t('Anonymization authorization')}</p>
-              <p className="text-xs text-gray-500">{t('Specify an approval or court order reference for anonymization decisions.')}</p>
+              <p className="font-semibold text-gray-700">{t('Approval to remove details')}</p>
+              <p className="text-xs text-gray-500">{t('Give an approval or court order number before removing a person’s details.')}</p>
             </div>
             <input
               className="field py-1.5 text-xs sm:max-w-xs"
@@ -115,8 +115,8 @@ export default function PrivacyReview() {
             </div>
             <div className="flex flex-wrap gap-2 text-xs sm:flex-nowrap">
               <span className="rounded-full bg-gray-100 px-2 py-1">{t('{n} records', { n: exportData.totals.records })}</span>
-              <span className="rounded-full bg-gray-100 px-2 py-1">{t('{n} anonymized', { n: exportData.totals.anonymized })}</span>
-              <span className="rounded-full bg-gray-100 px-2 py-1">{t('{n} missing retention', { n: exportData.totals.missingRetention })}</span>
+              <span className="rounded-full bg-gray-100 px-2 py-1">{t('{n} with details removed', { n: exportData.totals.anonymized })}</span>
+              <span className="rounded-full bg-gray-100 px-2 py-1">{t('{n} with no delete-by date', { n: exportData.totals.missingRetention })}</span>
             </div>
           </div>
         </div>
@@ -131,7 +131,7 @@ export default function PrivacyReview() {
                 <th className="px-4 py-3">{t('Status')}</th>
                 <th className="px-4 py-3">{t('Purpose')}</th>
                 <th className="px-4 py-3">{t('Consent')}</th>
-                <th className="px-4 py-3">{t('Retention')}</th>
+                <th className="px-4 py-3">{t('Keep until')}</th>
                 <th className="px-4 py-3 text-right">{t('Actions')}</th>
               </tr>
             </thead>
@@ -150,7 +150,7 @@ export default function PrivacyReview() {
                   </td>
                   <td className="px-4 py-3 text-gray-600" data-label={t('Purpose')}>{r.dataPurpose}</td>
                   <td className="px-4 py-3 text-gray-600" data-label={t('Consent')}>{r.photoConsent ? t('Recorded') : t('No photo / not recorded')}</td>
-                  <td className="px-4 py-3" data-label={t('Retention')}>
+                  <td className="px-4 py-3" data-label={t('Keep until')}>
                     <p className="text-gray-700">{r.retentionUntil ? fmtDate(r.retentionUntil) : '-'}</p>
                     {r.daysUntilRetention != null && <p className="text-xs text-gray-400">{t('{n} days', { n: r.daysUntilRetention })}</p>}
                   </td>
@@ -163,7 +163,7 @@ export default function PrivacyReview() {
                               <option value="privacy_officer">{t('Privacy officer')}</option>
                               <option value="cwc_order">{t('CWC order')}</option>
                               <option value="court_order">{t('Court order')}</option>
-                              <option value="data_retention_policy">{t('Retention policy')}</option>
+                              <option value="data_retention_policy">{t('How long records are kept')}</option>
                             </select>
                             <input className="field py-2 text-xs" value={(approvalForms[`${r.type}:${r.id}`] || {}).approvalReference || ''} onChange={setApproval(r, 'approvalReference')} placeholder={t('Approval/order reference')} />
                             <input className="field py-2 text-xs sm:col-span-2" maxLength={280} value={(approvalForms[`${r.type}:${r.id}`] || {}).approvalNote || ''} onChange={setApproval(r, 'approvalNote')} placeholder={t('Approval note')} />
@@ -175,7 +175,7 @@ export default function PrivacyReview() {
                         </button>
                         {capabilities.canAnonymize && (
                           <button className="btn-ghost max-sm:flex-auto" disabled={!!busyId} onClick={() => decide(r, 'anonymize')}>
-                            {busyId === `${r.type}:${r.id}:anonymize` ? t('Saving...') : t('Anonymize')}
+                            {busyId === `${r.type}:${r.id}:anonymize` ? t('Saving...') : t('Remove details')}
                           </button>
                         )}
                         <button className="btn-primary max-sm:flex-auto" disabled={!!busyId} onClick={() => decide(r, 'extend')}>
@@ -191,7 +191,7 @@ export default function PrivacyReview() {
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="stack-full px-4 py-10 text-center text-gray-400">{t('No privacy retention records in your scope.')}</td>
+                  <td colSpan={6} className="stack-full px-4 py-10 text-center text-gray-400">{t('No records to review in your area.')}</td>
                 </tr>
               )}
             </tbody>

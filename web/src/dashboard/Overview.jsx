@@ -18,7 +18,7 @@ const PIE_COLORS = ['#ef4444', '#f59e0b', '#10b981'];
 // Role-specific framing for the headline strip.
 const HEADLINE = {
   super_admin: { title: msg('National overview'), sub: msg('Every state, every district — the full Khozo picture.') },
-  admin: { title: msg('Jurisdiction overview'), sub: msg('Cases and stations under your command.') },
+  admin: { title: msg('Your area at a glance'), sub: msg('Cases and stations in your charge.') },
   police: { title: msg('Station overview'), sub: msg('Your caseload, sightings to review, and pending alerts.') },
   sjpu: { title: msg('SJPU overview'), sub: msg('Child-friendly police response, district cases, and urgent sightings.') },
   ahtu: { title: msg('AHTU overview'), sub: msg('Trafficking-risk cases, rescue coordination, and urgent sightings.') },
@@ -27,12 +27,12 @@ const HEADLINE = {
   cwc: { title: msg('Child welfare overview'), sub: msg('Sightings, referrals, and vulnerable children in your district.') },
   dcpu: { title: msg('District child protection overview'), sub: msg('District cases, referrals, and child-protection coordination.') },
   rpf: { title: msg('Railway protection overview'), sub: msg('Railway-area sightings and missing-child cases in your district.') },
-  cci: { title: msg('CCI intake overview'), sub: msg('Children in care, referrals, and district protection follow-up.') },
-  saa: { title: msg('SAA adoption overview'), sub: msg('Adoption follow-up, SAA intake, and CARINGS coordination.') },
+  cci: { title: msg('CCI admissions at a glance'), sub: msg('Children in care, referrals, and district protection follow-up.') },
+  saa: { title: msg('SAA adoption overview'), sub: msg('Adoption follow-up, SAA admissions and CARINGS updates.') },
   jjb: { title: msg('JJB oversight overview'), sub: msg('District child-protection cases and review activity.') },
-  state_nodal: { title: msg('State nodal overview'), sub: msg('Statewide cases, referrals, privacy review, and stakeholder coordination.') },
-  sara: { title: msg('SARA adoption overview'), sub: msg('Statewide adoption governance, SAA coordination, and review queues.') },
-  crime_bureau: { title: msg('Crime records overview'), sub: msg('Statewide missing-child records and review queues.') },
+  state_nodal: { title: msg('State nodal overview'), sub: msg('Cases, referrals, privacy review and offices across the State.') },
+  sara: { title: msg('SARA adoption overview'), sub: msg('Adoption across the State, SAA coordination and lists to review.') },
+  crime_bureau: { title: msg('Crime records overview'), sub: msg('Missing-child records across the State, and lists to review.') },
   parent: { title: msg('My reports'), sub: msg('The status of children you have reported.') },
   ngo: { title: msg('Our reports'), sub: msg('Children your organisation has helped report.') },
 };
@@ -94,7 +94,7 @@ const DETAIL = {
  */
 // Reports from families and NGOs that wait for this desk to verify them: none
 // of them is compared with a sighting until an officer does.
-const INTAKE_WORK = { label: msg('Intakes to verify'), from: (s) => s.intakes?.pending, to: '/app/cases?status=intake_pending', detail: DETAIL.intakes };
+const INTAKE_WORK = { label: msg('Reports to check'), from: (s) => s.intakes?.pending, to: '/app/cases?status=intake_pending', detail: DETAIL.intakes };
 
 // Open cases whose photo will not find the person in a sighting: no photo, no
 // face, a group photo, a face too small (shared/photo-need.js). For the desks
@@ -166,7 +166,7 @@ const ROLE_WORK = {
   crime_bureau: [
     { label: msg('Bureau records due'), from: (s, f) => f?.totals.formalFollowups, to: '/app/cases', detail: DETAIL.formal },
     { label: msg('Statewide active cases'), from: (s) => s.cards.activeCases, to: '/app/cases', detail: DETAIL.active },
-    { label: msg('Abuse signals to review'), from: (s, f) => f?.totals.high, to: '/app/fraud' },
+    { label: msg('Misuse warnings to review'), from: (s, f) => f?.totals.high, to: '/app/fraud' },
     PHOTO_WORK,
   ],
   state_nodal: [
@@ -180,14 +180,14 @@ const ROLE_WORK = {
     INTAKE_WORK,
     { label: msg('Sightings awaiting review'), from: (s) => s.cards.pendingMatches, to: '/app/matches', detail: DETAIL.sightings },
     { label: msg('High-priority follow-ups'), from: (s, f) => f?.totals.high, to: '/app/cases', detail: DETAIL.high },
-    { label: msg('Stakeholders on the network'), from: (s, f, c, n) => n?.users.length, to: '/app/network', detail: DETAIL.network },
+    { label: msg('Offices on Khozo'), from: (s, f, c, n) => n?.users.length, to: '/app/network', detail: DETAIL.network },
     PHOTO_WORK,
   ],
   super_admin: [
     INTAKE_WORK,
     { label: msg('Sightings awaiting review'), from: (s) => s.cards.pendingMatches, to: '/app/matches', detail: DETAIL.sightings },
     { label: msg('High-priority follow-ups'), from: (s, f) => f?.totals.high, to: '/app/cases', detail: DETAIL.high },
-    { label: msg('Stakeholders on the network'), from: (s, f, c, n) => n?.users.length, to: '/app/network', detail: DETAIL.network },
+    { label: msg('Offices on Khozo'), from: (s, f, c, n) => n?.users.length, to: '/app/network', detail: DETAIL.network },
     PHOTO_WORK,
   ],
 };
@@ -294,7 +294,7 @@ export default function Overview() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="text-2xl font-bold">{t(h.title)}</h2>
-          <p className="text-sm text-gray-500">{t(h.sub)} · {t('Scope:')} <span className="font-medium text-khozo">{scope}</span></p>
+          <p className="text-sm text-gray-500">{t(h.sub)} · {t('Area:')} <span className="font-medium text-khozo">{scope}</span></p>
         </div>
         <div className={`grid w-full gap-2 sm:flex sm:w-auto ${showOps ? 'grid-cols-2' : 'grid-cols-1'}`}>
           <Link to="/app/register" className="btn-primary text-center"><NavIcon name="plus" className="h-4 w-4 shrink-0" /> {t('Register a missing person')}</Link>
@@ -370,7 +370,7 @@ export default function Overview() {
       {work.length > 0 && (
         <div className="card p-5">
           <h3 className="font-semibold">{t('Waiting on you')}</h3>
-          <p className="text-xs text-gray-500">{t('Scoped to {scope}', { scope })}</p>
+          <p className="text-xs text-gray-500">{t('Showing {scope}', { scope })}</p>
           {/* Two to a row on a phone: three left "Cases with no recent note"
               four lines tall in a 90 px column. */}
           <div className={`mt-4 grid grid-cols-2 gap-2 sm:gap-3 ${work.length >= 5 ? 'lg:grid-cols-5' : work.length === 4 ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
@@ -405,7 +405,7 @@ export default function Overview() {
         <div className={`card p-4 sm:p-5 ${intakes.overdue ? 'ring-1 ring-red-200' : ''}`}>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
-              <h3 className="font-semibold">{t('Intakes to verify')}</h3>
+              <h3 className="font-semibold">{t('Reports to check')}</h3>
               <p className="text-xs text-gray-500">
                 {t('Reports from families and NGOs. Matching with sightings starts only after an officer verifies one.')}
               </p>
@@ -450,7 +450,7 @@ export default function Overview() {
         <div className="card p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h3 className="font-semibold">{t('Pilot readiness')}</h3>
+              <h3 className="font-semibold">{t('Pilot checklist')}</h3>
               <p className="text-xs text-gray-500">
                 {t('{pass} passed / {warning} warnings / {fail} failed', {
                   pass: readiness.summary.pass,
@@ -546,7 +546,7 @@ export default function Overview() {
 
         <div className="card p-4 sm:p-5">
           <h3 className="font-semibold">{t('Case status')}</h3>
-          <p className="text-xs text-gray-500">{t('Within your scope')}</p>
+          <p className="text-xs text-gray-500">{t('In your area')}</p>
           <div className="mt-2 h-64">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>

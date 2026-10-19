@@ -105,7 +105,7 @@ export default function CciRegister() {
 
       <div className="overflow-hidden rounded-xl bg-white ring-1 ring-black/5">
         <div className="border-b border-black/5 px-4 py-3">
-          <h3 className="font-semibold">{t('Children in CCI care workflow')}</h3>
+          <h3 className="font-semibold">{t('Children in CCI care')}</h3>
         </div>
         <div className="stack-scroll overflow-x-auto">
           <table className="stack-table min-w-full divide-y divide-black/5 text-sm">
@@ -116,7 +116,7 @@ export default function CciRegister() {
                 <th className="px-4 py-3">{t('Admission')}</th>
                 <th className="px-4 py-3">{t('Next review')}</th>
                 <th className="px-4 py-3">{t('Status')}</th>
-                <th className="px-4 py-3">{t('Jurisdiction')}</th>
+                <th className="px-4 py-3">{t('Area')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-black/5">
@@ -137,7 +137,7 @@ export default function CciRegister() {
                       {REVIEW_LABEL[row.reviewStatus] ? t(REVIEW_LABEL[row.reviewStatus]) : row.reviewStatus}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-gray-500" data-label={t('Jurisdiction')}>{[row.district, row.state].filter(Boolean).join(', ') || '-'}</td>
+                  <td className="px-4 py-3 text-gray-500" data-label={t('Area')}>{[row.district, row.state].filter(Boolean).join(', ') || '-'}</td>
                 </tr>
               ))}
               {rows.length === 0 && (

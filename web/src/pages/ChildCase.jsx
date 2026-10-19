@@ -25,7 +25,7 @@ export default function ChildCase() {
             {t('Khozo never shows the name or photo of a missing person to the public, so this link does not open a case.')}
           </p>
           <p className="mt-2 text-gray-600">
-            {t('If you have seen someone who seems lost, send a photo — the engines compare it and only authorised officers see who matched.')}
+            {t('If you have seen someone who seems lost, send a photo: it is compared with missing cases, and only authorised officers see who matched.')}
           </p>
         </div>
 

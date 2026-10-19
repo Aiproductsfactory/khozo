@@ -53,7 +53,7 @@ export default function ChangePassword() {
         <h1 className="mt-6 text-2xl font-bold">{forced ? t('Change temporary password') : t('Change password')}</h1>
         <p className="mt-2 text-sm text-gray-500">
           {forced
-            ? t('Your official account was provisioned with a one-time password. Set a new password before opening case workflows.')
+            ? t('Your official account was created with a one-time password. Set a new password before opening any case.')
             : t('Choose a new password of at least 8 characters.')}
         </p>
 

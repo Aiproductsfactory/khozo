@@ -78,7 +78,7 @@ export default function Login() {
           <dl className="mt-8 space-y-5">
             {[
               [msg('Seen only by those responsible'), msg('A district desk sees its own district’s cases, and a state desk its state’s. A parent or NGO sees only what they reported.')],
-              [msg('An auditable record'), msg('Every action on a case — who looked, who confirmed, when a family was contacted — is written to a tamper-evident audit chain the Department can verify later.')],
+              [msg('A record that can be checked'), msg('Every action on a case — who looked, who confirmed, when a family was contacted — is written into a record that shows any change, which the Department can check later.')],
             ].map(([title, body]) => (
               <div key={title} className="border-l-2 border-lime-300/60 pl-4">
                 <dt className="font-semibold text-lime-300">{t(title)}</dt>

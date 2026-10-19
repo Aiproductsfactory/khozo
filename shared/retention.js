@@ -195,11 +195,11 @@ export async function anonymiseSighting(deps, sighting, { now = Date.now(), appr
     const place = String(before.foundLocation || '').trim();
     const placeIdentifies = Boolean(place) && !GENERIC_PLACES.has(place.toLowerCase());
     const reporter = [before.reporterName, before.reporterDisplayName]
-      .filter((n) => typeof n === 'string' && n.trim().length >= 2 && !/^(anonymous|confidential|anonymized) citizen$/i.test(n.trim()));
+      .filter((n) => typeof n === 'string' && n.trim().length >= 2 && !/^(anonymous|confidential|anonymi[sz]ed) citizen$/i.test(n.trim()));
     deps.rewriteActivity((row) => {
       if (row?.scope?.foundReportId === before.id) {
         // The citizen who sent it is the actor of its "uploaded" row.
-        return reporter.includes(row.actor) ? { target: label, actor: 'Anonymized citizen' } : { target: label };
+        return reporter.includes(row.actor) ? { target: label, actor: 'Anonymised citizen' } : { target: label };
       }
       // Rows written before they carried the sighting id show its place; the
       // place is removed wherever it appears, never attributed elsewhere.

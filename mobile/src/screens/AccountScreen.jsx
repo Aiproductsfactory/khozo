@@ -17,7 +17,7 @@ export default function AccountScreen() {
   const { pendingCount, blockedCount, online } = useOutbox();
 
   const confirmSignOut = useCallback(() => {
-    Alert.alert('Sign out?', 'You will need your official credentials to sign in again.', [
+    Alert.alert('Sign out?', 'You will need your official email and password to sign in again.', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Sign out', style: 'destructive', onPress: () => signOut() },
     ]);

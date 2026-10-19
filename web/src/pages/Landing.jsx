@@ -202,7 +202,7 @@ const STEPS = [
   },
   {
     title: msg('It is compared in private'),
-    body: msg('The Indian engine compares the face with open cases, the same district first, and proposes candidates.'),
+    body: msg('An Indian face-matching service compares the face with open cases, the same district first, and suggests possible matches.'),
   },
   {
     title: msg('An officer checks, in person'),
@@ -243,7 +243,7 @@ function Journey() {
           <Icon.shield className="mt-0.5 h-5 w-5 shrink-0 text-khozo-dark" />
           <span>
             <strong>{t('No public gallery of children.')}</strong>{' '}
-            {t('Faces are compared by the engines, and only authorised officers see who matched.')}
+            {t('Faces are compared by face-matching services, and only authorised officers see who matched.')}
           </span>
         </p>
       </div>
@@ -352,8 +352,8 @@ function Safeguards() {
   const t = useT();
   const items = [
     {
-      title: t('Indian recognition engine'),
-      body: rich(t('Face comparison is performed by {aarakshak}, an Indian sovereign face-recognition model, under Government authorisation.'), {
+      title: t('Indian face matching'),
+      body: rich(t('Faces are compared by {aarakshak}, an Indian face-recognition service, with Government approval.'), {
         aarakshak: (
           <a href={AARAKSHAK_URL} target="_blank" rel="noopener noreferrer" className="font-semibold text-white underline underline-offset-2 hover:text-lime-300">
             Aarakshak
@@ -363,13 +363,13 @@ function Safeguards() {
     },
     {
       title: t('AWS Rekognition — demo only'),
-      body: rich(t('This demo also uses AWS Rekognition as the confirming engine, pinned to the Mumbai {region} region. It will not be used in production, where matching runs on Aarakshak alone.'), {
+      body: rich(t('During the trial, AWS Rekognition gives a second check, kept to its Mumbai {region} region. It will not be used once Khozo is live, when Aarakshak alone compares faces.'), {
         region: <span className="font-mono text-white">ap-south-1</span>,
       }),
     },
     { title: t('Seen only by those responsible'), body: t('A district desk sees its own district’s cases, and a state desk its state’s. A parent or NGO sees only what they reported.') },
-    { title: t('An auditable record'), body: t('Every action on a case — who looked, who confirmed, when a family was contacted — is written to a tamper-evident audit chain the Department can verify later.') },
-    { title: t('Records stay with the State'), body: t('Cases, photographs and the audit trail remain in the Department’s own database, on Indian infrastructure, under its jurisdiction.') },
+    { title: t('A record that can be checked'), body: t('Every action on a case — who looked, who confirmed, when a family was contacted — is written into a record that shows any change, which the Department can check later.') },
+    { title: t('Records stay with the State'), body: t('Cases, photos and the record of actions stay in the Department’s own database, in India, under its control.') },
   ];
   return (
     <section id="sovereign" aria-labelledby="sovereign-title" className="scroll-mt-16 bg-ink text-white">
@@ -380,10 +380,10 @@ function Safeguards() {
             {t('A child’s face never leaves India.')}
           </h2>
           <p className="mt-4 max-w-md text-lg leading-relaxed text-white/70">
-            {t('Biometric matching for missing children runs on Aarakshak, an Indian provider, on Indian infrastructure. Nothing about a child is shipped abroad to be compared.')}
+            {t('Face matching for missing children runs on Aarakshak, an Indian service, in India. Nothing about a child is sent abroad to be compared.')}
           </p>
           <p className="mt-4 max-w-md text-white/60">
-            {t('Khozo handles biometric data about children. These are the rules it holds itself to, and they are enforced in the software rather than promised in a policy.')}
+            {t('Khozo handles children’s face data. These are the rules it keeps, and the software enforces them; they are not just promises in a policy.')}
           </p>
           <a href={AARAKSHAK_URL} target="_blank" rel="noopener noreferrer" className="mt-4 inline-flex min-h-11 items-center gap-1.5 text-sm font-semibold text-lime-300 hover:underline">
             {t('About Aarakshak')} <Icon.arrow className="h-4 w-4" />
@@ -405,9 +405,9 @@ function Safeguards() {
 /* ------------------------------------------------------------- for agencies */
 
 const AUDIENCES = [
-  [msg('Police & SJPU'), msg('Register FIRs, review citizen sightings, confirm a match and alert the family — with every action written to a tamper-evident record.')],
-  [msg('CWC, DCPU & CCIs'), msg('Native roles for the child-protection desks the Juvenile Justice Act actually names, with production-compliance and care registers.')],
-  [msg('State & national oversight'), msg('Caseload, reunification and coverage by district, so gaps are visible before a pilot begins rather than after it fails.')],
+  [msg('Police & SJPU'), msg('Register FIRs, review citizen sightings, confirm a match and alert the family — with every action written into a record that shows any change.')],
+  [msg('CWC, DCPU & CCIs'), msg('Screens for each child-protection office the Juvenile Justice Act names, with registers for production on time and for care.')],
+  [msg('State & national oversight'), msg('Cases, children returned home and offices set up in each district, so gaps are seen before a pilot begins, not after it fails.')],
 ];
 
 /*
@@ -431,7 +431,7 @@ function ForAgencies() {
           <Kicker>{t('For agencies')}</Kicker>
           <h2 id="agencies-title" className="mt-2 text-2xl font-bold tracking-tight text-ink sm:text-3xl">{t('Built for the desks that act')}</h2>
           <p className="mt-3 text-gray-600">
-            {t('Khozo is one workflow from a citizen’s photograph to a restored child — report, verify, match, refer, restore — not a police tool with welfare bolted on.')}
+            {t('Khozo takes a case from a citizen’s photo to a child safely home — report, check, match, refer, return — built for child welfare as much as for the police.')}
           </p>
         </div>
         <dl className="mt-10 grid gap-8 sm:grid-cols-3">
@@ -456,7 +456,7 @@ function ForAgencies() {
             <span className="mr-2 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold uppercase tracking-wide text-amber-800">
               {t('Coming next')}
             </span>
-            {t('Direct live connections to those portals, as each one grants API access.')}
+            {t('Direct links to those portals, as each one gives permission.')}
           </p>
         </div>
         <Link to="/register" className="btn-primary mt-8 inline-flex">{t('Request access for your agency')}</Link>

@@ -8,7 +8,7 @@ import { PublicFooter, PublicHeader, usePageMeta } from '../PublicChrome.jsx';
 // Same wording as the dashboard's status badges; the code stays the lookup key.
 const CASE_STATUS_LABELS = {
   missing: msg('Missing'),
-  intake_pending: msg('Intake pending'),
+  intake_pending: msg('Waiting to be checked'),
   under_review: msg('Under review'),
   found: msg('Found / Reunited'),
   closed: msg('Closed'),

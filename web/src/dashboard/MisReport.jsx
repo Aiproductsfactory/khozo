@@ -119,7 +119,7 @@ export default function MisReport() {
           </p>
           {report.signature && (
             <p className="mt-1 text-xs text-gray-400">
-              {t('Signed {type} / {algorithm} / digest {digest}...', {
+              {t('Sealed {type} · {algorithm} · {digest}…', {
                 type: report.signature.type,
                 algorithm: report.signature.algorithm,
                 digest: report.signature.digest?.slice(0, 12),
@@ -133,7 +133,7 @@ export default function MisReport() {
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
         <Stat label={t('Reports')} value={totals.reports} />
         <Stat label={t('Active cases')} value={totals.activeCases} />
-        <Stat label={t('Pending intake')} value={totals.pendingCitizenIntake} />
+        <Stat label={t('Waiting to be checked')} value={totals.pendingCitizenIntake} />
         <Stat label={t('Pending sightings')} value={totals.pendingSightings} />
         <Stat label={t('Privacy due')} value={totals.privacyDue} />
       </div>
@@ -144,7 +144,7 @@ export default function MisReport() {
             <Stat label={t('Recovered')} value={`${report.outcomes.recovered} / ${report.outcomes.registered}`} />
             <Stat label={t('Recovery rate')} value={pct(report.outcomes.recoveryRate)} />
             <Stat label={t('Median days to recovery')} value={days(report.outcomes.medianDaysToRecovery)} />
-            <Stat label={t('Median days to first match candidate')} value={days(report.outcomes.medianDaysToFirstCandidate)} />
+            <Stat label={t('Median days to the first possible match')} value={days(report.outcomes.medianDaysToFirstCandidate)} />
           </div>
           <div className="grid gap-4 lg:grid-cols-3">
             <CountTable title={t('Open cases by time missing')} rows={report.outcomes.openBacklog || []} translate />
@@ -190,15 +190,15 @@ export default function MisReport() {
 
       <div className="grid gap-4 lg:grid-cols-3">
         <CountTable title={t('Formal follow-ups due')} rows={report.compliance?.formalFollowups || []} empty={t('No formal follow-ups due')} />
-        <CountTable title={t('Production compliance')} rows={report.compliance?.production || []} empty={t('No production records')} />
+        <CountTable title={t('Production within 24 hours')} rows={report.compliance?.production || []} empty={t('No production records')} />
         <CountTable title={t('Pending work')} rows={report.compliance?.pendingWork || []} empty={t('No pending work alerts')} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <CountTable title={t('Workflow actions')} rows={report.workflowActions || []} empty={t('No workflow activity yet')} />
+        <CountTable title={t('Steps taken')} rows={report.workflowActions || []} empty={t('No steps recorded yet')} />
         <div className="rounded-xl bg-white ring-1 ring-black/5">
           <div className="border-b border-black/5 px-4 py-3">
-            <h3 className="font-semibold">{t('Recent audit')}</h3>
+            <h3 className="font-semibold">{t('Recent actions')}</h3>
           </div>
           <div className="divide-y divide-black/5">
             {(report.recentAudit || []).map((row) => (
@@ -212,7 +212,7 @@ export default function MisReport() {
               </div>
             ))}
             {(!report.recentAudit || report.recentAudit.length === 0) && (
-              <p className="px-4 py-5 text-sm text-gray-400">{t('No audit activity in scope.')}</p>
+              <p className="px-4 py-5 text-sm text-gray-400">{t('No actions recorded in your area.')}</p>
             )}
           </div>
         </div>

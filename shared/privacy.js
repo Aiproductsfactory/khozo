@@ -265,8 +265,8 @@ export function anonymisedReportPatch(report, { now = Date.now(), approval = nul
 export function anonymisedSightingPatch(sighting, { now = Date.now(), approval = null } = {}) {
   return {
     ...clearingPatch(sighting, SIGHTING_KEEP, ['lat', 'lng']),
-    reporterName: 'Anonymized citizen',
-    reporterDisplayName: 'Anonymized citizen',
+    reporterName: 'Anonymised citizen',
+    reporterDisplayName: 'Anonymised citizen',
     // A string, as every sighting's place is: screens and searches read it as text.
     foundLocation: 'Location removed',
     verification: strippedVerification(sighting.verification),

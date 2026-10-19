@@ -63,7 +63,7 @@ export default function Register() {
 
       <div className="mx-auto max-w-5xl px-4 pb-16 sm:px-6">
         <h1 className="text-3xl font-bold">{t('Create your Khozo account')}</h1>
-        <p className="mt-1 text-gray-500">{t('Public registration is for parents, citizens, and NGOs. Police and government accounts are provisioned by an administrator.')}</p>
+        <p className="mt-1 text-gray-500">{t('Public sign-up is for parents, citizens and NGOs. An administrator creates police and government accounts.')}</p>
 
         {err && <div className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{err}</div>}
 

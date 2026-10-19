@@ -25,7 +25,7 @@ const ROLE_OPTIONS = [
   { value: 'ngo', label: msg('NGO') },
 ];
 const ALERT_AUDIENCES = [
-  { value: 'all_operational', label: msg('All operational stakeholders') },
+  { value: 'all_operational', label: msg('All official offices') },
   { value: 'police_rpf', label: msg('Police / SJPU / AHTU / RPF') },
   { value: 'records', label: msg('DCRB / crime records') },
   { value: 'welfare', label: msg('CWC / DCPU / CCI / SAA / JJB / DLSA') },
@@ -148,8 +148,8 @@ export default function Network() {
     try {
       const data = await api.post('/dashboard/network/alerts', networkAlert);
       setOk(data.alert.recipientCount === 1
-        ? t('Network alert queued for 1 recipient.')
-        : t('Network alert queued for {n} recipients.', { n: data.alert.recipientCount }));
+        ? t('Alert sent to 1 recipient.')
+        : t('Alert sent to {n} recipients.', { n: data.alert.recipientCount }));
       setNetworkAlert((f) => ({ ...f, caseRef: '', subject: '', message: '' }));
     } catch (e2) {
       setErr(e2.message);
@@ -161,8 +161,8 @@ export default function Network() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold">{t('Stakeholder network')}</h2>
-        <p className="text-sm text-gray-500">{t('Provision official accounts, drill down the access pyramid, and reach out directly.')}</p>
+        <h2 className="text-2xl font-bold">{t('Offices on Khozo')}</h2>
+        <p className="text-sm text-gray-500">{t('Create official accounts, see who is set up at each level, and contact offices directly.')}</p>
       </div>
 
       {roles.length > 0 && (
@@ -171,7 +171,7 @@ export default function Network() {
             {/* On a phone the button follows the fields it submits. */}
             <div className="flex flex-wrap items-start justify-between gap-3 max-sm:contents">
               <div>
-                <h3 className="font-semibold">{t('Provision stakeholder account')}</h3>
+                <h3 className="font-semibold">{t('Create an official account')}</h3>
                 <p className="text-sm text-gray-500">{t('Public signup remains limited to parents/citizens and NGOs.')}</p>
               </div>
               <button className="btn-primary max-sm:order-last max-sm:mt-4" disabled={busy}>{busy ? t('Creating…') : t('Create account')}</button>
@@ -222,7 +222,7 @@ export default function Network() {
             <div className="flex flex-wrap items-start justify-between gap-3 max-sm:contents">
               <div>
                 <h3 className="font-semibold">{t('Network alert')}</h3>
-                <p className="text-sm text-gray-500">{t('Queue a scoped coordination alert to official stakeholders or NGO partners.')}</p>
+                <p className="text-sm text-gray-500">{t('Send an alert to officials or partner NGOs in your area.')}</p>
               </div>
               <button className="btn-primary max-sm:order-last max-sm:mt-4" disabled={alertBusy || networkAlert.subject.trim().length < 4 || networkAlert.message.trim().length < 10}>
                 {alertBusy ? t('Sending…') : t('Send alert')}
@@ -266,9 +266,9 @@ export default function Network() {
         <section className="card p-4 sm:p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h3 className="font-semibold">{t('Stakeholder coverage')}</h3>
+              <h3 className="font-semibold">{t('Offices set up')}</h3>
               <p className="text-sm text-gray-500">
-                {t('{pct}% of required state and district desks are present in {scope}.', {
+                {t('{pct}% of the state and district offices needed are set up in {scope}.', {
                   pct: coverage.totals.coveragePct,
                   scope: coverage.scope,
                 })}
@@ -304,7 +304,7 @@ export default function Network() {
             <table className="stack-table w-full min-w-[760px] text-sm">
               <thead>
                 <tr className="border-b border-black/5 bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
-                  <th className="px-3 py-2">{t('Jurisdiction')}</th>
+                  <th className="px-3 py-2">{t('Area')}</th>
                   <th className="px-3 py-2">{t('Level')}</th>
                   <th className="px-3 py-2">{t('Covered desks')}</th>
                   <th className="px-3 py-2">{t('Missing desks')}</th>
@@ -316,7 +316,7 @@ export default function Network() {
                   const missing = row.roles.filter((role) => role.status === 'missing');
                   return (
                     <tr key={`${row.type}-${row.label}`} className="border-b border-black/5 last:border-0">
-                      <td className="px-3 py-3 font-medium text-ink" data-label={t('Jurisdiction')}>{row.label}</td>
+                      <td className="px-3 py-3 font-medium text-ink" data-label={t('Area')}>{row.label}</td>
                       <td className="px-3 py-3 text-gray-500" data-label={t('Level')}>{LEVELS[row.type] ? t(LEVELS[row.type]) : row.type}</td>
                       <td className="stack-full px-3 py-3 text-gray-600" data-label={t('Covered desks')}>{covered.map(deskLabel).join(', ') || '-'}</td>
                       <td className="stack-full px-3 py-3" data-label={t('Missing desks')}>

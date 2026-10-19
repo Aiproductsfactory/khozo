@@ -43,7 +43,7 @@ const SERVER_TEXT = [
   msg('Railway helpline'),
   msg('Shelter or welfare support'),
   msg('Railway or station sighting'),
-  msg('Call 1098 first for child-protection intake; call 112 immediately if there is active danger.'),
+  msg('Call 1098 first for child protection; call 112 at once if someone is in danger.'),
   msg('Call 112 first for emergency response, then 1098 for child-protection support.'),
   msg('Call 1098 for child welfare support and use local CWC/DCPU/DLSA/SAA desks for follow-up.'),
   msg('Call 139 for railway response; use 1098/112 based on protection or emergency need.'),
@@ -182,7 +182,7 @@ export default function Services() {
             </select>
           </div>
           <div>
-            <label htmlFor="svc-incident" className="label">{t('Emergency routing')}</label>
+            <label htmlFor="svc-incident" className="label">{t('Emergency numbers')}</label>
             <select id="svc-incident" className="field" value={filters.incidentType} onChange={set('incidentType')}>
               {INCIDENT_TYPES.map((type) => <option key={type.value} value={type.value}>{t(type.label)}</option>)}
             </select>
@@ -193,7 +193,7 @@ export default function Services() {
           <section className="rounded-2xl bg-white p-4 ring-1 ring-black/5 sm:p-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">{t('Emergency routing')}</p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">{t('Emergency numbers')}</p>
                 <h2 className="mt-1 text-lg font-bold text-ink">{emergencyPlan?.label ? t(emergencyPlan.label) : t('Missing child')}</h2>
                 <p className="mt-1 max-w-2xl text-sm text-gray-500">{emergencyPlan?.instructions ? t(emergencyPlan.instructions) : null}</p>
               </div>
@@ -212,7 +212,7 @@ export default function Services() {
                 </a>
               )}
               <div className="rounded-lg border border-black/5 bg-gray-50 p-3">
-                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">{t('Backup numbers')}</p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">{t('Other numbers to try')}</p>
                 <div className="mt-2 flex flex-wrap gap-2">
                   {(emergencyPlan?.secondary?.length ? emergencyPlan.secondary : emergency).map((item) => (
                     <a key={item.phone} href={phoneLink(item.phone)} className="inline-flex min-h-11 items-center rounded-md bg-white px-3 py-2 text-sm font-semibold text-ink ring-1 ring-black/5 hover:bg-khozo-light">

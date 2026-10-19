@@ -2,7 +2,7 @@
   "Not set": "तय नहीं",
   "Choose the district from the list.": "सूची से ज़िला चुनें।",
   "Choose the state and the district from the lists.": "सूची से राज्य और ज़िला चुनें।",
-  "Intakes to verify": "सत्यापन हेतु लंबित पंजीकरण",
+  "Reports to check": "सत्यापन हेतु लंबित पंजीकरण",
   "Reports from families and NGOs. Matching with sightings starts only after an officer verifies one.": "परिवारों और NGO से आए पंजीकरण। अधिकारी के सत्यापन के बाद ही सूचनाओं से मिलान शुरू होता है।",
   "Open all {n}": "सभी {n} खोलें",
   "1 report has waited more than {h} hours for verification.": "1 पंजीकरण {h} घंटे से अधिक समय से सत्यापन की प्रतीक्षा में है।",

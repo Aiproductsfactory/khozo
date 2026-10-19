@@ -563,8 +563,8 @@ export function rankResult({ outcome, pool, settings, started, rekognitionReady,
       reason: !storedCount
         ? `No stored ${noun === 'open case' ? 'case' : 'sighting'} photos to compare against, so no face comparison was possible.`
         : noFace
-          ? 'No face could be found in the photo by any engine, so no face comparison was possible.'
-          : 'No biometric provider answered, so no face comparison was made and no candidate is offered.',
+          ? 'No face could be found in the photo, so no comparison was possible.'
+          : 'No face-matching service answered, so no faces were compared and no possible match is shown.',
     },
   };
 }

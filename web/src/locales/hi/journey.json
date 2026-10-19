@@ -92,7 +92,7 @@
   "No person in this photo — recorded by {name}": "इस फ़ोटो में कोई व्यक्ति नहीं — {name} द्वारा दर्ज",
   "an officer": "एक अधिकारी",
   "A person in this photo — confirmed by {name}": "इस फ़ोटो में व्यक्ति है — {name} द्वारा पुष्टि",
-  "Clear face found · engine quality {q}%": "साफ़ चेहरा मिला · इंजन गुणवत्ता {q}%",
+  "Clear face found · quality {q}%": "साफ़ चेहरा मिला · इंजन गुणवत्ता {q}%",
   "Clear face found": "साफ़ चेहरा मिला",
   "No clear person in the photo — screened out of the general alert": "फ़ोटो में कोई साफ़ व्यक्ति नहीं — सामान्य अलर्ट से बाहर रखा गया",
   "Recorded: no person in this photo.": "दर्ज किया गया: इस फ़ोटो में कोई व्यक्ति नहीं।",

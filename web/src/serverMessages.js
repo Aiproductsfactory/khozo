@@ -12,12 +12,16 @@ import { msg } from './i18n.jsx';
 export const SERVER_MESSAGES = [
   // Sighting receipt
   msg('Possible match found. Police will review before any identity or family details are shared.'),
-  msg('No strong match yet. The report is saved and queued for Childline/CWC follow-up.'),
-  msg('Your text sighting is saved and queued for Childline/CWC follow-up. No face-match search was run because no photo was uploaded.'),
+  msg('No strong match yet. The report is saved and sent to Childline and the CWC for follow-up.'),
+  msg('Your written report is saved and sent to Childline and the CWC. No face search was run because there was no photo.'),
   msg('Police review pending'),
   msg('Childline/CWC intake queued'),
+
+  msg('Sent to Childline and the CWC'),
   msg('Referred to Childline/CWC'),
   msg('Formal found-child intake opened'),
+
+  msg('Formal found-child case opened'),
 
   // Sighting status: one sentence per stage. The stage depends only on how
   // long ago the report was sent, never on what the engines or officers did
@@ -32,14 +36,14 @@ export const SERVER_MESSAGES = [
 
   // A refused re-match (POST /api/reports/:id/rematch), shown in the console.
   msg('This case has no photo to compare with sightings'),
-  msg('Anonymised cases are not compared with sightings'),
+  msg('Cases whose details were removed are not compared with sightings'),
   msg('Found cases are not compared with sightings'),
   msg('Closed cases are not compared with sightings'),
-  msg('Citizen/NGO intake must be verified before it is compared with sightings'),
+  msg('A citizen or NGO report must be checked before it is compared with sightings'),
 
   // Why a re-match compared no faces (the engine's `note` in the
   // /api/reports/:id/rematch answer, shown in the console).
-  msg('No biometric provider answered, so no face comparison was made and no candidate is offered.'),
+  msg('No face-matching service answered, so no faces were compared and no possible match is shown.'),
   msg('No stored sighting photos to compare against, so no face comparison was possible.'),
   msg('The comparison could not be completed.'),
   msg('The case photo could not be read.'),
@@ -48,6 +52,8 @@ export const SERVER_MESSAGES = [
 
   // Case status
   msg('Citizen/NGO intake pending verification'),
+
+  msg('Citizen or NGO report waiting to be checked'),
   msg('Missing case active'),
   msg('Under official review'),
   msg('Found / traced'),
@@ -65,8 +71,10 @@ export const SERVER_MESSAGES = [
   msg('Thank you. Your report has reached the police and child-protection desks for this area. Keep your receipt number to track it.'),
   msg('Received for review'),
   msg('Police intake queued'),
-  msg('No strong match yet. The report is saved and queued for police follow-up.'),
-  msg('Your text sighting is saved and queued for police follow-up. No face-match search was run because no photo was uploaded.'),
+
+  msg('Sent to the police'),
+  msg('No strong match yet. The report is saved and sent to the police for follow-up.'),
+  msg('Your written report is saved and sent to the police. No face search was run because there was no photo.'),
   msg('If she appears to be in immediate danger, call 112. The Women Helpline 181 and the One Stop Centre (Sakhi) can also help.'),
   msg('If the person appears to be in immediate danger, call 112.'),
   msg('The person has been traced by an authorized agency. Any contact is arranged only with their consent.'),
@@ -88,20 +96,20 @@ export const SERVER_MESSAGES = [
 
   // Reopening a case (POST /api/reports/:id/reopen).
   msg('Only a found or closed case can be reopened'),
-  msg('Anonymised cases cannot be reopened'),
+  msg('A case whose details were removed cannot be reopened'),
   msg('Give a reason of at least 10 characters for reopening the case'),
   msg('Case reopened'),
-  msg('Report is outside your jurisdiction'),
+  msg('This report is outside your area'),
 
   // Telling the family (POST /api/reports/:id/send-sms, the `familyMessage`
   // of confirm-match, POST /api/reports/:id/family-contacted).
   msg('SMS sent to the family.'),
-  msg('No SMS gateway is connected. Call the family directly and record the call.'),
-  msg('The SMS gateway did not accept the message. Call the family directly and record the call.'),
+  msg('No SMS service is connected. Call the family directly and record the call.'),
+  msg('The SMS service did not accept the message. Call the family directly and record the call.'),
   msg('No family phone number is recorded on this case. Record how the family was contacted.'),
   msg('The family has not been told yet. Call them and record the call.'),
   msg('Verify with the person first; share their location with the family only with their consent'),
-  msg('Citizen/NGO intake must be verified before parent SMS alerts'),
+  msg('A citizen or NGO report must be checked before the family is sent an SMS'),
   msg('Contact method must be call, visit or sms'),
   msg('Phone call'),
   msg('Visit'),
@@ -110,8 +118,8 @@ export const SERVER_MESSAGES = [
   // Provisioning an account (POST /api/dashboard/network/users).
   msg('A district is required for this role'),
   msg('A state is required for this role'),
-  msg('Requested jurisdiction is outside your provisioning scope'),
-  msg('You cannot provision this role'),
+  msg('You cannot create accounts for that area'),
+  msg('You cannot create an account with this role'),
 
   // Looking up a sighting's street address (POST /api/reports/found/:id/address).
   msg('This sighting has no location to look up'),

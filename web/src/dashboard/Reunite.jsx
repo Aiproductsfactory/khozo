@@ -113,11 +113,11 @@ export function photoCheckFlag(photoCheck) {
 }
 
 const FACE_INDEX_REFUSALS = {
-  no_face: msg('Face search gallery: no face was found in this photo'),
-  face_not_found_at_box: msg('Face search gallery: no face was found in this photo'),
-  multiple_faces: msg('Face search gallery: several faces in this photo — use a photo of the person alone'),
-  face_too_small: msg('Face search gallery: the face is too small — use a closer, sharper photo'),
-  photo_missing: msg('Face search gallery: the photo file could not be read — upload it again'),
+  no_face: msg('Face search: no face was found in this photo'),
+  face_not_found_at_box: msg('Face search: no face was found in this photo'),
+  multiple_faces: msg('Face search: several faces in this photo — use a photo of the person alone'),
+  face_too_small: msg('Face search: the face is too small — use a closer, sharper photo'),
+  photo_missing: msg('Face search: the photo file could not be read — upload it again'),
 };
 
 /**
@@ -131,13 +131,13 @@ export function faceIndexFlag(faceIndex) {
   if (faceIndex.status === 'enrolled') {
     // Several photos: weak only when every face the gallery took is weak.
     return !galleryHasGoodFace(faceIndex)
-      ? { label: msg('In the face search gallery, but the face is small or unclear — a larger, sharper photo will match better'), className: 'bg-slate-100 text-slate-700 ring-slate-200' }
+      ? { label: msg('In face search, but the face is small or unclear — a larger, sharper photo will match better'), className: 'bg-slate-100 text-slate-700 ring-slate-200' }
       : null;
   }
   if (faceIndex.status !== 'failed') return null;
   const reason = String(faceIndex.reason || '');
   const label = FACE_INDEX_REFUSALS[reason]
-    || (reason.startsWith('refused_') || /^http_4\d\d$/.test(reason) ? msg('Face search gallery refused this photo — use a clearer, larger photo of the face') : null);
+    || (reason.startsWith('refused_') || /^http_4\d\d$/.test(reason) ? msg('Face search did not accept this photo — use a clearer, larger photo of the face') : null);
   return label ? { label, className: 'bg-amber-50 text-amber-800 ring-amber-200' } : null;
 }
 
@@ -179,16 +179,16 @@ export function EngineScores({ candidate, provider = '' }) {
     chips.push({ key: 'r', text: t('AWS Rekognition {pct}', { pct: pct(candidate.rekognitionScore) }), className: 'bg-white text-slate-700 ring-slate-200' });
   }
   if (candidate.corroborated) {
-    chips.push({ key: 'c', text: t('Both engines agree'), className: 'bg-emerald-50 text-emerald-700 ring-emerald-200' });
+    chips.push({ key: 'c', text: t('Both checks agree'), className: 'bg-emerald-50 text-emerald-700 ring-emerald-200' });
   } else if (candidate.notChecked) {
-    chips.push({ key: 'n', text: t('Not checked by a second engine'), className: 'bg-amber-50 text-amber-800 ring-amber-200' });
+    chips.push({ key: 'n', text: t('Not checked a second time'), className: 'bg-amber-50 text-amber-800 ring-amber-200' });
   } else if (candidate.secondOpinion === 'sole_engine') {
-    chips.push({ key: 's', text: t('One engine only'), className: 'bg-amber-50 text-amber-800 ring-amber-200' });
+    chips.push({ key: 's', text: t('Checked once only'), className: 'bg-amber-50 text-amber-800 ring-amber-200' });
   } else if (['unavailable', 'not_asked', 'no_answer'].includes(candidate.secondOpinion)) {
-    chips.push({ key: 'u', text: t('Not corroborated by a second engine'), className: 'bg-amber-50 text-amber-800 ring-amber-200' });
+    chips.push({ key: 'u', text: t('Not confirmed by a second check'), className: 'bg-amber-50 text-amber-800 ring-amber-200' });
   }
   if (candidate.enginesDisagree) {
-    chips.push({ key: 'd', text: t('The engines disagree — look closely'), className: 'bg-red-50 text-red-700 ring-red-200' });
+    chips.push({ key: 'd', text: t('The two checks disagree — look closely'), className: 'bg-red-50 text-red-700 ring-red-200' });
   }
   if (!chips.length && provider) chips.push({ key: 'p', text: provider, className: 'bg-white text-slate-600 ring-slate-200' });
   return (
@@ -247,7 +247,7 @@ export function MatchEvidence({ sighting, candidate = null, report = null }) {
   return (
     <div className="space-y-2 text-left">
       {c && <EngineScores candidate={c} />}
-      {reason && <p className="text-xs text-amber-800">{t(reason)} {t('Treat it as a lead from one engine; it has not been confirmed.')}</p>}
+      {reason && <p className="text-xs text-amber-800">{t(reason)} {t('Treat it as a lead from one check only; it has not been confirmed.')}</p>}
       {c?.secondOpinion === 'sole_engine' && (
         <p className="text-xs text-amber-800">{t('Aarakshak could not find a face in this pair, so AWS Rekognition compared it on its own.')}</p>
       )}
@@ -634,13 +634,13 @@ export function FamilyContactPanel({ report, phoneHint = '', action, onReport })
           {sms && (
             sms.sent === true ? (
               <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
-                {t('The SMS gateway accepted the message. Delivery is not confirmed: call the family as well.')}
+                {t('The SMS service accepted the message, but delivery is not confirmed: call the family as well.')}
               </p>
             ) : (
               <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900 ring-1 ring-amber-200">
                 <p className="font-semibold">
                   {sms.reason === 'no_gateway'
-                    ? t('No SMS was sent: no SMS gateway is connected. Call the family instead.')
+                    ? t('No SMS was sent: no SMS service is connected. Call the family instead.')
                     : t('No SMS was sent. Call the family instead.')}
                 </p>
                 {sms.sent === false && txt(sms.message) && (

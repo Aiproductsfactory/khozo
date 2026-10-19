@@ -88,7 +88,7 @@ export default function SimulationResults() {
                   <td className="px-6 py-4 text-sm text-slate-600" data-label={t('Match Details')}>
                     {r.matchScore > 0 ? (
                       <span className="font-mono text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100 max-sm:inline-block">
-                        {t('Confidence: {pct}%', { pct: (r.matchScore * 100).toFixed(1) })}
+                        {t('Score: {pct}%', { pct: (r.matchScore * 100).toFixed(1) })}
                       </span>
                     ) : (
                       t('N/A')

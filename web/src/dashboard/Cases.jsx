@@ -93,7 +93,7 @@ const WORKFLOW_ACTIONS = [
   { id: 'refer_cwc', childOnly: true, label: msg('Refer CWC'), roles: ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'dcrb', 'dcpu', 'rpf', 'cci', 'jjb', 'state_nodal', 'crime_bureau'] },
   { id: 'assign_cci', childOnly: true, label: msg('Assign CCI'), roles: ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'cwc', 'dcpu', 'state_nodal'] },
   { id: 'refer_jjb', childOnly: true, label: msg('Refer JJB'), roles: ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'cwc', 'dcpu', 'cci', 'state_nodal'] },
-  { id: 'escalate_state', label: msg('Escalate State'), roles: ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'dcrb', 'cwc', 'dcpu', 'rpf', 'cci', 'jjb', 'crime_bureau'] },
+  { id: 'escalate_state', label: msg('Refer to the State'), roles: ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'dcrb', 'cwc', 'dcpu', 'rpf', 'cci', 'jjb', 'crime_bureau'] },
   { id: 'notify_crime_bureau', label: msg('Notify Bureau'), roles: ['super_admin', 'admin', 'police', 'sjpu', 'ahtu', 'dcrb', 'rpf', 'state_nodal'] },
 ];
 const ASSIGNMENT_TYPES = [
@@ -145,7 +145,7 @@ const CCI_SERVICE_TYPES = [
   { id: 'family_tracing', label: msg('Family tracing') },
 ];
 const CCI_PROGRESS_STATES = [
-  { id: 'intake', label: msg('Intake') },
+  { id: 'intake', label: msg('Report check') },
   { id: 'active', label: msg('Active') },
   { id: 'review_due', label: msg('Review due') },
   { id: 'ready_for_restoration', label: msg('Ready for restoration') },
@@ -169,7 +169,7 @@ const STATE_ESCALATION_LEVELS = [
   { id: 'district_to_state', label: msg('District to state') },
   { id: 'state_task_force', label: msg('State task force') },
   { id: 'interstate_desk', label: msg('Interstate desk') },
-  { id: 'national_command', label: msg('National command') },
+  { id: 'national_command', label: msg('National desk') },
 ];
 const BUREAU_REPORT_TYPES = [
   { id: 'ncrb_missing_child_update', label: msg('NCRB missing-child update') },
@@ -281,7 +281,7 @@ const ADOPTION_RECORD_TYPES = [
   { id: 'cwc_order', label: msg('CWC adoption order / declaration') },
   { id: 'legally_free_declaration', label: msg('Legally free declaration') },
   { id: 'carings_registration', label: msg('CARINGS registration') },
-  { id: 'saa_intake', label: msg('SAA intake') },
+  { id: 'saa_intake', label: msg('SAA admission') },
   { id: 'sara_review', label: msg('SARA review') },
   { id: 'pre_adoption_foster_care', label: msg('Pre-adoption foster care') },
   { id: 'followup_visit', label: msg('Follow-up visit') },
@@ -314,7 +314,7 @@ const PRODUCTION_TYPES = [
   { id: 'cwc', label: msg('Produced before CWC') },
   { id: 'jjb', label: msg('Produced before JJB') },
   { id: 'emergency_medical', label: msg('Emergency medical production') },
-  { id: 'cci_intake', label: msg('Produced for CCI intake') },
+  { id: 'cci_intake', label: msg('Produced for CCI admission') },
 ];
 const PRODUCTION_OUTCOMES = [
   { id: 'care_order_pending', label: msg('Care order pending') },
@@ -722,7 +722,7 @@ export default function Cases() {
     const data = await api.post(`/reports/${r.id}/case-workflow`, { action: workflowAction });
     showReport(data.report);
     load();
-  }, msg('Handoff recorded.'));
+  }, msg('Handover recorded.'));
 
   const assignOwner = (r) => action.run('assign', async () => {
     // A child-only owner type picked on an earlier case is not offered here.
@@ -758,7 +758,7 @@ export default function Cases() {
     showReport(data.report);
     setVerify({ firNo: '', note: '' });
     load();
-  }, msg('Intake verified.'));
+  }, msg('Report checked.'));
 
   // Only ever called to withdraw: publishing is refused by the server.
   const withdrawBulletin = (r) => action.run('bulletin', async () => {
@@ -865,7 +865,7 @@ export default function Cases() {
     a.download = `khozo-case-handoff-${r.id}-${targetSystem}.json`;
     a.click();
     URL.revokeObjectURL(url);
-  }, msg('Handoff file downloaded.'));
+  }, msg('Handover file downloaded.'));
 
   const transferJurisdiction = (r) => action.run('transfer', async () => {
     const data = await api.post(`/reports/${r.id}/transfer-jurisdiction`, transfer);
@@ -1108,7 +1108,7 @@ export default function Cases() {
         <div>
           <h2 className="text-2xl font-bold">{t('Cases & FIRs')}</h2>
           <p className="text-sm text-gray-500">
-            {rows.length === 1 ? t('1 record in your scope') : t('{n} records in your scope', { n: rows.length })}
+            {rows.length === 1 ? t('1 record in your area') : t('{n} records in your area', { n: rows.length })}
           </p>
         </div>
         {CASE_CREATE_ROLES.includes(user.role) && (
@@ -1141,7 +1141,7 @@ export default function Cases() {
           </form>
           <select className="field min-w-0 flex-1 sm:w-48 sm:flex-none" value={status} onChange={(e) => setStatus(e.target.value)} aria-label={t('Status')}>
             <option value="">{t('All statuses')}</option>
-            <option value="intake_pending">{t('Intake pending')}</option>
+            <option value="intake_pending">{t('Waiting to be checked')}</option>
             <option value="missing">{t('Missing')}</option>
             <option value="under_review">{t('Under review')}</option>
             <option value="found">{t('Found')}</option>
@@ -1265,8 +1265,8 @@ export default function Cases() {
                 className="mx-4 -mt-1 mb-3 flex min-h-11 items-center rounded-xl bg-amber-100 px-3 py-2 text-sm font-semibold text-amber-800 ring-1 ring-amber-200"
               >
                 {t('Possible match · {pct}% similar · not verified', { pct: Math.round((Number(r.pendingMatch.score) || 0) * 100) })}
-                {r.pendingMatch.corroborated ? ` · ${t('two engines')}` : ''}
-                {r.pendingMatch.notChecked ? ` · ${t('not checked by a second engine')}` : ''}
+                {r.pendingMatch.corroborated ? ` · ${t('two checks')}` : ''}
+                {r.pendingMatch.notChecked ? ` · ${t('not checked a second time')}` : ''}
               </Link>
             ) : null}
             {photoChipVerdict(r) && (
@@ -1324,7 +1324,7 @@ export default function Cases() {
                 <th className="px-4 py-3">{t('FIR no.')}</th>
                 <th className="px-4 py-3">{t('Missing since')}</th>
                 <th className="px-4 py-3">{t('Parent / contact')}</th>
-                <th className="hidden px-4 py-3 xl:table-cell">{t('Workflow')}</th>
+                <th className="hidden px-4 py-3 xl:table-cell">{t('Steps taken')}</th>
                 <th className="hidden px-4 py-3 xl:table-cell">{t('Source')}</th>
                 {canAct && <th className="sticky right-0 bg-slate-50 px-4 py-3 text-right shadow-[-6px_0_6px_-6px_rgb(0_0_0/0.15)]">{t('Actions')}</th>}
               </tr>
@@ -1362,8 +1362,8 @@ export default function Cases() {
                         className="mt-1.5 inline-block max-w-[15rem] rounded-lg bg-amber-100 px-2 py-1 text-xs font-semibold leading-snug text-amber-800 ring-1 ring-amber-200 hover:bg-amber-200"
                       >
                         {t('Possible match · {pct}% similar · not verified', { pct: Math.round((Number(r.pendingMatch.score) || 0) * 100) })}
-                        {r.pendingMatch.corroborated ? ` · ${t('two engines')}` : ''}
-                        {r.pendingMatch.notChecked ? ` · ${t('not checked by a second engine')}` : ''}
+                        {r.pendingMatch.corroborated ? ` · ${t('two checks')}` : ''}
+                        {r.pendingMatch.notChecked ? ` · ${t('not checked a second time')}` : ''}
                       </Link>
                     ) : null}
                     {d(r.foundLocation) && (
@@ -1537,7 +1537,7 @@ export default function Cases() {
                   // The only reference the family can use on the public Track my case page.
                   [t('Case ID'), <span className="font-mono text-xs">{selected.id}</span>],
                   [t('FIR no.'), d(selected.firNo) || '-'],
-                  [t('Workflow'), txt(selected.workflowStatus) || '-'],
+                  [t('Steps taken'), txt(selected.workflowStatus) || '-'],
                   [t('Assigned to'), txt(selected.assignedToName) ? `${txt(selected.assignedToName)} (${roleLabel(selected.assignedToRole)})` : '-'],
                   [t('Match score'), Number(selected.matchScore) ? `${Math.round(Number(selected.matchScore) * 100)}%` : '-'],
                   [t('Declaration'), selected.declaration?.accepted ? `${txt(selected.declaration.signerName) || t('Signer')} / ${txt(selected.declaration.methodLabel) || t('Accepted')}` : '-'],
@@ -1771,8 +1771,8 @@ export default function Cases() {
 
             {canVerifyIntake && selected.status === 'intake_pending' && (
               <div className="mt-6 rounded-xl bg-sky-50 p-4">
-                <p className="text-sm font-medium">{t('Verify citizen / NGO intake')}</p>
-                <p className="text-xs text-gray-600">{t('Convert this intake into a formal missing-child case before handoff, closure, or alerts.')}</p>
+                <p className="text-sm font-medium">{t('Check this citizen or NGO report')}</p>
+                <p className="text-xs text-gray-600">{t('Check this report and make it a formal missing-child case before it is handed over, closed or used for alerts.')}</p>
                 <div className="mt-3 space-y-3">
                   <input
                     className="field w-full"
@@ -1786,7 +1786,7 @@ export default function Cases() {
                     onChange={(e) => setVerify((v) => ({ ...v, note: e.target.value }))}
                     placeholder={t('Verification note')}
                   />
-                  <button onClick={() => verifyIntake(selected)} disabled={action.pending} className="btn-primary w-full">{t('Verify intake')}</button>
+                  <button onClick={() => verifyIntake(selected)} disabled={action.pending} className="btn-primary w-full">{t('Check report')}</button>
                   <ActionMessage action={action} id="verify" />
                 </div>
               </div>
@@ -1857,7 +1857,7 @@ export default function Cases() {
               <div className="mt-6 rounded-xl border border-black/5 p-4">
                 <p className="text-sm font-medium">{t('Earlier sightings')}</p>
                 <p className="text-xs text-gray-600">
-                  {t('Compare this case photo with sightings already received that are not linked to a case. Possible matches go to the Matches queue; an officer confirms each one, and the person who sent the sighting is not told anything.')}
+                  {t('Compare this case photo with sightings already received that are not linked to a case. Possible matches go to Matches; an officer confirms each one, and the person who sent the sighting is told nothing.')}
                 </p>
                 <button
                   type="button"
@@ -1873,7 +1873,7 @@ export default function Cases() {
                       {rematch.count > 0 ? (
                         <p className="font-medium text-amber-800">
                           {t('Checked against earlier sightings: {n} possible match(es) sent for review', { n: rematch.count })}{' '}
-                          <Link to="/app/matches" className="font-semibold text-khozo hover:underline">{t('Open the Matches queue')}</Link>
+                          <Link to="/app/matches" className="font-semibold text-khozo hover:underline">{t('Open Matches')}</Link>
                         </p>
                       ) : rematch.engine && !rematch.engine.biometric ? (
                         <p className="font-medium text-amber-800">{t('No face comparison was made. Try again later.')}</p>
@@ -1885,7 +1885,7 @@ export default function Cases() {
                       )}
                       {rematch.engine?.biometric && (
                         <p className="mt-1 text-gray-400">
-                          {t('Engine: {engine}', { engine: rematch.engine.provider })}
+                          {t('Matched by: {engine}', { engine: rematch.engine.provider })}
                           {' · '}
                           {t('Compared with {n} earlier sighting(s)', { n: rematch.engine.comparedAgainst })}
                         </p>
@@ -1912,7 +1912,7 @@ export default function Cases() {
             {canWorkflow && (
               <div className="mt-6 rounded-xl border border-black/5 p-4">
                 <p className="text-sm font-medium">{t('Case notes')}</p>
-                <p className="text-xs text-gray-600">{t('Add handoff context for police, CWC, CCI, JJB, and command review.')}</p>
+                <p className="text-xs text-gray-600">{t('Add a note about the handover for the police, CWC, CCI, JJB and senior officers.')}</p>
                 <textarea
                   className="field mt-3 min-h-20 w-full"
                   value={caseNote}
@@ -1958,7 +1958,7 @@ export default function Cases() {
                     onChange={(e) => setAssignment((a) => ({ ...a, assigneeId: e.target.value }))}
                     disabled={assignableUsers.length === 0}
                   >
-                    {assignableUsers.length === 0 && <option value="">{t('No scoped assignees available')}</option>}
+                    {assignableUsers.length === 0 && <option value="">{t('No officer in this area to assign')}</option>}
                     {assignableUsers.map((person) => (
                       <option key={person.id} value={person.id}>
                         {txt(person.name)} / {roleLabel(person.role)}
@@ -2075,11 +2075,11 @@ export default function Cases() {
 
             {canWorkflow && !['found', 'closed', 'intake_pending'].includes(selected.status) && workflowActions.length > 0 && (
               <div className="mt-6 rounded-xl border border-black/5 p-4">
-                <p className="text-sm font-medium">{t('Institutional workflow')}</p>
+                <p className="text-sm font-medium">{t('Care in an institution')}</p>
                 <p className="text-xs text-gray-600">
                   {adultCase
-                    ? t('Record a state or crime-records handoff without confirming that the person has been found.')
-                    : t('Record CWC, CCI, JJB, state, or crime-records handoff without confirming reunification.')}
+                    ? t('Record a handover to the State or the crime records bureau, without confirming that the person has been found.')
+                    : t('Record a handover to the CWC, CCI, JJB, the State or the crime records bureau, without confirming that the child is home.')}
                 </p>
                 <div className="mt-3 grid gap-2 sm:grid-cols-2">
                   {workflowActions.map((workflowAction) => (
@@ -2105,7 +2105,7 @@ export default function Cases() {
             {canRecordCciCare && !adultCase && !['found', 'closed', 'intake_pending'].includes(selected.status) && (
               <div className="mt-6 rounded-xl border border-black/5 p-4">
                 <p className="text-sm font-medium">{t('CCI care record')}</p>
-                <p className="text-xs text-gray-600">{t('Record admission, care plan, and next welfare review after CWC/DCPU handoff.')}</p>
+                <p className="text-xs text-gray-600">{t('Record admission, care plan and next welfare review after the CWC or DCPU hands the child over.')}</p>
                 <div className="mt-3 space-y-3">
                   <select
                     className="field w-full"
@@ -2286,7 +2286,7 @@ export default function Cases() {
 
             {canRecordStateEscalation && !['found', 'closed', 'intake_pending'].includes(selected.status) && (
               <div className="mt-6 rounded-xl border border-black/5 p-4">
-                <p className="text-sm font-medium">{t('State escalation')}</p>
+                <p className="text-sm font-medium">{t('Referral to the State')}</p>
                 <p className="text-xs text-gray-600">{t('Record state nodal coordination, urgent rescue support, or interstate action requests.')}</p>
                 <div className="mt-3 space-y-3">
                   <select
@@ -2349,7 +2349,7 @@ export default function Cases() {
                     disabled={action.pending || stateEscalation.authorityName.trim().length < 3 || stateEscalation.actionRequired.trim().length < 10 || !stateEscalation.escalatedDate}
                     onClick={() => recordStateEscalation(selected)}
                   >
-                    {t('Record state escalation')}
+                    {t('Record referral to the State')}
                   </button>
                   <ActionMessage action={action} id="escalation" />
                 </div>
@@ -2453,7 +2453,7 @@ export default function Cases() {
                 <p className="text-sm font-medium">{t('External system IDs')}</p>
                 <p className="text-xs text-gray-600">{t('Link TrackChild, NCRB, CCTNS, GHAR, or state portal identifiers for cross-system traceability.')}</p>
                 <button className="btn-ghost mt-3 w-full" disabled={action.pending} onClick={() => exportHandoff(selected)}>
-                  {t('Export TrackChild handoff JSON')}
+                  {t('Download the file for TrackChild')}
                 </button>
                 <ActionMessage action={action} id="export" />
                 <div className="mt-3 space-y-3">
@@ -2856,7 +2856,7 @@ export default function Cases() {
             {canRecordAdoption && !adultCase && !['closed', 'intake_pending'].includes(selected.status) && (
               <div className="mt-6 rounded-xl border border-black/5 p-4">
                 <p className="text-sm font-medium">{t('Adoption / CARINGS record')}</p>
-                <p className="text-xs text-gray-600">{t('Record CWC orders, legally-free declarations, SAA intake, SARA review, CARINGS updates, or pre-adoption foster care follow-up.')}</p>
+                <p className="text-xs text-gray-600">{t('Record CWC orders, declarations that a child is free for adoption, SAA admission, SARA review, CARINGS updates, or foster care before adoption.')}</p>
                 <div className="mt-3 space-y-3">
                   <select
                     className="field w-full"
@@ -3098,7 +3098,7 @@ export default function Cases() {
 
             {canTransferCase && !['found', 'closed', 'intake_pending'].includes(selected.status) && (
               <div className="mt-6 rounded-xl border border-black/5 p-4">
-                <p className="text-sm font-medium">{t('Transfer jurisdiction')}</p>
+                <p className="text-sm font-medium">{t('Transfer to another area')}</p>
                 <p className="text-xs text-gray-600">{t('Move this case to another district when investigation or child-protection follow-up shifts.')}</p>
                 <div className="mt-3 grid gap-2">
                   <input className="field w-full" value={transfer.state} onChange={(e) => setTransfer((prev) => ({ ...prev, state: e.target.value }))} placeholder={t('Target state')} />
@@ -3111,7 +3111,7 @@ export default function Cases() {
                   <ActionMessage action={action} id="transfer" />
                 </div>
                 {asList(selected.transfers).length > 0 && (
-                  <p className="mt-2 text-xs text-gray-400">{asList(selected.transfers).length === 1 ? t('1 jurisdiction transfer recorded.') : t('{n} jurisdiction transfers recorded.', { n: asList(selected.transfers).length })}</p>
+                  <p className="mt-2 text-xs text-gray-400">{asList(selected.transfers).length === 1 ? t('1 transfer recorded.') : t('{n} transfers recorded.', { n: asList(selected.transfers).length })}</p>
                 )}
               </div>
             )}

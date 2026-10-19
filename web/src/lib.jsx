@@ -29,7 +29,7 @@ export const ROLE_LABELS = {
 
 export const ROLE_TAGLINE = {
   super_admin: msg('State Govt / Police Commissioner'),
-  admin: msg('Asst. Commissioner of Police - jurisdiction view'),
+  admin: msg('Assistant Commissioner of Police - their area'),
   police: msg('Police Station - register FIRs and confirm matches'),
   sjpu: msg('Special Juvenile Police Unit - child-friendly police response and FIR coordination'),
   ahtu: msg('Anti Human Trafficking Unit - trafficking-risk investigation and rescue coordination'),
@@ -38,7 +38,7 @@ export const ROLE_TAGLINE = {
   cwc: msg('Child Welfare Committee - review sightings and child-protection referrals'),
   dcpu: msg('District Child Protection Unit - monitor child-protection cases'),
   rpf: msg('Railway Protection Force - review railway-area sightings'),
-  cci: msg('Child Care Institution - intake and care oversight for children in shelter'),
+  cci: msg('Child Care Institution - admission and care of children in shelter'),
   saa: msg('Specialised Adoption Agency - adoption follow-up and CARINGS coordination'),
   jjb: msg('Juvenile Justice Board - district oversight for child-protection cases'),
   state_nodal: msg('State child-protection nodal officer - statewide monitoring'),
@@ -163,7 +163,7 @@ export function StatusBadge({ status }) {
   };
   const label = {
     missing: msg('Missing'),
-    intake_pending: msg('Intake pending'),
+    intake_pending: msg('Waiting to be checked'),
     under_review: msg('Under review'),
     found: msg('Found / Reunited'),
     closed: msg('Closed'),
@@ -171,7 +171,7 @@ export function StatusBadge({ status }) {
     matched: msg('Matched'),
     referred_cwc: msg('Referred 1098/CWC'),
     cwc_followup_complete: msg('CWC follow-up complete'),
-    formalized_case: msg('Formal intake opened'),
+    formalized_case: msg('Formal case opened'),
     rejected: msg('Rejected'),
     // Closed as "Not a concern", its photo deleted (shared/sighting-misuse.js).
     dismissed: msg('Dismissed'),

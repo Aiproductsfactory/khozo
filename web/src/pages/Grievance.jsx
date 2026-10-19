@@ -25,7 +25,7 @@ const LEVELS = [
 ];
 // The server sends these English labels; they are translated at render.
 const SERVER_LABELS = [msg('Submitted'), msg('Under review'), msg('Referred'), msg('Resolved'), msg('Closed')];
-const DEFAULT_MESSAGE = msg('Your grievance is recorded and queued for review.');
+const DEFAULT_MESSAGE = msg('Your complaint is recorded and will be reviewed.');
 
 export default function Grievance() {
   usePageMeta({ title: msg('Raise a grievance'), description: msg('Raise a complaint about how a missing-person case or a sighting was handled, and follow its status.') });

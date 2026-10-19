@@ -411,7 +411,7 @@ export function createSightingMatcher(deps) {
       status: referred ? 'referred_cwc' : 'no_match',
       referralStatus: referred
         ? 'Referred to Childline/CWC'
-        : adult ? 'Police intake queued' : 'Childline/CWC intake queued',
+        : adult ? 'Sent to the police' : 'Sent to Childline and the CWC',
       ...(referred ? { referredTo1098: true } : {}),
     };
   }
@@ -623,7 +623,7 @@ export function createSightingMatcher(deps) {
       return result(0, { provider: 'none', biometric: false, reason: 'The case has no photo to compare.' });
     }
     if (isFoundChildIntake(report)) {
-      return result(0, { provider: 'none', biometric: false, reason: 'A found-child intake is compared with missing cases as they are registered, not with sightings.' });
+      return result(0, { provider: 'none', biometric: false, reason: 'A found-child case is compared with missing cases as they are registered, not with sightings.' });
     }
     if (typeof rankSightingMatches !== 'function') {
       return result(0, { provider: 'none', biometric: false, reason: 'Reverse matching is not available on this runtime.' });

@@ -52,7 +52,7 @@ export default function Grievances() {
     <div className="space-y-5">
       <div>
         <h2 className="text-2xl font-bold">{t('Grievances')}</h2>
-        <p className="text-sm text-gray-500">{t('Public grievance and feedback receipts in your operational scope.')}</p>
+        <p className="text-sm text-gray-500">{t('Complaints and feedback from the public in your area.')}</p>
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
@@ -108,7 +108,7 @@ export default function Grievances() {
             </div>
           );
         })}
-        {rows.length === 0 && <p className="text-sm text-gray-400">{t('No grievances in your scope yet.')}</p>}
+        {rows.length === 0 && <p className="text-sm text-gray-400">{t('No complaints in your area yet.')}</p>}
       </div>
     </div>
   );

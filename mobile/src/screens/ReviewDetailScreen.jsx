@@ -31,7 +31,7 @@ const DECISIONS = [
     label: 'Not a match',
     icon: 'close-circle-outline',
     variant: 'secondary',
-    confirm: 'Close this sighting as not a match? It stays in the audit record.',
+    confirm: 'Close this sighting as not a match? It stays in the record of actions.',
   },
 ];
 
@@ -74,7 +74,7 @@ export default function ReviewDetailScreen() {
         if (!alive) return;
         const found = rows.find((row) => row.id === params.id);
         if (found) setSighting(found);
-        else setLoadError('This sighting is outside your jurisdiction, or has been removed.');
+        else setLoadError('This sighting is outside your area, or has been removed.');
       })
       .catch((error) => {
         if (alive) setLoadError(error.message);
@@ -90,7 +90,7 @@ export default function ReviewDetailScreen() {
       try {
         const result = await officerApi.reviewFound(token, sighting.id, decision.value, note.trim());
         setSighting((prev) => ({ ...prev, ...(result?.foundReport || {}), status: result?.foundReport?.status || prev.status }));
-        Alert.alert('Decision recorded', result?.message || 'The review has been saved to the case audit log.', [
+        Alert.alert('Decision recorded', result?.message || 'Your decision has been saved to the case’s record of actions.', [
           { text: 'Back to queue', onPress: () => navigation.goBack() },
         ]);
       } catch (error) {
@@ -262,7 +262,7 @@ export default function ReviewDetailScreen() {
             multiline
             // The /found/:id/review endpoint does not persist a note yet, so this
             // must not promise a durable record. The decision itself is audited.
-            hint="Your decision is recorded in the audit log against your name and role."
+            hint="Your decision is recorded against your name and role."
           />
           <View style={{ gap: theme.spacing.md, marginTop: theme.spacing.lg }}>
             {DECISIONS.map((decision) => {

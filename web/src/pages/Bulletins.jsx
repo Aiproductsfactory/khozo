@@ -56,7 +56,7 @@ export default function Bulletins() {
         <p className="text-xs font-semibold uppercase tracking-wide text-khozo">{t('Privacy rule')}</p>
         <h1 className="mt-1 text-3xl font-bold text-ink">{t('Khozo has no public gallery')}</h1>
         <p className="mt-3 text-gray-600">
-          {t('Names and photos of missing persons are never shown to the public. If you have seen someone who seems lost, send a photo — the engines compare it and only authorised officers see who matched.')}
+          {t('Names and photos of missing persons are never shown to the public. If you have seen someone who seems lost, send a photo: it is compared with missing cases, and only authorised officers see who matched.')}
         </p>
 
         <ul className="mt-6 space-y-2 text-sm text-gray-600">

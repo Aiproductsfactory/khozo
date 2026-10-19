@@ -51,7 +51,7 @@ export const DASHBOARD_NAV = [
   { to: '/app/grievances', label: msg('Grievances'), icon: 'grievances', group: 'Review', roles: OPERATIONAL_ROLES },
   { to: '/app/patterns', label: msg('Trafficking patterns'), icon: 'patterns', group: 'Oversight', roles: PATTERN_ROLES },
   { to: '/app/mis', label: msg('MIS report'), icon: 'mis', group: 'Oversight', roles: OPERATIONAL_ROLES },
-  { to: '/app/audit', label: msg('Audit log'), icon: 'audit', group: 'Oversight', roles: OPERATIONAL_ROLES },
+  { to: '/app/audit', label: msg('Record of actions'), icon: 'audit', group: 'Oversight', roles: OPERATIONAL_ROLES },
   { to: '/app/privacy', label: msg('Privacy review'), icon: 'privacy', group: 'Oversight', roles: OPERATIONAL_ROLES },
   { to: '/app/fraud', label: msg('Public abuse'), icon: 'fraud', group: 'Oversight', roles: ABUSE_REVIEW_ROLES },
   { to: '/app/network', label: msg('Network'), icon: 'network', group: 'Administration', roles: NETWORK_ROLES },

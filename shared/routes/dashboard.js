@@ -294,7 +294,7 @@ export default function registerDashboardRoutes(router, deps) {
    * its own provisions nothing.
    */
   function provisionJurisdiction(actor, role, requested = {}) {
-    const outside = { status: 403, error: 'Requested jurisdiction is outside your provisioning scope' };
+    const outside = { status: 403, error: 'You cannot create accounts for that area' };
     const level = LEVEL_BY_ROLE[role];
     if (!level) return outside;
     const actorPlace = actor.jurisdiction || {};
@@ -1471,7 +1471,7 @@ export default function registerDashboardRoutes(router, deps) {
     if (read.error) return res.status(400).json({ error: read.error });
     const { name, email, role, phone, org, state, district, station } = read.body;
     if (!name || !email || !role) return res.status(400).json({ error: 'Name, email, and role are required' });
-    if (!canProvisionRole(req.user, role)) return res.status(403).json({ error: 'You cannot provision this role' });
+    if (!canProvisionRole(req.user, role)) return res.status(403).json({ error: 'You cannot create an account with this role' });
     if (findUserByEmail(email)) return res.status(409).json({ error: 'An account with this email already exists' });
 
     const { stateCode, districtCode } = read.body;

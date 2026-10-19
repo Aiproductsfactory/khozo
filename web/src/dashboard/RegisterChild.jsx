@@ -50,7 +50,7 @@ const PRODUCED_BY_TYPES = [
 ];
 const EDUCATION_LEVELS = [
   { id: 'unknown', label: msg('Unknown') },
-  { id: 'not_enrolled', label: msg('Not enrolled') },
+  { id: 'not_enrolled', label: msg('Not in face search') },
   { id: 'primary', label: msg('Primary') },
   { id: 'upper_primary', label: msg('Upper primary') },
   { id: 'secondary', label: msg('Secondary') },
@@ -341,7 +341,7 @@ export default function RegisterChild() {
           {canReviewMatches && created.sightingMatches > 0 && (
             <p className="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
               {t('Checked against earlier sightings: {n} possible match(es) sent for review', { n: created.sightingMatches })}{' '}
-              <Link to="/app/matches" className="font-semibold text-khozo hover:underline">{t('Open the Matches queue')}</Link>
+              <Link to="/app/matches" className="font-semibold text-khozo hover:underline">{t('Open Matches')}</Link>
             </p>
           )}
           <div className="mt-6 flex flex-wrap gap-3">
@@ -625,8 +625,8 @@ export default function RegisterChild() {
             <input type="checkbox" className="mt-1" checked={form.declarationAccepted} onChange={setChecked('declarationAccepted')} required />
             <span>
               {adult
-                ? t('I declare that the information provided is true to the best of my knowledge and may be used by authorized police and support services for tracing and verification.')
-                : t('I declare that the information provided is true to the best of my knowledge and may be used by authorized police, SJPU, CWC/DCPU, and child-protection authorities for tracing, verification, and restoration.')}
+                ? t('I declare that the information provided is true to the best of my knowledge and may be used by authorised police and support services for tracing and verification.')
+                : t('I declare that the information provided is true to the best of my knowledge and may be used by authorised police, SJPU, CWC/DCPU, and child-protection authorities for tracing, verification, and restoration.')}
             </span>
           </label>
         </div>

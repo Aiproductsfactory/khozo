@@ -19,7 +19,7 @@ export const ROLE_LABELS = {
   admin: 'State administrator',
   police: 'Police station',
   sjpu: 'Special Juvenile Police Unit',
-  ahtu: 'Anti Human Trafficking Unit',
+  ahtu: 'Anti-Human Trafficking Unit',
   dcrb: 'District crime records bureau',
   dlsa: 'District legal services authority',
   cwc: 'Child Welfare Committee',

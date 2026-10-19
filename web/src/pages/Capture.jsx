@@ -56,8 +56,8 @@ const SEEN_COPY = {
     note: msg('Anything that helps identify the child'),
     agePlaceholder: msg('e.g. 6'),
     alt: msg('Child'),
-    noPhoto: msg('No photo attached. This will be sent as a text sighting to Childline/CWC intake and no match search will run.'),
-    consent: msg('I confirm this photo may be used only for child-protection review, police/CWC follow-up, and match search. The sighting image is retained for 180 days unless escalated.'),
+    noPhoto: msg('No photo attached. This will go to Childline and the CWC as a written report, and no face search will run.'),
+    consent: msg('I agree this photo may be used only to protect the child, for follow-up by the police or CWC, and to search for a match. It is kept for 180 days, or longer if a case needs it.'),
     danger: msg('If the child is in immediate danger, call 1098 or 112.'),
   },
   woman: {
@@ -66,8 +66,8 @@ const SEEN_COPY = {
     note: msg('Anything that helps identify her — clothing, language, what she said'),
     agePlaceholder: msg('e.g. 30'),
     alt: msg('Woman'),
-    noPhoto: msg('No photo attached. This will be sent as a text sighting for police review and no match search will run.'),
-    consent: msg('I confirm this photo may be used only for police review, follow-up, and match search. The sighting image is retained for 180 days unless escalated.'),
+    noPhoto: msg('No photo attached. This will go to the police as a written report, and no face search will run.'),
+    consent: msg('I agree this photo may be used only for police review and follow-up, and to search for a match. It is kept for 180 days, or longer if a case needs it.'),
     danger: msg('If she is in immediate danger, call 112. The Women Helpline 181 and the One Stop Centre (Sakhi) can also help.'),
     // An adult has the right to be left alone (shared/sighting-misuse.js).
     why: msg('What made you think she needs help?'),
@@ -79,8 +79,8 @@ const SEEN_COPY = {
     note: msg('Anything that helps identify the person — clothing, language, what they said'),
     agePlaceholder: msg('e.g. 70'),
     alt: msg('Person'),
-    noPhoto: msg('No photo attached. This will be sent as a text sighting for police review and no match search will run.'),
-    consent: msg('I confirm this photo may be used only for police review, follow-up, and match search. The sighting image is retained for 180 days unless escalated.'),
+    noPhoto: msg('No photo attached. This will go to the police as a written report, and no face search will run.'),
+    consent: msg('I agree this photo may be used only for police review and follow-up, and to search for a match. It is kept for 180 days, or longer if a case needs it.'),
     danger: msg('If the person is in immediate danger, call 112.'),
     why: msg('What made you think this person needs help?'),
     photoRule: msg('Photograph an adult only if they have asked for help or cannot look after themselves.'),
@@ -734,7 +734,7 @@ export default function Capture() {
                   </div>
                   <label className="flex gap-3 rounded-xl bg-white p-3 text-sm text-gray-700 ring-1 ring-black/5">
                     <input type="checkbox" className="mt-1" checked={form.confidentialReporter} onChange={setChecked('confidentialReporter')} />
-                    <span>{t('Keep my identity confidential in the review queue.')}</span>
+                    <span>{t('Hide my name and phone from the officers who review it.')}</span>
                   </label>
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div>
@@ -854,7 +854,7 @@ export default function Capture() {
                 <span>{t((SEEN_COPY[result.foundReport.personCategory] || copy).danger)}</span>
               </p>
               {result.foundReport.retentionUntil && (
-                <p className="mt-3 text-xs text-gray-400">{t('Photo review retention until {date}', { date: new Date(result.foundReport.retentionUntil).toLocaleDateString(currentLocale()) })}</p>
+                <p className="mt-3 text-xs text-gray-400">{t('Your photo is kept until {date}', { date: new Date(result.foundReport.retentionUntil).toLocaleDateString(currentLocale()) })}</p>
               )}
             </div>
 

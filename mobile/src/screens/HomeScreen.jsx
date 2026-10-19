@@ -254,7 +254,7 @@ export default function HomeScreen() {
                   <StatTile value={stats.totalFound ?? '—'} label="Found / closed" tone="success" />
                 </View>
                 <Text variant="small" tone="muted" style={{ marginTop: theme.spacing.md }}>
-                  {officerStats.data?.scope || 'Scoped to your jurisdiction'} · {stats.reunificationRate}% reunification rate
+                  {officerStats.data?.scope || 'Your area only'} · {stats.reunificationRate}% reunification rate
                 </Text>
               </Card>
             </>

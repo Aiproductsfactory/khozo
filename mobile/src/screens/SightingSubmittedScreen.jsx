@@ -17,7 +17,7 @@ const NEXT_STEPS = {
   ],
   no_match: [
     'No missing-child record matched this report yet.',
-    'It has been queued for Childline / CWC follow-up.',
+    'It has been sent to Childline and the CWC for follow-up.',
     'New missing-child reports are checked against it as they arrive.',
   ],
 };
@@ -61,8 +61,8 @@ export default function SightingSubmittedScreen() {
         </Text>
         <Text variant="body" tone="secondary" style={{ marginTop: theme.spacing.sm, textAlign: 'center' }}>
           {queued
-            ? 'You are offline or the server could not be reached. Khozo will send this report automatically as soon as you have a connection.'
-            : review || 'Your report has been received and queued for review.'}
+            ? 'You are offline or Khozo could not be reached. Khozo will send this report automatically as soon as you have a connection.'
+            : review || 'Your report has been received and will be reviewed.'}
         </Text>
       </View>
 

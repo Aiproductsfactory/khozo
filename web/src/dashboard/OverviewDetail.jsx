@@ -87,7 +87,7 @@ function ageKey(r) {
 const STATUS_ORDER = [
   ['missing', msg('Missing')],
   ['under_review', msg('Under review')],
-  ['intake_pending', msg('Intake pending')],
+  ['intake_pending', msg('Waiting to be checked')],
   ['found', msg('Found')],
   ['closed', msg('Closed')],
 ];

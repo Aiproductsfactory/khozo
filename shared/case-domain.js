@@ -723,7 +723,7 @@ function publicCaseStatus(report) {
     id: report.id,
     status: report.status,
     statusLabel: report.status === 'intake_pending'
-      ? 'Citizen/NGO intake pending verification'
+      ? 'Citizen or NGO report waiting to be checked'
       : report.status === 'missing'
         ? 'Missing case active'
         : report.status === 'under_review'
@@ -1291,8 +1291,8 @@ const PERSON_CONSENT_REQUIRED =
  */
 const FAMILY_SMS_MESSAGES = {
   sent: 'SMS sent to the family.',
-  no_gateway: 'No SMS gateway is connected. Call the family directly and record the call.',
-  gateway_failed: 'The SMS gateway did not accept the message. Call the family directly and record the call.',
+  no_gateway: 'No SMS service is connected. Call the family directly and record the call.',
+  gateway_failed: 'The SMS service did not accept the message. Call the family directly and record the call.',
   no_family_phone: 'No family phone number is recorded on this case. Record how the family was contacted.',
   not_requested: 'The family has not been told yet. Call them and record the call.',
   consent_required: PERSON_CONSENT_REQUIRED,

@@ -15,7 +15,7 @@ import { msg, useT } from '../i18n.jsx';
 
 const IDLE = { id: '', pending: false, error: '', success: '' };
 const FALLBACK_ERROR = msg('The action could not be completed. Try again.');
-const OFFLINE_ERROR = msg('Could not reach the server. Check the connection and try again.');
+const OFFLINE_ERROR = msg('Could not connect to Khozo. Check your internet connection and try again.');
 
 function errorText(error) {
   const message = typeof error?.message === 'string' ? error.message.trim() : '';

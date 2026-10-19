@@ -195,7 +195,7 @@ export default function ReportSightingScreen() {
     try {
       const { granted } = await Location.requestForegroundPermissionsAsync();
       if (!granted) {
-        Alert.alert('Location permission needed', 'Allow location so the nearest team can be dispatched, or type the place manually.');
+        Alert.alert('Location permission needed', 'Allow location so the nearest team can be sent, or type the place yourself.');
         return;
       }
       const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
@@ -420,7 +420,7 @@ export default function ReportSightingScreen() {
                     ? 'Getting your location…'
                     : form.lat != null
                       ? `${form.lat.toFixed(5)}, ${form.lng.toFixed(5)}${form.accuracy ? ` · ±${Math.round(form.accuracy)} m` : ''}`
-                      : 'Helps dispatch the nearest team'}
+                      : 'Helps send the nearest team'}
                 </Text>
               </View>
               {locating ? (

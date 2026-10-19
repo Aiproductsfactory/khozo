@@ -1558,7 +1558,7 @@ export default function registerReportRoutes(router, deps) {
       referredTo1098: !adultSighting,
       referralStatus: hasStrongMatch
         ? 'Police review pending'
-        : adultSighting ? 'Police intake queued' : 'Childline/CWC intake queued',
+        : adultSighting ? 'Sent to the police' : 'Sent to Childline and the CWC',
       // What the screen found, kept on the record so a reviewer can see why the
       // report was routed the way it was rather than guessing.
       screening: {
@@ -1721,11 +1721,11 @@ export default function registerReportRoutes(router, deps) {
         ? 'Possible match found. Police will review before any identity or family details are shared.'
         : req.file
           ? (adultSighting
-            ? 'No strong match yet. The report is saved and queued for police follow-up.'
-            : 'No strong match yet. The report is saved and queued for Childline/CWC follow-up.')
+            ? 'No strong match yet. The report is saved and sent to the police for follow-up.'
+            : 'No strong match yet. The report is saved and sent to Childline and the CWC for follow-up.')
           : (adultSighting
-            ? 'Your text sighting is saved and queued for police follow-up. No face-match search was run because no photo was uploaded.'
-            : 'Your text sighting is saved and queued for Childline/CWC follow-up. No face-match search was run because no photo was uploaded.'),
+            ? 'Your written report is saved and sent to the police. No face search was run because there was no photo.'
+            : 'Your written report is saved and sent to Childline and the CWC. No face search was run because there was no photo.'),
       candidates: visibleCandidates
         .map((c, index) => ({
           rank: index + 1,
@@ -2270,7 +2270,7 @@ export default function registerReportRoutes(router, deps) {
     updateFoundReport(f.id, {
       status: 'formalized_case',
       formalReportId: report.id,
-      referralStatus: 'Formal found-child intake opened',
+      referralStatus: 'Formal found-child case opened',
       cwcFollowup: f.cwcFollowup || {
         outcome: 'shelter_intake_required',
         label: CWC_FOLLOWUP_OUTCOMES.shelter_intake_required,
@@ -2354,7 +2354,7 @@ export default function registerReportRoutes(router, deps) {
       return res.status(403).json({ error: 'Found report is outside your jurisdiction' });
     }
     if (!f.photoFile) return res.status(409).json({ error: 'This sighting has no photo to compare' });
-    if (f.anonymizedAt) return res.status(409).json({ error: 'Anonymised sightings are not compared with cases' });
+    if (f.anonymizedAt) return res.status(409).json({ error: 'Sightings whose details were removed are not compared with cases' });
     if (!isRematchEligible(f)) return res.status(409).json({ error: 'This sighting is closed and is not searched again' });
 
     const result = await matcher.rematchSighting(f, { trigger: 'rematch', actor: req.user });
@@ -2629,8 +2629,8 @@ export default function registerReportRoutes(router, deps) {
   router.post('/:id/photo', protectedRoute, requireRole(...POLICE_ROLES), upload.single('photo'), withoutPhotoMetadata, async (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
-    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
-    if (r.anonymizedAt) return res.status(409).json({ error: 'Anonymised cases cannot be given a new photo' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
+    if (r.anonymizedAt) return res.status(409).json({ error: 'A case whose details were removed cannot be given a new photo' });
     const read = readFields(req.body, { photoConsent: 'flag' });
     if (read.error) return res.status(400).json({ error: read.error });
     if (!req.file) return res.status(400).json({ error: 'Attach the new photo' });
@@ -2766,11 +2766,11 @@ export default function registerReportRoutes(router, deps) {
       return null;
     }
     if (!canAccessReport(req.user, r)) {
-      res.status(403).json({ error: 'Report is outside your jurisdiction' });
+      res.status(403).json({ error: 'This report is outside your area' });
       return null;
     }
     if (r.anonymizedAt) {
-      res.status(409).json({ error: 'Anonymised cases cannot be given a new photo' });
+      res.status(409).json({ error: 'A case whose details were removed cannot be given a new photo' });
       return null;
     }
     return r;
@@ -3013,7 +3013,7 @@ export default function registerReportRoutes(router, deps) {
   router.post('/:id/confirm-match', protectedRoute, requireRole('police', 'sjpu', 'admin', 'super_admin'), async (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
-    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
     if (isPendingCitizenIntake(r)) return res.status(409).json({ error: 'Citizen/NGO intake must be verified before match confirmation' });
     const read = readFields(req.body, {
       foundLocation: ['text', 180],
@@ -3161,13 +3161,13 @@ export default function registerReportRoutes(router, deps) {
   router.post('/:id/reopen', protectedRoute, requireRole(...POLICE_ROLES), async (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
-    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
     const read = readFields(req.body, { reason: ['text', 500] });
     if (read.error) return res.status(400).json({ error: read.error });
     if (!['found', 'closed'].includes(r.status)) {
       return res.status(409).json({ error: 'Only a found or closed case can be reopened' });
     }
-    if (r.anonymizedAt) return res.status(409).json({ error: 'Anonymised cases cannot be reopened' });
+    if (r.anonymizedAt) return res.status(409).json({ error: 'A case whose details were removed cannot be reopened' });
     const reason = read.body.reason || '';
     if (reason.length < 10) {
       return res.status(400).json({ error: 'Give a reason of at least 10 characters for reopening the case' });
@@ -3233,19 +3233,19 @@ export default function registerReportRoutes(router, deps) {
   router.post('/:id/rematch', protectedRoute, requireRole(...POLICE_ROLES), async (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
-    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
-    if (r.anonymizedAt) return res.status(409).json({ error: 'Anonymised cases are not compared with sightings' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
+    if (r.anonymizedAt) return res.status(409).json({ error: 'Cases whose details were removed are not compared with sightings' });
     if (!r.photoFile) return res.status(409).json({ error: 'This case has no photo to compare with sightings' });
     if (r.status === 'found') return res.status(409).json({ error: 'Found cases are not compared with sightings' });
     if (r.status === 'closed') return res.status(409).json({ error: 'Closed cases are not compared with sightings' });
     // A found child in care is matched by the missing cases registered after
     // it (the reverse search covers open found-child intakes); comparing it
     // with sightings would only find its own.
-    if (isFoundChildIntake(r)) return res.status(409).json({ error: 'A found-child intake is not compared with sightings' });
+    if (isFoundChildIntake(r)) return res.status(409).json({ error: 'A found-child case is not compared with sightings' });
     // The same rule registration follows: an unverified intake is a stranger's
     // photograph until an officer verifies it, and verifying it runs this search.
     if (isPendingCitizenIntake(r)) {
-      return res.status(409).json({ error: 'Citizen/NGO intake must be verified before it is compared with sightings' });
+      return res.status(409).json({ error: 'A citizen or NGO report must be checked before it is compared with sightings' });
     }
 
     const reverse = await matcher.matchStoredSightings(r, { trigger: 'rematch', actor: req.user });
@@ -3278,8 +3278,8 @@ export default function registerReportRoutes(router, deps) {
   router.post('/:id/send-sms', protectedRoute, requireRole('police', 'sjpu', 'admin', 'super_admin'), async (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
-    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
-    if (isPendingCitizenIntake(r)) return res.status(409).json({ error: 'Citizen/NGO intake must be verified before parent SMS alerts' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
+    if (isPendingCitizenIntake(r)) return res.status(409).json({ error: 'A citizen or NGO report must be checked before the family is sent an SMS' });
     if (isAdultCase(r) && req.body?.personConsent !== true) {
       return res.status(409).json({ error: PERSON_CONSENT_REQUIRED, code: 'person_consent_required' });
     }
@@ -3304,7 +3304,7 @@ export default function registerReportRoutes(router, deps) {
   router.post('/:id/family-contacted', protectedRoute, requireRole(...POLICE_ROLES, 'cwc'), (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
-    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
     const read = readFields(req.body, { method: ['text', 20], note: ['text', 500], personConsent: 'flag' });
     if (read.error) return res.status(400).json({ error: read.error });
     const { method } = read.body;
@@ -3340,7 +3340,7 @@ export default function registerReportRoutes(router, deps) {
   router.post('/:id/case-workflow', protectedRoute, requireRole(...CASE_WORKFLOW_ROLES), (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
-    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
     if (isPendingCitizenIntake(r)) return res.status(409).json({ error: 'Citizen/NGO intake must be verified before institutional handoff' });
 
     const read = readFields(req.body, { action: ['text', 40], note: ['text', 500] });
@@ -3389,14 +3389,14 @@ export default function registerReportRoutes(router, deps) {
   router.get('/:id/assignable-users', protectedRoute, requireRole(...CASE_ASSIGN_ROLES), (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
-    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
     res.json({ users: assignableUsersForReport(req.user, r, listUsers()) });
   });
 
   router.post('/:id/assign-owner', protectedRoute, requireRole(...CASE_ASSIGN_ROLES), (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
-    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
     if (isPendingCitizenIntake(r)) return res.status(409).json({ error: 'Citizen/NGO intake must be verified before owner assignment' });
     if (['found', 'closed'].includes(r.status)) return res.status(409).json({ error: 'Found or closed cases cannot receive owner assignments' });
 
@@ -3493,7 +3493,7 @@ export default function registerReportRoutes(router, deps) {
   router.post('/:id/investigation-checklist', protectedRoute, requireRole(...INVESTIGATION_CHECKLIST_ROLES), (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
-    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
     if (isPendingCitizenIntake(r)) return res.status(409).json({ error: 'Citizen/NGO intake must be verified before investigation checklist updates' });
     if (['found', 'closed'].includes(r.status)) return res.status(409).json({ error: 'Found or closed cases cannot receive investigation checklist updates' });
 
@@ -3581,7 +3581,7 @@ export default function registerReportRoutes(router, deps) {
   router.post('/:id/close-case', protectedRoute, requireRole(...CASE_CLOSE_ROLES), async (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
-    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
     if (isPendingCitizenIntake(r)) return res.status(409).json({ error: 'Citizen/NGO intake must be verified before case closure' });
     if (r.status === 'closed') return res.status(409).json({ error: 'Case is already closed' });
 
@@ -3647,7 +3647,7 @@ export default function registerReportRoutes(router, deps) {
   router.post('/:id/notes', protectedRoute, requireRole(...CASE_NOTE_ROLES), (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
-    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
     const noteText = cleanText(req.body?.note, 1000);
     if (noteText.length < 3) return res.status(400).json({ error: 'Case note must be at least 3 characters' });
     const note = {
@@ -3678,7 +3678,7 @@ export default function registerReportRoutes(router, deps) {
   router.post('/:id/cci-care', protectedRoute, requireRole(...CCI_CARE_ROLES), (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
-    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
     if (isPendingCitizenIntake(r)) return res.status(409).json({ error: 'Citizen/NGO intake must be verified before CCI care recording' });
     if (['found', 'closed'].includes(r.status)) return res.status(409).json({ error: 'Found or closed cases cannot receive new CCI care records' });
 
@@ -3793,7 +3793,7 @@ export default function registerReportRoutes(router, deps) {
   router.post('/:id/jjb-proceeding', protectedRoute, requireRole(...JJB_PROCEEDING_ROLES), (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
-    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
     if (isPendingCitizenIntake(r)) return res.status(409).json({ error: 'Citizen/NGO intake must be verified before JJB proceeding recording' });
     if (['found', 'closed'].includes(r.status)) return res.status(409).json({ error: 'Found or closed cases cannot receive new JJB proceeding records' });
 
@@ -3886,7 +3886,7 @@ export default function registerReportRoutes(router, deps) {
   router.post('/:id/state-escalation', protectedRoute, requireRole(...STATE_ESCALATION_ROLES), (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
-    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
     if (isPendingCitizenIntake(r)) return res.status(409).json({ error: 'Citizen/NGO intake must be verified before state escalation recording' });
     if (['found', 'closed'].includes(r.status)) return res.status(409).json({ error: 'Found or closed cases cannot receive new state escalation records' });
 
@@ -3991,7 +3991,7 @@ export default function registerReportRoutes(router, deps) {
   router.post('/:id/bureau-report', protectedRoute, requireRole(...BUREAU_REPORT_ROLES), (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
-    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
     if (isPendingCitizenIntake(r)) return res.status(409).json({ error: 'Citizen/NGO intake must be verified before bureau reporting' });
     if (r.status === 'closed') return res.status(409).json({ error: 'Closed cases cannot receive new bureau report records' });
 
@@ -4092,7 +4092,7 @@ export default function registerReportRoutes(router, deps) {
   router.post('/:id/external-id', protectedRoute, requireRole(...EXTERNAL_ID_ROLES), (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
-    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
     if (isPendingCitizenIntake(r)) return res.status(409).json({ error: 'Citizen/NGO intake must be verified before external ID linking' });
 
     const idType = cleanText(req.body?.idType, 40);
@@ -4177,7 +4177,7 @@ export default function registerReportRoutes(router, deps) {
   router.post('/:id/restoration-plan', protectedRoute, requireRole(...RESTORATION_PLAN_ROLES), (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
-    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
     if (isPendingCitizenIntake(r)) return res.status(409).json({ error: 'Citizen/NGO intake must be verified before restoration planning' });
     if (r.status === 'closed') return res.status(409).json({ error: 'Closed cases cannot receive new restoration plans' });
 
@@ -4326,7 +4326,7 @@ export default function registerReportRoutes(router, deps) {
   router.post('/:id/welfare-referral', protectedRoute, requireRole(...WELFARE_REFERRAL_ROLES), (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
-    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
     if (isPendingCitizenIntake(r)) return res.status(409).json({ error: 'Citizen/NGO intake must be verified before welfare referral' });
     if (r.status === 'closed') return res.status(409).json({ error: 'Closed cases cannot receive new welfare referrals' });
 
@@ -4421,7 +4421,7 @@ export default function registerReportRoutes(router, deps) {
   router.post('/:id/legal-aid-referral', protectedRoute, requireRole(...LEGAL_AID_REFERRAL_ROLES), (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
-    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
     if (isPendingCitizenIntake(r)) return res.status(409).json({ error: 'Citizen/NGO intake must be verified before legal-aid referral' });
     if (r.status === 'closed') return res.status(409).json({ error: 'Closed cases cannot receive new legal-aid referrals' });
 
@@ -4519,7 +4519,7 @@ export default function registerReportRoutes(router, deps) {
   router.post('/:id/adoption-record', protectedRoute, requireRole(...ADOPTION_RECORD_ROLES), (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
-    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
     if (isPendingCitizenIntake(r)) return res.status(409).json({ error: 'Citizen/NGO intake must be verified before adoption follow-up' });
     if (r.status === 'closed') return res.status(409).json({ error: 'Closed cases cannot receive new adoption records' });
 
@@ -4616,7 +4616,7 @@ export default function registerReportRoutes(router, deps) {
   router.post('/:id/case-assessment', protectedRoute, requireRole(...CASE_ASSESSMENT_ROLES), (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
-    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
     if (isPendingCitizenIntake(r)) return res.status(409).json({ error: 'Citizen/NGO intake must be verified before case assessment' });
     if (r.status === 'closed') return res.status(409).json({ error: 'Closed cases cannot receive new case assessments' });
 
@@ -4714,7 +4714,7 @@ export default function registerReportRoutes(router, deps) {
   router.post('/:id/production-record', protectedRoute, requireRole(...PRODUCTION_RECORD_ROLES), (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
-    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
     if (isPendingCitizenIntake(r)) return res.status(409).json({ error: 'Citizen/NGO intake must be verified before production recording' });
     if (r.status === 'closed') return res.status(409).json({ error: 'Closed cases cannot receive new production records' });
 
@@ -4818,7 +4818,7 @@ export default function registerReportRoutes(router, deps) {
   router.post('/:id/transfer-jurisdiction', protectedRoute, requireRole(...CASE_TRANSFER_ROLES), (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
-    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
     if (isPendingCitizenIntake(r)) return res.status(409).json({ error: 'Citizen/NGO intake must be verified before jurisdiction transfer' });
     if (['found', 'closed'].includes(r.status)) return res.status(409).json({ error: 'Found or closed cases cannot be transferred' });
 
@@ -4916,7 +4916,7 @@ export default function registerReportRoutes(router, deps) {
   router.post('/:id/verify-intake', protectedRoute, requireRole(...INTAKE_VERIFY_ROLES), async (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
-    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
     if (!isPendingCitizenIntake(r)) return res.status(409).json({ error: 'Report intake is already verified' });
 
     const { firNo, note } = req.body || {};
@@ -5000,7 +5000,7 @@ export default function registerReportRoutes(router, deps) {
 
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
-    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
 
     const now = Date.now();
     const bulletin = {
@@ -5036,7 +5036,7 @@ export default function registerReportRoutes(router, deps) {
   router.get('/:id/handoff-export', protectedRoute, requireRole(...CASE_HANDOFF_EXPORT_ROLES), (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
-    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
     if (isPendingCitizenIntake(r)) return res.status(409).json({ error: 'Citizen/NGO intake must be verified before handoff export' });
 
     const requestedTarget = cleanText(req.query.targetSystem, 40);
@@ -5066,7 +5066,7 @@ export default function registerReportRoutes(router, deps) {
   router.get('/:id', protectedRoute, (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
-    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'Report is outside your jurisdiction' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
     const view = isCitizenRole(req.user.role) ? citizenCaseView(r) : deskCaseView(req.user, r);
     res.json({ report: { ...view, personCategory: personCategoryOf(r) } });
   });

@@ -202,7 +202,7 @@ function memoryDeps() {
   check('the activity feed is rewritten', byId.a1.target === 'Anonymised case r_closed_old' && byId.a2.target === 'Location removed' && byId.a3.target === 'Someone else');
   check('a parent who registered the case is no longer named as its actor', byId.a4.actor === 'Anonymized');
   check('names inside an activity row’s wording are removed', !byId.a4.action.includes('Closed Child') && !byId.a4.action.includes('Leela'), byId.a4.action);
-  check('the citizen who sent a sighting is no longer named', byId.a5.actor === 'Anonymized citizen' && byId.a5.target === 'Anonymised sighting f_plain');
+  check('the citizen who sent a sighting is no longer named', byId.a5.actor === 'Anonymised citizen' && byId.a5.target === 'Anonymised sighting f_plain');
   const again = await runRetentionSweep(deps, { now: NOW, apply: true });
   check('a second sweep finds nothing more to do', again.done.sightingsAnonymised === 0 && again.done.casesAnonymised === 0 && again.done.sightingsExtended === 0);
 }

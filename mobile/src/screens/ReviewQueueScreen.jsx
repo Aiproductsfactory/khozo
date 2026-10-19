@@ -152,7 +152,7 @@ export default function ReviewQueueScreen() {
               title={filter === 'open' ? 'Nothing waiting on you' : 'No sightings here'}
               message={
                 filter === 'open'
-                  ? 'New sightings in your jurisdiction will appear here for review.'
+                  ? 'New sightings in your area will appear here for review.'
                   : 'Change the filter to see other sightings.'
               }
             />

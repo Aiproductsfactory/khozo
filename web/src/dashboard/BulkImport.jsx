@@ -35,8 +35,8 @@ const CONNECTED_SOURCES = [
 ];
 
 const PRESET_HELP = {
-  khozo: msg('Our own column layout. Download the blank template, fill one row per person and save it as CSV or Excel.'),
-  gujarat: msg('The police station register (અ.નં, નામ, જાતી, ઉ.વ, ગુમ થયા તારીખ …). Reads photos pasted into the sheet and text typed in the legacy Gujarati font.'),
+  khozo: msg('Khozo’s own columns. Download the blank form, fill in one row per person and save it as Excel or CSV.'),
+  gujarat: msg('The police station register (અ.નં, નામ, જાતી, ઉ.વ, ગુમ થયા તારીખ …). Reads photos pasted into the sheet and text typed in the old Gujarati font.'),
   other: msg('An export from another portal or an NGO register. Check the column mapping below before you import.'),
 };
 
@@ -131,9 +131,9 @@ function LegacyMark() {
   return (
     <span
       className="ml-1 inline-flex items-center rounded bg-violet-50 px-1.5 py-0.5 align-middle max-sm:text-xs font-semibold sm:text-[10px] text-violet-700 ring-1 ring-inset ring-violet-600/20"
-      title={t('This text was typed in a legacy Gujarati font and has been converted to Unicode Gujarati.')}
+      title={t('This text was typed in a old Gujarati font and has been converted to standard Gujarati.')}
     >
-      {t('converted from legacy font')}
+      {t('converted from the old font')}
     </span>
   );
 }
@@ -161,7 +161,7 @@ function PresetPicker({ preset, onChange, disabled }) {
             <span className="pl-6 text-xs text-gray-500">{t(PRESET_HELP[p.id])}</span>
             {p.id === 'khozo' && (
               <button type="button" className="ml-6 mt-1 self-start text-xs font-semibold text-khozo hover:underline" onClick={(e) => { e.preventDefault(); downloadTemplate(); }}>
-                {t('Download blank template (CSV)')}
+                {t('Download the blank form (CSV)')}
               </button>
             )}
           </label>
@@ -185,7 +185,7 @@ function ConnectedSources() {
               <span className="rounded-full bg-gray-200/70 px-2 py-0.5 max-sm:text-xs font-medium text-gray-600 sm:text-[11px]">{t('Not connected')}</span>
             </div>
             <p className="text-xs text-gray-500">{t(s.note)}</p>
-            <p className="mt-0.5 text-xs text-gray-600">{t('Direct connection awaiting API access — import their exports here meanwhile')}</p>
+            <p className="mt-0.5 text-xs text-gray-600">{t('A direct link is waiting for their permission; until then, import their files here')}</p>
           </li>
         ))}
       </ul>
@@ -805,8 +805,8 @@ export default function BulkImport() {
           <label className="flex items-start gap-3 rounded-xl bg-gray-50 p-3 text-sm text-gray-700">
             <input type="checkbox" className="mt-1" checked={legacyConvert} onChange={(e) => setLegacyConvert(e.target.checked)} disabled={running} />
             <span>
-              {t('Convert text typed in the legacy Gujarati font (Vakil) to Unicode Gujarati')}
-              {hasLegacyFont && <span className="block text-xs text-gray-500">{t('This workbook uses the legacy font.')}</span>}
+              {t('Convert text typed in the old Gujarati font (Vakil) to standard Gujarati')}
+              {hasLegacyFont && <span className="block text-xs text-gray-500">{t('This workbook uses the old Gujarati font.')}</span>}
             </span>
           </label>
 
@@ -821,7 +821,7 @@ export default function BulkImport() {
                 disabled={running}
               />
             </div>
-            <p className="mt-2 text-xs text-gray-500">{t('Defaults to your own jurisdiction. A State or District column in the file overrides this for its row.')}</p>
+            <p className="mt-2 text-xs text-gray-500">{t('Uses your own area, unless a row gives its own State or District.')}</p>
             {scopeWarning && (
               <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
                 {t('Your account covers {mine}. Cases filed for another district will not appear in your case list, so a re-run cannot recognise them.', { mine: jurisdiction.district })}
@@ -856,7 +856,7 @@ export default function BulkImport() {
               <span className="rounded-lg bg-red-50 px-3 py-1.5 text-red-700">{t('{n} cannot import', { n: num(counts.error) })}</span>
               {counts.exists > 0 && <span className="rounded-lg bg-sky-50 px-3 py-1.5 text-sky-700">{t('{n} already in Khozo', { n: num(counts.exists) })}</span>}
               <span className="rounded-lg bg-gray-100 px-3 py-1.5">{t('{n} with a photo', { n: num(counts.photos) })}</span>
-              {counts.converted > 0 && <span className="rounded-lg bg-violet-50 px-3 py-1.5 text-violet-700">{t('{n} rows converted from legacy font', { n: num(counts.converted) })}</span>}
+              {counts.converted > 0 && <span className="rounded-lg bg-violet-50 px-3 py-1.5 text-violet-700">{t('{n} rows converted from the old font', { n: num(counts.converted) })}</span>}
               <span className="rounded-lg bg-khozo-light px-3 py-1.5 font-semibold text-khozo-dark">{t('{n} selected', { n: num(counts.selected) })}</span>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -1005,7 +1005,7 @@ export default function BulkImport() {
               </div>
               {run.retry && (
                 <p className="mt-2 text-xs text-amber-700">
-                  {t('The server is busy; trying again in {s} s (attempt {n}).', { s: Math.round(run.retry.wait / 1000), n: run.retry.attempt })}
+                  {t('Khozo is busy; trying again in {s} s (try {n}).', { s: Math.round(run.retry.wait / 1000), n: run.retry.attempt })}
                 </p>
               )}
             </div>
@@ -1024,7 +1024,7 @@ export default function BulkImport() {
           {!state && <p className="text-xs text-red-700">{t('Choose the state these cases belong to.')}</p>}
 
           {run.stopReason === 'session' && (
-            <div className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{t('Your session has expired. Log in again in another tab, then press Import remaining rows: rows already imported are skipped.')}</div>
+            <div className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{t('You have been signed out. Sign in again in another tab, then press Import remaining rows: rows already imported are skipped.')}</div>
           )}
           {run.stopReason === 'error' && (
             <div className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{t('The import stopped: {error}', { error: run.error || '' })}</div>

@@ -92,7 +92,7 @@
   "No person in this photo — recorded by {name}": "या फोटोमध्ये कोणतीही व्यक्ती नाही — {name} यांनी नोंदवले",
   "an officer": "एक अधिकारी",
   "A person in this photo — confirmed by {name}": "या फोटोमध्ये व्यक्ती आहे — {name} यांनी पुष्टी केली",
-  "Clear face found · engine quality {q}%": "स्पष्ट चेहरा आढळला · इंजिन गुणवत्ता {q}%",
+  "Clear face found · quality {q}%": "स्पष्ट चेहरा आढळला · इंजिन गुणवत्ता {q}%",
   "Clear face found": "स्पष्ट चेहरा आढळला",
   "No clear person in the photo — screened out of the general alert": "फोटोमध्ये स्पष्ट व्यक्ती नाही — सामान्य सूचनेतून वगळले",
   "Recorded: no person in this photo.": "नोंदवले: या फोटोमध्ये कोणतीही व्यक्ती नाही.",
