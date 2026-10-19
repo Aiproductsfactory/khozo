@@ -56,7 +56,7 @@ enforced.
 | Locate | Latitude and longitude, only when the reporter did not type both state and district | OpenStreetMap Nominatim, called from the Worker (`shared/geocode.js:21,116-133`) | Not by Khozo | Nominatim |
 | Screen | The photo; with several, one after another until one shows a person, which becomes the main photo (`shared/routes/reports.js` `POST /found`) | Aarakshak; Rekognition if Aarakshak does not answer (`worker/src/match.js:237-276`) | The verdict, on the record; each other photo screened keeps its own | — |
 | Match | The lead photo (the first that shows one face) and up to 25 open cases' lead photos, same district first (`shared/match-pool.js:81-89`; `worker/src/match.js:545`); then, for the five most similar cases only, the other photos of both, at most 20 more comparisons a search (`shared/match-pipeline.js` `compareOtherPairs`, `KHOZO_EXTRA_PAIR_BUDGET`) | Aarakshak; its top 5 to Rekognition, each on the case's best pair (`worker/src/match.js:383-410,447`) | Scores and engine, on the record (`reports.js` `matchEvidence`) | Officers |
-| Store | Photo; location; reporter's name and phone in full; ID type and **last 4 digits only** (`shared/case-domain.js:1322-1327`); match evidence | Supabase: `found_reports`, `photo_blobs` | **180 days** (`case-domain.js:24`) | Desks in that district or state; every review desk if no place was given (`shared/scope.js:135-141`); a sighting matched to a police-only case, police only |
+| Store | Photos (up to three); location; reporter's name and phone in full; ID type and **last 4 digits only** (`shared/case-domain.js:1322-1327`); match evidence | Supabase: `found_reports`, `photo_blobs` | **180 days** (`case-domain.js:24`) | Desks in that district or state; every review desk if no place was given (`shared/scope.js:135-141`); a sighting matched to a police-only case, police only |
 | Alert | Where and when, never who | Every review-role account in the country (`reports.js` `notifyAuthorities`); a possible match only to the police who can open that case (`caseOfficers`, `alertSighting`) | `notifications`, no expiry | Recipients |
 | Receipt | Receipt id, "received", the place the reporter gave | The citizen (`reports.js` `POST /found`, `officerView` branch) | — | Anyone with the id sees a stage that depends only on time (`case-domain.js:585-631`) |
 
@@ -70,7 +70,7 @@ enforced.
 
 ### Flow C — Police register a case
 
-As Flow B, but verified at once. Registering also compares the photo with up to 50 stored
+As Flow B, but verified at once. Registering also compares the photo (the one of its photos that shows one face) with up to 50 stored
 sightings, nearest first (`reports.js` `matchStoredSightings`; `worker/src/match.js:569`). A
 police role may mark the case **police-only** (`case-domain.js:376`).
 
@@ -94,7 +94,7 @@ police role may mark the case **police-only** (`case-domain.js:376`).
 
 ### Flow F — Referral and hand-off
 
-CWC referral, found-child intake, production records (checked against 24 hours, `reports.js`
+CWC referral, found-child intake (which keeps its own copy of the sighting's photos that show one person), production records (checked against 24 hours, `reports.js`
 `POST /:id/production-record`), care, restoration, legal-aid and adoption records are added
 to the case. A signed hand-off export for TrackChild, Khoya-Paya, CCTNS or NCRB leaves out
 guardian contacts, identity numbers, photos and free-text notes (`case-domain.js:815-829`),
@@ -195,7 +195,7 @@ are shared. **Before scale**: close before use beyond the pilot.
 | G22 | **Unplaced sightings** are open to every review desk, and no action exists to place one. | `scope.js:135-141` | Before scale | Fixed in code: `reports.js` `POST /found/:id/place` lets an officer place a sighting; until then it reaches every review desk. |
 | G23 | **Broad desk access.** CCI, SAA, DLSA and JJB desks see every non-police-only case in their district in full, Aadhaar and guardian contacts included. | `scope.js:84-97`; `reports.js` `GET /` | Before scale | Fixed in code (branch `dpia-and-trafficking-fixes`, 18 Oct 2026): CCI, SAA, JJB and DLSA desks see cases without the family's phone, e-mail or address, and every desk sees Aadhaar masked (`shared/privacy.js` `deskCaseView`). [Department to confirm the role list] |
 | G24 | **No retention at all** for accounts, notifications, activity and grievances. | `001_schema.sql`; `grievances.js` `POST /` | Before scale | Partly fixed in code (branch `dpia-and-trafficking-fixes`, 18 Oct 2026): `KHOZO_NOTIFICATION_RETENTION_DAYS` and `KHOZO_ACTIVITY_RETENTION_DAYS` delete older rows nightly once set. Open: accounts and grievances. [Department to set the periods] |
-| G25 | A found-child case opened from a sighting **reuses the sighting's photograph** (180 days) inside a 10-year case. | `reports.js` `POST /found/:id/formal-intake` | Before scale | Fixed in code: the intake keeps its own copy of the photo for the case period (`reports.js` `POST /found/:id/formal-intake`). |
+| G25 | A found-child case opened from a sighting **reuses the sighting's photograph** (180 days) inside a 10-year case. | `reports.js` `POST /found/:id/formal-intake` | Before scale | Fixed in code: the intake keeps its own copy of the photo for the case period (`reports.js` `POST /found/:id/formal-intake`). Since a sighting can carry up to three photos (branch `multi-photo`), the intake also copies those of its other photos whose check shows one person, under the same photo ids, for the case period; a group photo or one with no person stays with the sighting and is deleted with it. |
 | G26 | **Who is the fiduciary** for public sightings on the shared service. | — | Before MoU | [Legal] |
 | G27 | **No written evidence** that AWS's AI-services opt-out is set, or that Aarakshak keeps nothing and trains on nothing. | — | Before MoU | [Confirm in writing] |
 

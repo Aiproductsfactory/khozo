@@ -193,7 +193,10 @@ export default function registerFaceIndexAdminRoutes(router, deps) {
     let failed = 0;
     let rejected = 0;
     let rateLimited = false;
-    const budget = () => limit - enrolled - removed - failed - rejected;
+    // Calls past the first an enrolment made (a set refused, retried with one
+    // photo): the limit is on calls to the gallery, not on cases.
+    let retries = 0;
+    const budget = () => limit - enrolled - removed - failed - rejected - retries;
 
     const galleryIds = await index.listCaseIds();
     calls += 1;
@@ -267,7 +270,10 @@ export default function registerFaceIndexAdminRoutes(router, deps) {
       // eslint-disable-next-line no-await-in-loop
       const entry = await enrollCaseInIndex(index, findReport(report.id) || report, photos, updateReport);
       // A set refused for a photo is tried again with one photo: two calls.
-      calls += entry?.attempts || 1;
+      // Nothing sent (no photo the gallery may take): none.
+      const made = entry ? entry.attempts ?? 1 : 0;
+      calls += made;
+      retries += Math.max(0, made - 1);
       if (entry?.status === 'enrolled') enrolled += 1;
       else if (entry && !isRetryableIndexFailure(entry.reason)) rejected += 1;
       else {

@@ -40,6 +40,7 @@ import {
 import { MAX_MATCH_CANDIDATES, configHashOf, thresholdsOf } from './match-config.js';
 import { INDEX_TOP_K, enrollCaseInIndex, removeCaseFromIndex, safeFaceIndex } from './face-index.js';
 import { MAIN_PHOTO, isBadFacePhoto, leadPhotoOf, loadPhotos } from './photo-set.js';
+import { sightingScreenVerdict } from './face-screen.js';
 
 /**
  * Whether a comparison result is put in front of an officer.
@@ -62,7 +63,7 @@ const iso = () => new Date().toISOString();
  * shows a person the main one).
  */
 function sightingScreenShowsPerson(sighting, photoId) {
-  return photoId === MAIN_PHOTO && sighting?.screening?.verdict === 'person';
+  return photoId === MAIN_PHOTO && sightingScreenVerdict(sighting?.screening) === 'person';
 }
 
 /** A candidate as it is kept on the sighting. */
@@ -148,7 +149,7 @@ export function engineRecordOf(engine, { indexProvider = 'none', trigger = null 
     index: e.index || null,
     noFace: Boolean(e.noFace) || null,
     // Photo pairs compared beyond each record's first (shared/photo-set.js).
-    extraPairs: e.extraPairs && e.extraPairs.compared ? e.extraPairs : null,
+    extraPairs: e.extraPairs && (e.extraPairs.compared || e.extraPairs.stoppedForTime) ? e.extraPairs : null,
     sightingQuality: e.sightingQuality ?? null,
     qualityWarnings: Array.isArray(e.qualityWarnings) && e.qualityWarnings.length ? e.qualityWarnings : null,
     note: e.reason || e.note || null,
@@ -323,7 +324,7 @@ export function createSightingMatcher(deps) {
    * or when the index does not answer, on the nearest-first budget. Cases an
    * officer rejected for this sighting are never compared again.
    */
-  async function forwardSearch(photo, { state = null, district = null, gender = null, ageApprox = null, excludeReportIds = [], probeId = MAIN_PHOTO, probeExtras = [], leadShowsFace = true } = {}) {
+  async function forwardSearch(photo, { state = null, district = null, gender = null, ageApprox = null, excludeReportIds = [], probeId = MAIN_PHOTO, probeExtras = [], retryIndexWithExtras = false } = {}) {
     const excluded = new Set(excludeReportIds);
     const extras = (Array.isArray(probeExtras) ? probeExtras : []).filter((p) => p?.buffer?.length);
     // The sighting's other photos (shared/photo-set.js), compared only for
@@ -332,13 +333,13 @@ export function createSightingMatcher(deps) {
     let index = null;
     if (photo?.length && faceIndex.enabled) {
       // The lead photo first. Another of the sighting's photos only when the
-      // index gave no answer AND the lead is not known to show a face: then
-      // "no answer" is most likely "no face in it", and the next photo may
-      // have one. When the lead does show a face, no answer is the gallery's
-      // fault (a timeout, a 5xx, its rate), and asking again would only
-      // spend more of its rate. At most one search a photo.
+      // index gave no answer AND the caller says the lead's face was unclear:
+      // then "no answer" is most likely "found no face", and the next photo
+      // may have one. Otherwise no answer is the gallery's fault (a timeout, a
+      // 5xx, its rate), and asking again would only spend more of its rate.
+      // At most one search a photo.
       let hits = await faceIndex.search(photo, INDEX_TOP_K);
-      for (const extra of leadShowsFace ? [] : extras) {
+      for (const extra of retryIndexWithExtras ? extras : []) {
         if (Array.isArray(hits)) break;
         // eslint-disable-next-line no-await-in-loop
         hits = await faceIndex.search(extra.buffer, INDEX_TOP_K);
@@ -493,7 +494,7 @@ export function createSightingMatcher(deps) {
       excludeReportIds: [...rejectedReportIds(sighting)],
       probeId: lead.id,
       probeExtras: photos.filter((p) => p.id !== lead.id && p.check?.verdict !== 'no_face'),
-      leadShowsFace: lead.check?.verdict === 'usable' || sightingScreenShowsPerson(sighting, lead.id),
+      retryIndexWithExtras: !(lead.check?.verdict === 'usable' || sightingScreenShowsPerson(sighting, lead.id)) && lead.check?.verdict !== 'no_face',
     });
     const before = { status: sighting.status, matchedReportId: sighting.matchedReportId || null };
     const updated = await commitSighting(

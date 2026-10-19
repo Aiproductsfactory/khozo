@@ -500,7 +500,15 @@ export async function enrollCaseInIndex(faceIndex, report, photos, updateReport)
   if (!index.enabled || !report?.id) return null;
   const given = Array.isArray(photos) ? photos : photos?.length ? [{ id: 'main', buffer: photos, check: null }] : [];
   let set = enrollablePhotos(given);
-  if (!set.length) return null;
+  if (!set.length) {
+    if (!given.length) return null;
+    // Photos were read, but none the gallery may take: the main photo could
+    // not be read and the others show a group or no face. Said on the case,
+    // so the desk replaces the photo and the backfill stops trying.
+    const entry = { provider: index.name, status: 'failed', reason: 'photo_missing', quality: null, warnings: null, detail: null, requestId: null, photos: [], attempts: 0, at: new Date().toISOString() };
+    if (typeof updateReport === 'function') updateReport(report.id, { faceIndex: entry });
+    return entry;
+  }
   let res = await index.enroll(report.id, set.map((p) => p.buffer));
   // Calls made, for a caller that counts them against Aarakshak's rate.
   let attempts = 1;

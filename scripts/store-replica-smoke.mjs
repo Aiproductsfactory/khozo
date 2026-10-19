@@ -235,6 +235,30 @@ check(
   otherClaim === null && raceIo.tables.found_reports.find((r) => r.id === 's_2').matchedReportId === 'r_9'
 );
 
+// --- a change to a case's photos is written on the case as it is now ---------
+// Adding photos takes seconds (each is checked for a face). Another officer's
+// change to the same case's photos meanwhile must not be written over.
+const photoIo = fakeIo({
+  reports: [{ id: 'r_p', childName: 'Photo race', photoFile: 'r_p.jpg', extraPhotos: [{ id: 'p_aaaa0001', file: 'r_p_p_aaaa0001.jpg' }] }],
+});
+const adding = await createRequestStore({}, null, photoIo);
+const other = await createRequestStore({}, null, photoIo);
+other.store.updateReport('r_p', { extraPhotos: [{ id: 'p_aaaa0001', file: 'r_p_p_aaaa0001.jpg' }, { id: 'p_bbbb0002', file: 'r_p_p_bbbb0002.jpg' }] });
+await other.flush();
+const addOne = (row) => ({ extraPhotos: [...(row.extraPhotos || []), { id: 'p_cccc0003', file: 'r_p_p_cccc0003.jpg' }] });
+const added = await adding.store.claimReport('r_p', addOne, (row) => !row.anonymizedAt);
+check(
+  'a photo added while another officer added one keeps both',
+  added?.extraPhotos?.map((p) => p.id).join() === 'p_aaaa0001,p_bbbb0002,p_cccc0003',
+  JSON.stringify(added?.extraPhotos)
+);
+check('the case is written at once, on condition', photoIo.writes.some((w) => w.table === 'reports' && w.id === 'r_p' && w.conditional));
+const anonymiser = await createRequestStore({}, null, photoIo);
+anonymiser.store.updateReport('r_p', { anonymizedAt: '2026-10-19T00:00:00.000Z', extraPhotos: [] });
+await anonymiser.flush();
+const late = await adding.store.claimReport('r_p', addOne, (row) => !row.anonymizedAt);
+check('no photo is added to a case anonymised meanwhile', late === null && photoIo.tables.reports.find((r) => r.id === 'r_p').extraPhotos.length === 0);
+
 const failed = checks.filter((c) => !c.ok);
 console.log(`\n--- ${checks.length - failed.length}/${checks.length} checks passed ---`);
 if (failed.length) {

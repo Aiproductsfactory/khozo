@@ -71,6 +71,7 @@ function buildDeps(env, store, ctx) {
     // The reverse search links a sighting only if the database still holds
     // what this request's replica read seconds earlier (store-sync.js).
     claimFoundReport: store.claimFoundReport,
+    claimReport: store.claimReport,
     listGrievances: store.listGrievances,
     findGrievance: store.findGrievance,
     addGrievance: store.addGrievance,

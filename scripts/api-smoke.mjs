@@ -1936,7 +1936,7 @@ async function multiPhotoChecks({ superAdmin, sjpu, cwc, parent }) {
   // A photo with no face in it is kept, but no paid search is run with it.
   const pairsBefore = fakeAarakshak.pairs.length;
   const faceless = await addPhotos(sjpu, ledByExtra.report.id, photosForm([tinyPngFile()]));
-  assert(faceless.added?.length === 1 && faceless.sightingMatches === 0 && fakeAarakshak.pairs.length === pairsBefore,
+  assert(faceless.added?.length === 1 && faceless.searched === false && faceless.sightingMatches === 0 && fakeAarakshak.pairs.length === pairsBefore,
     `a faceless photo is added without a search: ${JSON.stringify({ added: faceless.added?.length, pairs: fakeAarakshak.pairs.length - pairsBefore })}`);
 
   // A department's register photo stays a register photo when more are added.
@@ -1968,9 +1968,15 @@ async function multiPhotoChecks({ superAdmin, sjpu, cwc, parent }) {
   assert(family.report.extraPhotos?.length === 1 && Object.keys(family.report.extraPhotos[0]).sort().join() === 'id,url',
     `a family's view lists its photos by where they are: ${JSON.stringify(family.report.extraPhotos)}`);
   await request('POST', `/reports/${family.report.id}/verify-intake`, { token: sjpu.token, body: { firNo: 'FIR/SMOKE/MP7', note: 'Verified for the multi-photo smoke' } });
-  await addPhotos(sjpu, family.report.id, photosForm([facePhotoFile('MP7', 'case')], true));
+  const policeAdded = await addPhotos(sjpu, family.report.id, photosForm([facePhotoFile('MP7', 'case')], true));
   const familyView = (await request('GET', `/reports/${family.report.id}`, { token: parent.token })).report;
   assert(familyView.extraPhotos?.length === 1, `a family does not see photos the police added: ${JSON.stringify(familyView.extraPhotos)}`);
+  // The police make their photo the main one: the family does not see it,
+  // and still sees both of its own.
+  await request('POST', `/reports/${family.report.id}/photos/${policeAdded.added[0].id}/main`, { token: sjpu.token, body: {} });
+  const afterMain = (await request('GET', `/reports/${family.report.id}`, { token: parent.token })).report;
+  assert(!afterMain.photoUrl && afterMain.extraPhotos?.length === 2,
+    `after "make main" a family sees its own photos, not the police's: ${JSON.stringify({ photoUrl: afterMain.photoUrl, extras: afterMain.extraPhotos?.length })}`);
 
   // Anonymising deletes every photo.
   const files = (await storedCase(meera.report.id)).extraPhotos.map((p) => p.file);

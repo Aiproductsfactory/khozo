@@ -208,6 +208,28 @@ export async function createRequestStore(env, ctx, io = POSTGRES) {
       return replace(db.foundReports, local.id, linked);
     },
 
+    /**
+     * As claimFoundReport, for a case: writes `makePatch(row)` over the case
+     * row as it is now, only if `isEligible` still holds and nobody changed
+     * the row since it was read. For a change to a case's photos, which runs
+     * for seconds (face checks) while another officer may change them too.
+     */
+    async claimReport(id, makePatch, isEligible = () => true) {
+      const local = store.findReport(id);
+      if (!local) return null;
+      if (dirty.get('reports')?.has(local.id)) {
+        if (!isEligible(local)) return null;
+        return store.updateReport(local.id, makePatch(local));
+      }
+      const current = await io.readVersioned(env, 'reports', local.id, ctx);
+      if (!current) return null;
+      replace(db.reports, local.id, current.data);
+      if (!isEligible(current.data)) return null;
+      const written = { ...current.data, ...makePatch(current.data) };
+      if (!(await io.updateIfVersion(env, 'reports', written, current.version, ctx))) return null;
+      return replace(db.reports, local.id, written);
+    },
+
     // --- Grievances ---
     listGrievances: () => db.grievances,
     findGrievance: (id) => (id ? db.grievances.find((g) => g.id === id) || null : null),

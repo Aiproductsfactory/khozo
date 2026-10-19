@@ -190,6 +190,8 @@ export default function registerReportRoutes(router, deps) {
     // reviewed or anonymised the sighting meanwhile. Express has one live
     // in-memory store, where re-reading the row just before writing is enough.
     claimFoundReport = null,
+    // The same for a case, when its photos change (writeCasePhotos).
+    claimReport = null,
     detectPerson,
     upload,
     // Optional: removes a replaced case photo from storage (POST /:id/photo).
@@ -1259,6 +1261,8 @@ export default function registerReportRoutes(router, deps) {
       ...(await storePhoto(id, req.file)),
       // Given under the same consent or register basis as the main photo.
       extraPhotos: extras.entries,
+      // Who gave the main photo: a family sees only the photos it gave.
+      photoAddedById: req.file ? req.user.id : null,
       photoConsent: req.file ? photoBasis === 'consent' : isTruthy(b.photoConsent),
       photoBasis,
       dataPurpose: b.dataPurpose || (adult ? 'missing_person_investigation' : 'missing_child_investigation'),
@@ -1450,13 +1454,11 @@ export default function registerReportRoutes(router, deps) {
       // person. That one becomes the main photo and leads the search; the
       // others are compared only with the cases most like it
       // (shared/match-pipeline.js). One screen, usually.
-      const screens = [];
-      for (const file of sentFiles) {
-        // eslint-disable-next-line no-await-in-loop
-        const screen = await detectPerson(file.buffer);
-        screens.push(screen);
-        if (sightingScreenVerdict(screen) === 'person') break;
-      }
+      // Every photo is screened, so what each shows is known: an officer is
+      // shown a photo with no person only on asking.
+      // At the same time (three at most), so a report with several photos
+      // takes no longer to screen than one with a single photo.
+      const screens = await Promise.all(sentFiles.map((file) => detectPerson(file.buffer)));
       // Which photo leads: one that shows a person; else one with a face
       // too unclear to call; else one the screen could not judge; never one
       // it found empty while another may not be.
@@ -1470,7 +1472,9 @@ export default function registerReportRoutes(router, deps) {
         probeId: MAIN_PHOTO,
         // A photo the screen found empty is not compared with anyone.
         probeExtras: photos.slice(1).filter((p) => sightingScreenVerdict(p.screen) !== 'no_person').map((p) => ({ id: p.id, buffer: p.file.buffer })),
-        leadShowsFace: sightingScreenVerdict(screening) === 'person',
+        // Another photo to the gallery only when the lead's face was unclear:
+        // when the screen found no one, or could not run, no photo will do better.
+        retryIndexWithExtras: sightingScreenVerdict(screening) === 'unclear_face',
       });
     }
     const mainPhotoFile = photos[0]?.file || null;
@@ -2647,9 +2651,13 @@ export default function registerReportRoutes(router, deps) {
     updateReport(r.id, {
       photoFile,
       photoUrl: `/api/reports/photo/${r.id}?v=${version}`,
-      photoConsent: true,
+      // A department's register photo replaced without a consent ticked
+      // stays a register photo: nobody gave consent (DPIA G15).
+      ...(r.photoConsent || isTruthy(read.body.photoConsent) ? { photoConsent: true } : {}),
+      ...(!r.photoBasis && isTruthy(read.body.photoConsent) ? { photoBasis: 'consent' } : {}),
       photoCheck,
       photoReplacedAt: now,
+      photoAddedById: req.user.id,
       photoReplacedById: req.user.id,
       photoHistory: [
         ...(Array.isArray(r.photoHistory) ? r.photoHistory : []),
@@ -2661,7 +2669,7 @@ export default function registerReportRoutes(router, deps) {
     }
     // A score worked out on the old main photo is no longer about the photo
     // shown as main.
-    if (previous.photoFile) renameCasePhotos(r.id, { [MAIN_PHOTO]: null });
+    if (previous.photoFile) await renameCasePhotos(r.id, { [MAIN_PHOTO]: null });
     const updated = findReport(r.id);
     // The index holds the new face, not the old one.
     if (isForwardPoolCase(updated)) await matcher.indexCase(updated, req.file.buffer);
@@ -2700,20 +2708,51 @@ export default function registerReportRoutes(router, deps) {
    * null when that photo is gone, so the console says so instead of showing
    * another photo as the one that matched.
    */
-  function renameCasePhotos(reportId, rename) {
-    const fix = (pair) => (pair && typeof pair === 'object' && Object.prototype.hasOwnProperty.call(rename, pair.case)
-      ? { ...pair, case: rename[pair.case] }
-      : pair);
-    for (const f of listFoundReports()) {
-      const candidates = Array.isArray(f.matchCandidates) ? f.matchCandidates : [];
+  async function renameCasePhotos(reportId, rename) {
+    const renames = (id) => Object.prototype.hasOwnProperty.call(rename, id);
+    // A match recorded before pairs were kept was scored on the main photos.
+    const pairOf = (pair) => (pair && typeof pair === 'object' ? pair : { sighting: MAIN_PHOTO, case: MAIN_PHOTO });
+    const fix = (pair) => (renames(pairOf(pair).case) ? { ...pairOf(pair), case: rename[pairOf(pair).case] } : pair);
+    const patchOf = (f) => {
+      const candidates = Array.isArray(f?.matchCandidates) ? f.matchCandidates : [];
       const patch = {};
-      if (candidates.some((c) => c?.reportId === reportId && c.photoPair)) {
-        patch.matchCandidates = candidates.map((c) => (c?.reportId === reportId && c.photoPair ? { ...c, photoPair: fix(c.photoPair) } : c));
+      if (candidates.some((c) => c?.reportId === reportId && renames(pairOf(c.photoPair).case))) {
+        patch.matchCandidates = candidates.map((c) => (c?.reportId === reportId ? { ...c, photoPair: fix(c.photoPair) } : c));
       }
-      if (f.matchedReportId === reportId && f.matchedPhotoPair) patch.matchedPhotoPair = fix(f.matchedPhotoPair);
-      if (Object.keys(patch).length) updateFoundReport(f.id, patch);
+      if (f?.matchedReportId === reportId && renames(pairOf(f.matchedPhotoPair).case)) patch.matchedPhotoPair = fix(f.matchedPhotoPair);
+      return Object.keys(patch).length ? patch : null;
+    };
+    for (const f of listFoundReports()) {
+      if (!patchOf(f)) continue;
+      // Written on the row as it is now, not this request's copy of it: an
+      // officer's decision or an anonymisation made meanwhile stands.
+      if (typeof claimFoundReport === 'function') {
+        // eslint-disable-next-line no-await-in-loop
+        await Promise.resolve(claimFoundReport(f.id, (row) => patchOf(row) || {}, (row) => Boolean(row) && !row.anonymizedAt)).catch(() => null);
+      } else {
+        const current = findFoundReport(f.id);
+        const patch = current && !current.anonymizedAt ? patchOf(current) : null;
+        if (patch) updateFoundReport(f.id, patch);
+      }
     }
   }
+
+  /**
+   * Writes a change to a case's photos on the case as it is now: on the
+   * Worker a compare-and-set on its row (claimReport) - its store is a copy
+   * read when the request began, and a change another officer made meanwhile
+   * would otherwise be written over; here, the live record. Returns the case
+   * as written, or null when the change no longer fits it (the caller says so).
+   */
+  async function writeCasePhotos(id, makePatch, isEligible) {
+    if (typeof claimReport === 'function') return claimReport(id, makePatch, isEligible);
+    const current = findReport(id);
+    if (!current || !isEligible(current)) return null;
+    updateReport(id, makePatch(current));
+    return findReport(id);
+  }
+
+  const PHOTOS_CHANGED = 'The photos of this case changed while you were working on them. Open the case again and try again.';
 
   /**
    * The checks every change to a case's photo set shares: the case exists, is
@@ -2783,31 +2822,33 @@ export default function registerReportRoutes(router, deps) {
         photoFile,
         photoUrl: `/api/reports/photo/${r.id}?v=${version}`,
         photoCheck: await matcher.checkCasePhoto(mainFile.buffer),
+        photoAddedById: req.user.id,
       });
     }
     const stored = await storeExtraPhotos(r.id, files, req.user);
     if (files.length && !stored.entries.length && !mainFile) return res.status(500).json({ error: 'The photos could not be stored. Try again.' });
     const added = await checkExtraPhotos(stored.entries, stored.buffers);
-    // Read again before writing: the checks above take seconds, and another
-    // officer may have changed the photos meanwhile.
-    const fresh = findReport(r.id) || r;
-    if ((mainFile && fresh.photoFile) || photoCountOf(fresh) + (mainFile && !fresh.photoFile ? 1 : 0) + added.length > MAX_CASE_PHOTOS) {
+    // Written on the case as it is now: the checks above take seconds, and
+    // another officer may have changed its photos meanwhile.
+    const fits = (row) => Boolean(row) && !row.anonymizedAt && !(mainFile && row.photoFile)
+      && photoCountOf(row) + (mainFile && !row.photoFile ? 1 : 0) + added.length <= MAX_CASE_PHOTOS;
+    const written = await writeCasePhotos(r.id, (row) => ({
+      ...patch,
+      // A photo from a department's register was not given with anyone's
+      // consent, and adding to it does not say it was (DPIA G15).
+      ...(row.photoConsent || isTruthy(read.body.photoConsent) ? { photoConsent: true } : {}),
+      ...(!row.photoBasis && isTruthy(read.body.photoConsent) ? { photoBasis: 'consent' } : {}),
+      extraPhotos: [...extraPhotosOf(row), ...added],
+    }), fits);
+    if (!written) {
       if (typeof deletePhoto === 'function') {
         for (const file of [patch.photoFile, ...added.map((a) => a.file)].filter(Boolean)) {
           // eslint-disable-next-line no-await-in-loop
           await Promise.resolve(deletePhoto(file)).catch(() => {});
         }
       }
-      return res.status(409).json({ error: 'The photos of this case changed while yours were being added. Open the case again and try again.' });
+      return res.status(409).json({ error: PHOTOS_CHANGED });
     }
-    updateReport(r.id, {
-      ...patch,
-      // A photo from a department's register was not given with anyone's
-      // consent, and adding to it does not say it was (DPIA G15).
-      ...(fresh.photoConsent || isTruthy(read.body.photoConsent) ? { photoConsent: true } : {}),
-      ...(!fresh.photoBasis && isTruthy(read.body.photoConsent) ? { photoBasis: 'consent' } : {}),
-      extraPhotos: [...extraPhotosOf(fresh), ...added],
-    });
     const updated = findReport(r.id);
     if (isForwardPoolCase(updated)) await matcher.indexCase(updated, { ...(mainFile ? { main: mainFile.buffer } : {}), ...stored.buffers });
     // One reverse search, with the clearest of the new photos.
@@ -2820,7 +2861,7 @@ export default function registerReportRoutes(router, deps) {
     const searchable = probe && !['found', 'closed'].includes(updated.status) && !isPendingCitizenIntake(updated) && !isFoundChildIntake(updated);
     const reverse = searchable
       ? await matcher.matchStoredSightings(updated, { trigger: 'photo_added', actor: req.user, photo: probe.buffer, photoId: probe.id })
-      : { sightingMatches: 0, engine: null };
+      : { sightingMatches: 0, engine: null, notSearched: true };
     const count = added.length + (mainFile ? 1 : 0);
     addActivity({ actor: req.user.name, action: count === 1 ? 'Added a photo to the case' : `Added ${count} photos to the case`, target: r.childName, icon: 'upload', actorId: req.user.id, scope: { state: r.state, district: r.district, reportId: r.id } });
     addAudit({
@@ -2845,6 +2886,8 @@ export default function registerReportRoutes(router, deps) {
       report: deskCaseView(req.user, findReport(r.id)),
       added: added.map((a) => ({ id: a.id, url: a.url, check: a.check })),
       mainPhotoCheck: patch.photoCheck || null,
+      // False when no new photo shows one clear face, so no search was run.
+      searched: !reverse.notSearched,
       sightingMatches: reverse.sightingMatches,
       engine: reverse.engine || null,
     });
@@ -2861,13 +2904,17 @@ export default function registerReportRoutes(router, deps) {
     const extras = extraPhotosOf(r);
     const target = extras.find((p) => p.id === req.params.photoId);
     if (!target) return res.status(404).json({ error: 'Photo not found on this case' });
-    // Whether the gallery may hold this photo's face (the set it was given, or
-    // a record from before it listed the set).
-    const inGallery = r.faceIndex?.status === 'enrolled'
-      && (!Array.isArray(r.faceIndex.photos) || r.faceIndex.photos.some((p) => p?.photoId === target.id));
-    updateReport(r.id, { extraPhotos: extras.filter((p) => p.id !== target.id) });
+    // Whether the gallery may hold this photo's face: it was enrolled, or an
+    // enrolment since failed and left whatever it held before.
+    const inGallery = ['enrolled', 'failed'].includes(r.faceIndex?.status);
+    const written = await writeCasePhotos(
+      r.id,
+      (row) => ({ extraPhotos: extraPhotosOf(row).filter((p) => p.id !== target.id) }),
+      (row) => Boolean(row) && !row.anonymizedAt && extraPhotosOf(row).some((p) => p.id === target.id),
+    );
+    if (!written) return res.status(409).json({ error: PHOTOS_CHANGED });
     if (typeof deletePhoto === 'function') await Promise.resolve(deletePhoto(target.file)).catch(() => {});
-    renameCasePhotos(r.id, { [target.id]: null });
+    await renameCasePhotos(r.id, { [target.id]: null });
     // The removed face leaves the gallery before the rest go back in: if
     // enrolling the rest failed, the gallery would otherwise keep it - the
     // wrong person's face, matched as this case's.
@@ -2903,18 +2950,34 @@ export default function registerReportRoutes(router, deps) {
     if (!target) return res.status(404).json({ error: 'Photo not found on this case' });
     const now = new Date().toISOString();
     const formerId = `p_${nanoid(8)}`;
-    const former = r.photoFile
-      ? [{ id: formerId, file: r.photoFile, url: extraPhotoUrl(r.id, formerId), check: r.photoCheck || null, addedAt: now, addedById: req.user.id, addedByRole: req.user.role }]
-      : [];
     // A new URL, so no cache goes on showing the old main photo.
     const version = Date.now().toString(36);
-    updateReport(r.id, {
-      photoFile: target.file,
-      photoUrl: `/api/reports/photo/${r.id}?v=${version}`,
-      photoCheck: target.check || null,
-      extraPhotos: [...former, ...extras.filter((p) => p.id !== target.id)],
-    });
-    renameCasePhotos(r.id, { [MAIN_PHOTO]: former.length ? formerId : null, [target.id]: MAIN_PHOTO });
+    let hadMain = Boolean(r.photoFile);
+    const written = await writeCasePhotos(r.id, (row) => {
+      const rowExtras = extraPhotosOf(row);
+      const chosen = rowExtras.find((p) => p.id === target.id);
+      hadMain = Boolean(row.photoFile);
+      // The old main photo keeps who gave it (a record from before this was
+      // kept: the registrant, unless the police replaced it).
+      const formerGiver = row.photoAddedById !== undefined ? row.photoAddedById : row.photoReplacedById || row.registeredById || null;
+      const former = row.photoFile
+        ? [{ id: formerId, file: row.photoFile, url: extraPhotoUrl(row.id, formerId), check: row.photoCheck || null, addedAt: now, addedById: formerGiver, addedByRole: null }]
+        : [];
+      // The gallery's record of which photo is which follows the new ids.
+      const renameId = (id) => (id === MAIN_PHOTO ? (former.length ? formerId : null) : id === chosen.id ? MAIN_PHOTO : id);
+      return {
+        photoFile: chosen.file,
+        photoUrl: `/api/reports/photo/${row.id}?v=${version}`,
+        photoCheck: chosen.check || null,
+        photoAddedById: chosen.addedById || null,
+        extraPhotos: [...former, ...rowExtras.filter((p) => p.id !== chosen.id)],
+        ...(row.faceIndex && Array.isArray(row.faceIndex.photos)
+          ? { faceIndex: { ...row.faceIndex, photos: row.faceIndex.photos.map((p) => ({ ...p, photoId: renameId(p?.photoId) })) } }
+          : {}),
+      };
+    }, (row) => Boolean(row) && !row.anonymizedAt && extraPhotosOf(row).some((p) => p.id === target.id));
+    if (!written) return res.status(409).json({ error: PHOTOS_CHANGED });
+    await renameCasePhotos(r.id, { [MAIN_PHOTO]: hadMain ? formerId : null, [target.id]: MAIN_PHOTO });
     const updated = findReport(r.id);
     addActivity({ actor: req.user.name, action: 'Chose the main photo of the case', target: r.childName, icon: 'upload', actorId: req.user.id, scope: { state: r.state, district: r.district, reportId: r.id } });
     addAudit({

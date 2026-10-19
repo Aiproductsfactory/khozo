@@ -217,11 +217,12 @@ async function compareOtherPairs({ rows, photoBuf, probeId, probeExtras, directi
 export const EXTRA_PAIR_BUDGET = 20;
 
 /**
- * How long after a search starts its extra photo pairs may still be begun,
- * by default. The phone gives up on a sighting at 45 s; the first pairs and
- * the second opinion need their share of that.
+ * How long the extra photo pairs may go on being started, by default,
+ * counted from when they begin (after every record's first pair). The phone
+ * gives up on a sighting at 45 s; the screen, the first pairs, a pair already
+ * running and the second opinion need the rest.
  */
-export const EXTRA_PAIR_TIME_MS = 15000;
+export const EXTRA_PAIR_TIME_MS = 10000;
 
 /** KHOZO_EXTRA_PAIR_BUDGET as read: a number of pairs, 0 to compare no other pair. */
 export function extraPairBudgetOf(value) {
@@ -300,7 +301,6 @@ export async function comparePhotos({
   now = () => Date.now(),
 }) {
   const { aarakshak, rekognition } = providers;
-  const deadline = now() + Math.max(0, Number(extraPairTimeMs) || 0);
   const pairs = comparable.map(({ report, targetBuf, targetId = 'main', extras = null }) => ({
     report,
     buffers: orient(direction, photoBuf, targetBuf),
@@ -316,7 +316,9 @@ export async function comparePhotos({
     : pairs.map(() => ({ status: 'not_configured' }));
   const rows = pairs.map((pair, i) => ({ ...pair, aarakshak: first[i] }));
 
-  // 1b. The other photo pairs of the records most like the probe.
+  // 1b. The other photo pairs of the records most like the probe, given
+  // their own time from now.
+  const deadline = now() + Math.max(0, Number(extraPairTimeMs) || 0);
   const extraPairs = aarakshak.ready
     ? await compareOtherPairs({ rows, photoBuf, probeId, probeExtras, direction, aarakshak, concurrency, budget: extraPairBudget, deadline, now })
     : { compared: 0, answered: 0, improved: 0, stoppedForTime: 0 };

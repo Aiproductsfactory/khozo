@@ -17,8 +17,8 @@ import { useAuth } from '../auth.jsx';
 import { asList, fmtDate, isAdultCase, personCategoryOf, ProtectedImage, txt, genderLabel } from '../lib.jsx';
 import { currentLocale, msg, useT } from '../i18n.jsx';
 import { expectedAgeAt } from '../../../shared/match-pool.js';
-import { WEAK_FACE_WARNINGS } from '../../../shared/face-index.js';
-import { photoUrlOf } from '../../../shared/photo-set.js';
+import { photoUrlOf, viewPhotosOf } from '../../../shared/photo-set.js';
+import { galleryHasGoodFace } from '../../../shared/photo-need.js';
 import { useDisplay } from '../useDisplay.js';
 import { useBackClose } from '../useBackClose.js';
 import { ActionMessage } from './useAction.jsx';
@@ -129,7 +129,8 @@ const FACE_INDEX_REFUSALS = {
 export function faceIndexFlag(faceIndex) {
   if (!faceIndex || typeof faceIndex !== 'object') return null;
   if (faceIndex.status === 'enrolled') {
-    return Array.isArray(faceIndex.warnings) && faceIndex.warnings.some((w) => WEAK_FACE_WARNINGS.has(w))
+    // Several photos: weak only when every face the gallery took is weak.
+    return !galleryHasGoodFace(faceIndex)
       ? { label: msg('In the face search gallery, but the face is small or unclear — a larger, sharper photo will match better'), className: 'bg-slate-100 text-slate-700 ring-slate-200' }
       : null;
   }
@@ -210,7 +211,11 @@ export function MatchEvidence({ sighting, candidate = null, report = null }) {
   const d = useDisplay();
   const c = candidate || currentCandidate(sighting);
   const warnings = [...new Set([...asList(c?.warnings), ...asList(sighting?.photoQualityWarnings)].map(txt).filter(Boolean))];
-  const flag = photoCheckFlag(report?.photoCheck);
+  // About the case photo the match was made on (shared/photo-set.js), not
+  // only the main one.
+  const pairCase = c?.photoPair?.case || (sighting?.matchedReportId === report?.id ? sighting?.matchedPhotoPair?.case : null);
+  const matchedPhoto = pairCase ? viewPhotosOf(report).find((p) => p.id === pairCase) : null;
+  const flag = photoCheckFlag(matchedPhoto ? matchedPhoto.check : report?.photoCheck);
   const reason = c?.notChecked ? NOT_CHECKED_REASONS[txt(c.notCheckedReason)] || NOT_CHECKED_REASONS.no_answer : null;
   const category = personCategoryOf(report || sighting);
   const age = (n) => (n != null && txt(n) !== '' ? t('about {n}', { n: txt(n) }) : t('not given'));

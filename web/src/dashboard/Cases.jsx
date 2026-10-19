@@ -57,14 +57,24 @@ const PHOTO_REPLACE_ROLES = POLICE_ROLES;
  * group photo (shared/photo-need.js). A bad main photo beside a usable one is
  * not flagged: matching uses the usable one.
  */
+function photoChipVerdict(report) {
+  const need = photoNeedOf(report);
+  const main = report?.photoCheck?.verdict;
+  // 'weak' (the gallery refused it) on a main photo whose own check found no
+  // face or a group still shows that flag.
+  if (need === 'group' || (need === 'weak' && main === 'multiple_faces')) return 'multiple_faces';
+  if (need === 'no_face' || (need === 'weak' && main === 'no_face')) return 'no_face';
+  return null;
+}
+
 function PhotoCheckChip({ report }) {
   const t = useT();
-  const need = photoNeedOf(report);
-  if (need !== 'no_face' && need !== 'group') return null;
-  const flag = photoCheckFlag({ verdict: need === 'group' ? 'multiple_faces' : 'no_face' });
+  const verdict = photoChipVerdict(report);
+  if (!verdict) return null;
+  const flag = photoCheckFlag({ verdict });
   return (
     <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ${flag.className}`}>
-      {need === 'group' ? t('Group photo') : t('Photo not usable for matching')}
+      {verdict === 'multiple_faces' ? t('Group photo') : t('Photo not usable for matching')}
     </span>
   );
 }
@@ -821,7 +831,7 @@ export default function Cases() {
     const data = await api.postForm(`/reports/${r.id}/photos`, form);
     if (data?.report) showReport(data.report);
     setPhotoAdd({ caseId: '', files: [], consent: false });
-    setPhotoResult({ caseId: r.id, photoCheck: data?.mainPhotoCheck || null, sightingMatches: Number(data?.sightingMatches) || 0 });
+    setPhotoResult({ caseId: r.id, photoCheck: data?.mainPhotoCheck || null, sightingMatches: Number(data?.sightingMatches) || 0, searched: data?.searched !== false });
     load();
   }, msg('Photos added.'));
 
@@ -1259,7 +1269,7 @@ export default function Cases() {
                 {r.pendingMatch.notChecked ? ` · ${t('not checked by a second engine')}` : ''}
               </Link>
             ) : null}
-            {photoCheckFlag(r.photoCheck) && r.photoCheck?.verdict !== 'unchecked' && (
+            {photoChipVerdict(r) && (
               <span className="mx-4 -mt-1 mb-3 block"><PhotoCheckChip report={r} /></span>
             )}
             <dl className="grid grid-cols-2 gap-x-4 gap-y-2 border-t border-black/5 px-4 py-3 text-sm">
@@ -1711,9 +1721,11 @@ export default function Cases() {
                     <ActionMessage action={action} id="photo" />
                     {photoResult?.caseId === selected.id && !action.busy('photo') && (
                       <p className="mt-2 text-xs text-gray-600">
-                        {photoResult.sightingMatches > 0
-                          ? t('Checked against earlier sightings: {n} possible match(es) sent for review', { n: photoResult.sightingMatches })
-                          : t('Checked against earlier sightings: no possible match found.')}
+                        {photoResult.searched === false
+                          ? t('Earlier sightings were not searched: none of the new photos shows one clear face.')
+                          : photoResult.sightingMatches > 0
+                            ? t('Checked against earlier sightings: {n} possible match(es) sent for review', { n: photoResult.sightingMatches })
+                            : t('Checked against earlier sightings: no possible match found.')}
                       </p>
                     )}
                   </>

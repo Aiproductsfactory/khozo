@@ -37,5 +37,7 @@
   "The main photo does not show one clear face, but another photo of this case does, and matching uses that one. You can make it the main photo.": "मुख्य फ़ोटो में एक साफ़ चेहरा नहीं दिखता, पर इस मामले की एक दूसरी फ़ोटो में दिखता है, और मिलान उसी से होता है। आप उसे मुख्य फ़ोटो बना सकते हैं।",
   "The case photo this match was found on has since been removed or replaced.": "जिस मामले की फ़ोटो पर यह मिलान मिला था, वह फ़ोटो बाद में हटा दी गई है या बदल दी गई है।",
   "Preparing the photos…": "फ़ोटो तैयार हो रही हैं…",
-  "This covers all {n} photos.": "यह सभी {n} फ़ोटो पर लागू होता है।"
+  "This covers all {n} photos.": "यह सभी {n} फ़ोटो पर लागू होता है।",
+  "Earlier sightings were not searched: none of the new photos shows one clear face.": "पहले की सूचनाओं में खोज नहीं की गई: नई फ़ोटो में से किसी में भी एक साफ़ चेहरा नहीं दिखता।",
+  "Show the photos with no person": "बिना व्यक्ति वाली फ़ोटो दिखाएँ"
 }

@@ -815,6 +815,13 @@ function citizenCaseView(report) {
     .filter((p) => p && p.addedById && p.addedById === report.registeredById)
     .map((p) => p.id));
   view.extraPhotos = extraPhotosView(report).filter((p) => given.has(p.id)).map(({ id, url }) => ({ id, url }));
+  // The main photo too, when the police chose one the family did not give
+  // (a record from before this was kept: unless the police replaced it). A
+  // woman or adult case may be registered by the person she left.
+  const mainGiven = report.photoAddedById !== undefined
+    ? Boolean(report.photoAddedById) && report.photoAddedById === report.registeredById
+    : !report.photoReplacedAt;
+  if (!mainGiven) view.photoUrl = null;
   return view;
 }
 

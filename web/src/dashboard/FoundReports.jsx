@@ -788,6 +788,17 @@ export default function FoundReports({ view = 'matches' }) {
                       )}
                     </button>
                   )}
+                  {/* Other photos the screen found no person in: held back
+                      until the officer asks, as a main photo would be. */}
+                  {!revealed[f.id] && viewPhotosOf(f).some((p) => p.id !== MAIN_PHOTO && p.check?.verdict === 'no_face') && (
+                    <button
+                      type="button"
+                      onClick={() => setRevealed((r) => ({ ...r, [f.id]: true }))}
+                      className="absolute inset-x-0 top-0 bg-white/90 px-1 py-0.5 text-[10px] font-semibold text-indigo-700 underline"
+                    >
+                      {t('Show the photos with no person')}
+                    </button>
+                  )}
                 </div>
 
                 <div className="min-w-0 flex-1 space-y-2">
@@ -1286,9 +1297,10 @@ export default function FoundReports({ view = 'matches' }) {
               label: t('Sighting photos'),
               startId: MAIN_PHOTO,
               // Another photo the screen found no person in is held back, as
-              // the main one is on the card, until an officer asks to see it.
+              // the main one is on the card, until an officer asks to see it
+              // (the card's "Show anyway").
               photos: (viewPhotosOf(viewing).length ? viewPhotosOf(viewing) : [{ id: MAIN_PHOTO, src: `/api/reports/photo/${viewing.id}` }])
-                .filter((p) => p.id === MAIN_PHOTO || revealed[viewing.id] || p.check?.verdict === 'usable' || p.check?.verdict === 'multiple_faces')
+                .filter((p) => p.id === MAIN_PHOTO || revealed[viewing.id] || p.check?.verdict !== 'no_face')
                 .map((p) => ({ id: p.id, src: p.src })),
             }]}
           />
