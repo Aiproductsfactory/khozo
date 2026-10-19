@@ -10,6 +10,8 @@ msg('30 days to 6 months');
 msg('6 to 12 months');
 msg('1 to 5 years');
 msg('Over 5 years');
+// The row for sightings sent without a poster code (GET /dashboard/mis).
+msg('No poster code');
 
 const pct = (rate) => (rate == null ? '-' : `${Math.round(rate * 100)}%`);
 const days = (value) => (value == null ? '-' : value);
@@ -60,12 +62,13 @@ function Stat({ label, value }) {
   );
 }
 
-function CountTable({ title, rows, empty, translate = false }) {
+function CountTable({ title, note = null, rows, empty, translate = false }) {
   const t = useT();
   return (
     <div className="rounded-xl bg-white ring-1 ring-black/5">
       <div className="border-b border-black/5 px-4 py-3">
         <h3 className="font-semibold">{title}</h3>
+        {note && <p className="mt-0.5 text-xs text-gray-500">{note}</p>}
       </div>
       <div className="divide-y divide-black/5">
         {rows.length === 0 && <p className="px-4 py-5 text-sm text-gray-400">{empty || t('No records')}</p>}
@@ -163,6 +166,14 @@ export default function MisReport() {
         <CountTable title={t('Top states')} rows={report.byState || []} />
         <CountTable title={t('Top districts')} rows={report.byDistrict || []} />
       </div>
+
+      {/* Poster codes are slugs a department chose; only "No poster code" has a translation. */}
+      <CountTable
+        title={t('Sightings by poster code')}
+        note={t('Reports sent from the form after scanning a poster’s code. It counts posters, never people.')}
+        rows={report.sightingsBySource || []}
+        translate
+      />
 
       <div className="grid gap-4 lg:grid-cols-4">
         {/* Child / Woman / Adult person — the server sends these fixed English names. */}

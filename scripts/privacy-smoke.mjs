@@ -115,12 +115,14 @@ const iso = (offsetDays) => new Date(NOW + offsetDays * DAY).toISOString();
     id: 'f_1', status: 'pending_review', state: 'Gujarat', district: 'Ahmedabad', lat: 23.01, lng: 72.55, foundLocation: 'Kalupur station platform 3',
     reporterName: 'Kiran', reporterPhone: '9111111111', reporterPhoneVisible: '9111111111', idProofNumberMasked: '**1234', note: 'Girl in red, crying',
     photoFile: 'f_1.jpg', matchCandidates: [{ reportId: 'r_9', rank: 1, score: 0.8, status: 'proposed', warnings: ['face_small'] }], createdAt: 7,
+    campaignSource: 'kalupur-platform-3',
   };
   const s = { ...sighting, ...anonymisedSightingPatch(sighting, { now: NOW }) };
   const sText = JSON.stringify(s);
   const sLeaks = ['Kalupur', 'Kiran', '9111111111', '1234', 'crying', 'f_1.jpg'].filter((t) => sText.includes(t));
   check('an anonymised sighting keeps nothing identifying', sLeaks.length === 0 && s.lat === null && s.lng === null, sLeaks.join(', '));
   check('its place is still text', s.foundLocation === 'Location removed');
+  check('the poster code goes with the place', s.campaignSource == null && !sText.includes('kalupur'));
   check('its candidate list keeps ids and scores only', s.matchCandidates[0].reportId === 'r_9' && s.matchCandidates[0].score === 0.8 && !s.matchCandidates[0].warnings);
 }
 

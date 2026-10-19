@@ -16,6 +16,7 @@ import { nanoid } from 'nanoid';
 import { POLICE_ROLES, canAccessReport, isPoliceOnly, sameDistrict, sameState, sameStatePlace, scopeFoundReports, scopeReports } from '../scope.js';
 import { resolveSightingLocation, reverseGeocode } from '../geocode.js';
 import { sightingScreenVerdict } from '../face-screen.js';
+import { campaignSourceOf } from '../campaign-source.js';
 import { canonicalPlace, placeFields } from '../geo/index.js';
 import { expectedAgeAt, isForwardPoolCase, isFoundChildIntake, isRematchEligible, isReverseMatchCandidate, wasLinkRejected } from '../match-pool.js';
 import { createSightingMatcher, engineRecordOf, engineSummary, evidenceOf, isReverseLinked } from '../sighting-matching.js';
@@ -283,6 +284,8 @@ export default function registerReportRoutes(router, deps) {
     idProofType: ['text', 40],
     idProofNumber: ['text', 40],
     photoConsent: 'flag',
+    // The poster code the form was opened from (shared/campaign-source.js).
+    campaignSource: ['text', 80],
   };
 
   /** The fields a formal found-child intake reads. */
@@ -1354,6 +1357,9 @@ export default function registerReportRoutes(router, deps) {
       // The street address of the phone's coordinates, for the officers who
       // go there. Never in the reporter's receipt (above).
       geoAddress: locationScope.address || null,
+      // Which poster's code opened the form, for the MIS report's count of
+      // which posters work. Not in the reporter's receipt.
+      campaignSource: campaignSourceOf(b.campaignSource),
       createdAt: Date.now(),
     };
     addFoundReport(fr);

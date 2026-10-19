@@ -1855,6 +1855,14 @@ export default function registerDashboardRoutes(router, deps) {
       },
       caseStatus: statusCounts(reports),
       sightingStatus: statusCounts(foundReports),
+      // Which posters bring reports in: sightings sent from a form opened by a
+      // poster's code (shared/campaign-source.js). An anonymised sighting has
+      // lost its code with its place, so it is left out rather than counted as
+      // having come without one.
+      sightingsBySource: groupCounts(
+        foundReports.filter((f) => !f.anonymizedAt),
+        (f) => f.campaignSource || 'No poster code'
+      ),
       demographics: {
         byCategory: groupCounts(reports, (r) => PERSON_CATEGORIES[personCategoryOf(r)]),
         byAgeBand: groupCounts(reports, (r) => ageBand(r.age)),

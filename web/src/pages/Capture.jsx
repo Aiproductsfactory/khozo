@@ -19,6 +19,18 @@ import ReceiptActions from '../ReceiptActions.jsx';
 import InstallPrompt from '../InstallPrompt.jsx';
 import { currentLocale, msg, useT } from '../i18n.jsx';
 import { PublicHeader, PublicIcon, ShareKhozo, usePageMeta } from '../PublicChrome.jsx';
+import { campaignSourceOf } from '../../../shared/campaign-source.js';
+
+// The poster code in the address when the form was opened by scanning one
+// (khozo.org/report?src=kalupur), or null. It goes with the report so the MIS
+// report can count which posters bring sightings in.
+function posterSourceFromUrl() {
+  try {
+    return campaignSourceOf(new URLSearchParams(window.location.search).get('src'));
+  } catch {
+    return null;
+  }
+}
 
 const ID_PROOF_TYPES = [
   { id: '', label: msg('Not provided') },
@@ -131,7 +143,9 @@ export default function Capture() {
   const [step, setStep] = useState(1);
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
+  const [posterSource] = useState(posterSourceFromUrl);
   const [form, setForm] = useState({
+    campaignSource: posterSource || '',
     personCategory: 'child',
     foundLocation: '',
     state: '',
@@ -450,6 +464,18 @@ export default function Capture() {
                 {t('Continue without photo')}
               </button>
             </div>
+            {/*
+              Someone who scanned a poster's code usually has nothing to report
+              yet: the poster asks them to keep the form for when they do. Below
+              the buttons, so a reporter looking at a child now is not slowed.
+            */}
+            {posterSource && (
+              <InstallPrompt
+                className="mt-6"
+                title={t('Keep this form on your phone')}
+                body={t('Then it is one tap away when you need it, and it works on a weak signal.')}
+              />
+            )}
             <p className="mt-6 flex items-start gap-2.5 text-sm text-gray-600">
               <PublicIcon.shield className="mt-0.5 h-5 w-5 shrink-0 text-khozo-dark" />
               <span>{t('Send a photo — free, no login. Khozo never shows you who they are; a police officer checks every report.')}</span>

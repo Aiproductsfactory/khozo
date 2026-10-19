@@ -51,7 +51,7 @@ enforced.
 
 | Step | Data | Goes to | Stored | Who can see it |
 |---|---|---|---|---|
-| Capture | Photo; GPS from the photo, or the phone's location (`web/src/pages/Capture.jsx:181-208`); place, category, age, gender, note; optional name, phone, ID type and number | The citizen's browser or app | If offline: web queue AES-GCM encrypted, 72 h (`web/src/offlineQueue.js:7,38`); app outbox unencrypted, no expiry (`mobile/src/services/queue.js`) | The citizen |
+| Capture | Photo; GPS from the photo, or the phone's location (`web/src/pages/Capture.jsx:181-208`); place, category, age, gender, note; the poster code the form was opened from, if any (`?src=`, `shared/campaign-source.js`; counted in the MIS report, cleared on anonymisation); optional name, phone, ID type and number | The citizen's browser or app | If offline: web queue AES-GCM encrypted, 72 h (`web/src/offlineQueue.js:7,38`); app outbox unencrypted, no expiry (`mobile/src/services/queue.js`) | The citizen |
 | Submit | All of the above | Cloudflare Worker, `reports.js` `POST /found` | — | — |
 | Locate | Latitude and longitude, only when the reporter did not type both state and district | OpenStreetMap Nominatim, called from the Worker (`shared/geocode.js:21,116-133`) | Not by Khozo | Nominatim |
 | Screen | The photo | Aarakshak; Rekognition if Aarakshak does not answer (`worker/src/match.js:237-276`) | The verdict, on the record | — |

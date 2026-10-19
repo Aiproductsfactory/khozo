@@ -14,6 +14,10 @@ import { getInstallState, promptInstall, subscribeInstall } from './pwa.js';
  * It shows nothing when Khozo is already running as an installed app, once
  * the reader has said "not now" (remembered on this device), and on browsers
  * that cannot install. Several cards on screen at once agree with each other.
+ *
+ * A caller may say what is being kept with `title` and `body`, already
+ * translated: the report form says "keep this form" to someone who scanned a
+ * poster's code (the installed app opens on the form, manifest start_url).
  */
 
 const DISMISS_KEY = 'khozo.installHint.dismissed';
@@ -60,7 +64,7 @@ function isIosSafari() {
   }
 }
 
-export default function InstallPrompt({ className = '' }) {
+export default function InstallPrompt({ className = '', title = null, body = null }) {
   const t = useT();
   const [install, setInstall] = useState(getInstallState);
   const [dismissed, setDismissed] = useState(wasDismissed);
@@ -95,8 +99,8 @@ export default function InstallPrompt({ className = '' }) {
       <div className="min-w-0 flex-1">
         {mode === 'prompt' ? (
           <>
-            <p className="font-semibold text-khozo-dark">{t('Install Khozo on this phone')}</p>
-            <p className="mt-0.5 text-sm text-gray-700">{t('Opens like an app and keeps working on a weak signal.')}</p>
+            <p className="font-semibold text-khozo-dark">{title || t('Install Khozo on this phone')}</p>
+            <p className="mt-0.5 text-sm text-gray-700">{body || t('Opens like an app and keeps working on a weak signal.')}</p>
             <button
               type="button"
               onClick={onInstall}
@@ -106,7 +110,9 @@ export default function InstallPrompt({ className = '' }) {
             </button>
           </>
         ) : (
-          <p className="pt-2 text-sm text-gray-800">
+          <>
+          {title && <p className="font-semibold text-khozo-dark">{title}</p>}
+          <p className={`${title ? 'mt-0.5' : 'pt-2'} text-sm text-gray-800`}>
             {t('Install Khozo: tap Share, then Add to Home Screen.')}
             <svg
               aria-hidden="true"
@@ -124,6 +130,7 @@ export default function InstallPrompt({ className = '' }) {
               <path d="M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1" />
             </svg>
           </p>
+          </>
         )}
       </div>
       <button

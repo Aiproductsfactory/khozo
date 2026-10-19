@@ -668,6 +668,23 @@ async function personCategoryChecks({ superAdmin, sjpu, cwc, parent }) {
     'a CWC desk filing a sighting should get the neutral receipt'
   );
 
+  // --- A poster's code tags the sighting it opened, for the MIS count --------
+  const posterSighting = await request('POST', '/reports/found', { form: sightingForm({ campaignSource: ' Kalupur-Platform-1 ' }, '9000000707') });
+  assert(!('campaignSource' in posterSighting.foundReport), 'the reporter’s receipt should not echo the poster code');
+  const badCodeSighting = await request('POST', '/reports/found', { form: sightingForm({ campaignSource: '<b>kalupur</b>' }, '9000000708') });
+  const taggedSightings = (await request('GET', '/reports/found/all', { token: superAdmin.token })).foundReports;
+  assert(
+    taggedSightings.find((row) => row.id === posterSighting.foundReport.id)?.campaignSource === 'kalupur-platform-1',
+    'a sighting should keep the poster code it was sent from, lower-cased and trimmed'
+  );
+  assert(
+    taggedSightings.find((row) => row.id === badCodeSighting.foundReport.id)?.campaignSource === null,
+    'a malformed poster code should be dropped without refusing the report'
+  );
+  const posterMis = await request('GET', '/dashboard/mis', { token: superAdmin.token });
+  assert(posterMis.sightingsBySource?.find((row) => row.name === 'kalupur-platform-1')?.count === 1, 'MIS should count sightings by poster code');
+  assert(posterMis.sightingsBySource?.find((row) => row.name === 'No poster code')?.count >= 1, 'MIS should count sightings sent without a poster code');
+
   // --- A confirmation records how the identity was verified ------------------
   const confirmWoman = (body) => request('POST', `/reports/${woman.report.id}/confirm-match`, { token: sjpu.token, body });
   const unverified = await expectStatus(400, () => confirmWoman({ sendSms: true, foundLocation: 'Smoke location' }), 'confirm a match without recording the verification');
