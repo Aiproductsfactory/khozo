@@ -110,9 +110,15 @@ function endOfImage(bytes, at) {
     let j = i + 2 + ((bytes[i + 2] << 8) | bytes[i + 3]);
     if (marker === 0xda) {
       // Entropy-coded data: 0xFF is followed by 0x00 (a stuffed byte), a
-      // restart marker, or the next marker.
+      // restart marker, or the next marker. indexOf jumps to the next 0xFF
+      // natively: a byte-by-byte loop over a whole photo costs the Worker
+      // most of a millisecond of its CPU allowance.
       while (j + 1 < bytes.length) {
-        if (bytes[j] !== 0xff) { j += 1; continue; }
+        if (bytes[j] !== 0xff) {
+          j = bytes.indexOf(0xff, j + 1);
+          if (j === -1) j = bytes.length;
+          continue;
+        }
         const next = bytes[j + 1];
         if (next === 0x00 || (next >= 0xd0 && next <= 0xd7)) { j += 2; continue; }
         if (next === 0xff) { j += 1; continue; }

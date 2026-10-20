@@ -39,10 +39,25 @@ const EMPTY = {
   consent: false,
 };
 
-/** Downscales and re-encodes so uploads stay small enough for a weak field connection. */
-async function preparePhoto(uri) {
+// The longest side a photo is sent at, as on the website (web/src/photoPrep.js):
+// a face far off in the picture keeps enough pixels for the face search, and
+// a larger photo gains nothing for it.
+const PHOTO_MAX_SIDE = 1920;
+
+/**
+ * Downscales and re-encodes so uploads stay small enough for a weak field
+ * connection. A photo already smaller is re-encoded but never enlarged:
+ * enlarging adds bytes, not detail.
+ */
+async function preparePhoto(uri, width, height) {
   try {
-    const result = await manipulateAsync(uri, [{ resize: { width: 1280 } }], {
+    const known = width > 0 && height > 0;
+    const resize = !known
+      ? [{ resize: { width: PHOTO_MAX_SIDE } }]
+      : Math.max(width, height) > PHOTO_MAX_SIDE
+        ? [{ resize: width >= height ? { width: PHOTO_MAX_SIDE } : { height: PHOTO_MAX_SIDE } }]
+        : [];
+    const result = await manipulateAsync(uri, resize, {
       compress: 0.7,
       format: SaveFormat.JPEG,
     });
@@ -90,7 +105,7 @@ function CameraModal({ visible, onClose, onCapture }) {
     setBusy(true);
     try {
       const photo = await cameraRef.current.takePictureAsync({ quality: 0.8, skipProcessing: true });
-      const prepared = await preparePhoto(photo.uri);
+      const prepared = await preparePhoto(photo.uri, photo.width, photo.height);
       onCapture(prepared);
       onClose();
     } catch {
@@ -186,7 +201,8 @@ export default function ReportSightingScreen() {
       quality: 0.8,
     });
     if (result.canceled || !result.assets?.length) return;
-    const prepared = await preparePhoto(result.assets[0].uri);
+    const asset = result.assets[0];
+    const prepared = await preparePhoto(asset.uri, asset.width, asset.height);
     set('photoUri', prepared);
   }, [set]);
 

@@ -1,14 +1,21 @@
 // Photos taken on a phone are 3-12 MB. Before one is uploaded (or queued on
-// the device while offline) it is redrawn as a JPEG of at most 1280 px on its
+// the device while offline) it is redrawn as a JPEG of at most 1920 px on its
 // longer edge at quality 0.8: a few hundred KB, which a slow connection sends
-// in seconds and which is still far more than face matching needs.
+// in seconds.
+//
+// 1920, not less, because a sighting is often taken from a distance. A face
+// 150 px wide in a 4000 px photo was 48 px after shrinking to 1280, near the
+// smallest a face engine will look at; at 1920 it keeps 72. Not more, because
+// Rekognition's smallest face (40 px, 50 px to compare reliably) is set for a
+// 1920 × 1080 picture and grows in proportion above it, so a larger photo
+// costs bytes and gains nothing.
 //
 // Redrawing drops the EXIF block, GPS included, so anything that reads the
 // photo's own location (photoLocation.js readPhotoGps) must run on the
 // original file first.
 import { toJpeg } from './bulk/photos.js';
 
-export const PHOTO_MAX_SIDE = 1280;
+export const PHOTO_MAX_SIDE = 1920;
 export const PHOTO_QUALITY = 0.8;
 
 /**

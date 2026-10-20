@@ -20,8 +20,9 @@ to *show*; every action is authorised server-side.
 
 - **Report a sighting** — a three-step flow (photo → details → confirm) with camera
   capture, gallery import, GPS + reverse geocoding, an explicit consent gate, and a
-  "keep my identity confidential" option. Photos are downscaled to 1280 px before
-  upload so they go through on a weak connection.
+  "keep my identity confidential" option. Photos are downscaled to at most 1920 px
+  on the longer side before upload, so they go through on a weak connection and a
+  face far off in the picture still has enough pixels to search.
 - **Public bulletins** — only cases an agency has actively published.
 - **Track** — look up a sighting receipt or a case / FIR / external ID. Receipts for
   reports made from this phone are listed locally for one-tap lookup.
