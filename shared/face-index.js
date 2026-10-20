@@ -53,6 +53,16 @@ export const PHOTO_REJECTION_REASONS = new Set(['no_face', 'multiple_faces', 'fa
 export const WEAK_FACE_WARNINGS = new Set(['face_too_small', 'face_small_in_frame', 'low_detector_confidence']);
 
 /**
+ * The warnings that mean a case photo is worth replacing: the face is too
+ * small to match well (shared/photo-need.js). `low_detector_confidence` is
+ * not one: it is Aarakshak's face finder being less than 0.9 sure of a face,
+ * which happens to faces anyone can see (looking down, a bright window
+ * behind), and Aarakshak calls it advisory. On its word alone the desk was
+ * told to ask a family for a better photo of a clear face.
+ */
+export const SMALL_FACE_WARNINGS = new Set(['face_too_small', 'face_small_in_frame']);
+
+/**
  * Whether a failed enrolment is worth trying again as it is: the provider did
  * not answer, was busy or broke, or refused the key (a key problem, not the
  * photo's). A rejected photo, or any other refusal, is not.

@@ -73,11 +73,27 @@ export function telHref(phone) {
 // for. Officers only; the public is shown none of this.
 
 const pct = (value) => `${Math.round((Number(value) || 0) * 100)}%`;
+const decimal = (value) => (Number(value) || 0).toFixed(2);
+
+/**
+ * A match score in words, against the line the system routes on (0.35), and
+ * shown instead of a percentage wherever the score is the headline: Aarakshak's
+ * score is not one, and "72%" next to AWS's "100%" read as 28 points of doubt
+ * on a strong match (shared/match-verdict.js). The bands were 80/60, which
+ * painted a genuine match at 0.5 the same grey as no match at all. Said as
+ * similarity: next to a name, 'Strong' read as 'this is them'.
+ */
+export function similarityBand(score, line = 0.35) {
+  const value = Number(score) || 0;
+  if (value >= Math.max(0.6, line)) return { label: msg('High similarity'), className: 'text-emerald-600' };
+  if (value >= line) return { label: msg('Worth reviewing'), className: 'text-amber-600' };
+  if (value > 0) return { label: msg('Score too low'), className: 'text-slate-400' };
+  return { label: msg('No possible match'), className: 'text-slate-300' };
+}
 
 /** Human words for the quality codes an engine attaches to a photo. */
 const QUALITY_WARNINGS = {
   no_face_detected: msg('No face was found in one of the photos'),
-  low_detector_confidence: msg('The face was hard to make out'),
   blurry: msg('The photo is blurred'),
   blur: msg('The photo is blurred'),
   low_resolution: msg('The photo is small or low-resolution'),
@@ -86,6 +102,15 @@ const QUALITY_WARNINGS = {
   extreme_pose: msg('The face is turned away'),
   poor_lighting: msg('The lighting is poor'),
 };
+
+/**
+ * Codes kept on the record but not shown. `low_detector_confidence` is
+ * Aarakshak's face finder being less than 0.9 sure of a face in one of the
+ * two photos; Aarakshak calls it advisory and it does not change the score. It
+ * was shown as "The face was hard to make out" beside faces anyone could see
+ * (looking down, a bright window behind), and could not say which photo.
+ */
+const UNSHOWN_WARNINGS = new Set(['low_detector_confidence']);
 
 /** Why the second engine did not check a candidate. */
 const NOT_CHECKED_REASONS = {
@@ -176,14 +201,18 @@ export function matchLinesOf(sighting) {
 }
 
 /**
- * "Aarakshak 72% (match from 35%)". The two engines score on different
- * scales, so each number is shown beside its own line (shared/match-verdict.js).
+ * "Aarakshak: High similarity — 0.72 (match from 0.35)" and "AWS Rekognition
+ * 100% (match from 80%)". The two engines score on different scales, so each
+ * number is shown in its own units beside its own line: Aarakshak's as a
+ * score from 0 to 1, which is what it is, and AWS's as the confidence it is
+ * (shared/match-verdict.js).
  */
 function scoreLabel(t, engine, score, line) {
-  const values = { pct: pct(score), line: pct(line) };
   if (engine === 'aarakshak') {
-    return line != null ? t('Aarakshak {pct} (match from {line})', values) : t('Aarakshak {pct}', values);
+    const values = { band: t(similarityBand(score, line ?? undefined).label), score: decimal(score), line: decimal(line) };
+    return line != null ? t('Aarakshak: {band} — {score} (match from {line})', values) : t('Aarakshak: {band} — {score}', values);
   }
+  const values = { pct: pct(score), line: pct(line) };
   return line != null ? t('AWS Rekognition {pct} (match from {line})', values) : t('AWS Rekognition {pct}', values);
 }
 
@@ -243,7 +272,7 @@ export function EngineScoreLine({ sighting }) {
       <span className="mt-1 block text-xs text-slate-500">{parts.join(' · ')}</span>
       {lines && parts.length > 1 && (
         <span className="mt-1 block text-xs text-slate-500">
-          {t('The two checks score on different scales. Compare each with the point where it counts a match, not with each other.')}
+          {t('Aarakshak scores how alike the two faces are, from 0 to 1: two different photos of the same person usually score about 0.5 to 0.85, never 1. AWS says how sure it is, in per cent. Compare each with its own match line, not with each other.')}
         </span>
       )}
     </>
@@ -260,7 +289,8 @@ export function MatchEvidence({ sighting, candidate = null, report = null }) {
   const t = useT();
   const d = useDisplay();
   const c = candidate || currentCandidate(sighting);
-  const warnings = [...new Set([...asList(c?.warnings), ...asList(sighting?.photoQualityWarnings)].map(txt).filter(Boolean))];
+  const warnings = [...new Set([...asList(c?.warnings), ...asList(sighting?.photoQualityWarnings)].map(txt).filter(Boolean))]
+    .filter((w) => !UNSHOWN_WARNINGS.has(w));
   // About the case photo the match was made on (shared/photo-set.js), not
   // only the main one.
   const pairCase = c?.photoPair?.case || (sighting?.matchedReportId === report?.id ? sighting?.matchedPhotoPair?.case : null);
@@ -411,7 +441,7 @@ export function ConfirmMatchDialog({ report, sighting, action, onSubmit, onCance
     ? photoUrlOf(sighting, pair?.sighting) || txt(sighting.photoUrl) || (sighting.id ? `/api/reports/photo/${sighting.id}` : null)
     : null;
   const caseSrc = report ? photoUrlOf(report, pair?.case) || txt(report.photoUrl) || (report.id ? `/api/reports/photo/${report.id}` : null) : null;
-  const score = sighting ? Math.round((Number(sighting.matchScore) || 0) * 100) : 0;
+  const band = similarityBand(sighting?.matchScore);
 
   /*
     On a phone the dialog is the whole screen: the two photographs side by
@@ -467,7 +497,7 @@ export function ConfirmMatchDialog({ report, sighting, action, onSubmit, onCance
         ) : (
           <div className="rounded-xl bg-slate-50 px-4 py-3 text-center ring-1 ring-slate-200">
             <span className="block text-xs font-semibold text-slate-600">{t('Face similarity')}</span>
-            <span className="text-2xl font-extrabold text-slate-900">{score}%</span>
+            <span className={`text-2xl font-extrabold ${band.className}`}>{t(band.label)}</span>
             <span className="mt-1 block text-xs text-slate-500">
               {adult
                 ? t('A score is a prompt to look. You are confirming this is the same person. Verify with them before anyone else is told.')

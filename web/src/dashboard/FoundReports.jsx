@@ -10,7 +10,7 @@ import { useDisplay } from '../useDisplay.js';
 import { useBackClose } from '../useBackClose.js';
 import { usePolling } from '../usePolling.js';
 import { ActionMessage, ActionToast, useAction } from './useAction.jsx';
-import { ConfirmMatchDialog, EngineScoreLine, EngineScores, MatchEvidence, currentCandidate, matchLinesOf, photoCheckFlag, telHref } from './Reunite.jsx';
+import { ConfirmMatchDialog, EngineScoreLine, EngineScores, MatchEvidence, currentCandidate, matchLinesOf, photoCheckFlag, similarityBand, telHref } from './Reunite.jsx';
 import PhotoViewer from './PhotoViewer.jsx';
 import { MAIN_PHOTO, photoUrlOf, viewPhotosOf } from '../../../shared/photo-set.js';
 
@@ -99,19 +99,10 @@ function when(value) {
   return Number.isFinite(ms) ? ms : 0;
 }
 
-/**
- * Describes a score against the threshold the system actually routes on (0.35),
- * not against a round number. The bands were 80/60, which painted a genuine
- * match at 0.5 the same grey as no match at all — in the one place a reviewer
- * looks before deciding whether to open a case.
- */
+/** A score in words (similarityBand in Reunite.jsx), translated. */
 function confidenceBand(score) {
-  const value = Number(score) || 0;
-  // Said as similarity: next to a name, 'Strong' read as 'this is them'.
-  if (value >= 0.6) return { label: t('High similarity'), className: 'text-emerald-600' };
-  if (value >= 0.35) return { label: t('Worth reviewing'), className: 'text-amber-600' };
-  if (value > 0) return { label: t('Score too low'), className: 'text-slate-400' };
-  return { label: t('No possible match'), className: 'text-slate-300' };
+  const band = similarityBand(score);
+  return { ...band, label: t(band.label) };
 }
 
 /**
@@ -678,7 +669,6 @@ export default function FoundReports({ view = 'matches' }) {
         {visible.map((f) => {
           const matched = (f.matchedReport && typeof f.matchedReport === 'object' ? f.matchedReport : null)
             || (f.matchedReportId ? reportsById[f.matchedReportId] : null);
-          const scorePct = Math.round((Number(f.matchScore) || 0) * 100);
           const band = confidenceBand(f.matchScore);
           const screen = screeningNote(f.screening);
           // Who was seen, and who the matched case is about. Childline/CWC,
@@ -920,10 +910,9 @@ export default function FoundReports({ view = 'matches' }) {
                       </div>
                     </div>
                     {matched && (
-                      <div className="shrink-0 text-right">
-                        <div className={`text-2xl font-extrabold ${band.className}`}>{scorePct}%</div>
-                        <p className="text-[10px] font-medium text-gray-400">{band.label}</p>
-                      </div>
+                      // The band, not a percentage: each engine's number is
+                      // in the chips below, in its own units.
+                      <div className={`shrink-0 text-right text-sm font-extrabold ${band.className}`}>{band.label}</div>
                     )}
                   </div>
                   {/* Beside every score, every time: an engine proposes, an officer decides. */}
@@ -960,7 +949,7 @@ export default function FoundReports({ view = 'matches' }) {
                                   {txt(c.rank) ? `${txt(c.rank)}. ` : ''}{d(c.report?.childName) || t('Case #{id}', { id: txt(c.reportId) })}
                                 </span>
                                 <span className="shrink-0 text-slate-500">
-                                  {Math.round((Number(c.score) || 0) * 100)}%
+                                  {confidenceBand(c.score).label}
                                   {c.corroborated ? ` · ${t('two checks')}` : c.notChecked ? ` · ${t('not checked')}` : ''}
                                 </span>
                               </li>
@@ -1387,8 +1376,8 @@ export default function FoundReports({ view = 'matches' }) {
 
             <div className="rounded-xl bg-slate-50 p-3.5 text-center ring-1 ring-slate-200">
               <span className="block text-xs font-semibold text-slate-600">{t('Face similarity')}</span>
-              <span className="text-3xl font-extrabold text-slate-900">
-                {Math.round((Number(compareModal.sighting.matchScore) || 0) * 100)}%
+              <span className={`text-2xl font-extrabold ${confidenceBand(compareModal.sighting.matchScore).className}`}>
+                {confidenceBand(compareModal.sighting.matchScore).label}
               </span>
               <EngineScoreLine sighting={compareModal.sighting} />
               <span className="mt-2 block text-xs text-slate-500">

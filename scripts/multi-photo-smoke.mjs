@@ -242,6 +242,12 @@ const readPhoto = async (file) => photo(String(file).replace(/\.jpg$/, '').repla
   };
   check('a case the gallery refused still needs a better photo, whatever the checks said', photoNeedOf(refusedButUsable) === 'weak');
 
+  // The face finder being under 0.9 sure is not a reason to ask a family for
+  // a new photo; a face too small to match is (shared/face-index.js).
+  const enrolledWith = (warnings) => ({ photoFile: 'a', photoCheck: { verdict: 'usable' }, faceIndex: { status: 'enrolled', photos: [{ status: 'enrolled', warnings }] } });
+  check('an enrolled face the finder was unsure of needs no new photo', photoNeedOf(enrolledWith(['low_detector_confidence'])) === null);
+  check('an enrolled face too small to match still needs one', photoNeedOf(enrolledWith(['face_small_in_frame'])) === 'weak' && photoNeedOf(enrolledWith(['face_too_small', 'low_detector_confidence'])) === 'weak');
+
   const view = citizenCaseView({
     id: 'r_fam', registeredById: 'u_parent', photoUrl: '/api/reports/photo/r_fam', photoFile: 'r_fam.jpg',
     extraPhotos: [

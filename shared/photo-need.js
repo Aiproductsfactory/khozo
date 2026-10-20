@@ -1,5 +1,5 @@
 // Whether a case's photo can find the person in a sighting, and if not, why.
-import { PHOTO_REJECTION_REASONS, WEAK_FACE_WARNINGS } from './face-index.js';
+import { PHOTO_REJECTION_REASONS, SMALL_FACE_WARNINGS } from './face-index.js';
 import { extraPhotosOf } from './photo-set.js';
 
 /** The reasons, most serious first. */
@@ -14,7 +14,8 @@ export const PHOTO_NEEDS = ['no_photo', 'no_face', 'group', 'weak'];
  *   no_face   the face check, or the face search gallery, found no face
  *   group     several faces: which one is the person is a guess
  *   weak      the face search gallery refused it, or took it with a face
- *             too small or unclear to match reliably
+ *             too small to match reliably (SMALL_FACE_WARNINGS; the face
+ *             finder merely being unsure of a face does not count)
  *
  * The desk asks the family for a recent, clear photo of the face alone and
  * replaces it (POST /reports/:id/photo), or adds it beside the others (POST
@@ -38,7 +39,7 @@ export function photoNeedOf(report) {
   return null;
 }
 
-const weak = (warnings) => Array.isArray(warnings) && warnings.some((w) => WEAK_FACE_WARNINGS.has(w));
+const weak = (warnings) => Array.isArray(warnings) && warnings.some((w) => SMALL_FACE_WARNINGS.has(w));
 
 /**
  * Why the gallery refused a case, as a photo need, or null when it was not
