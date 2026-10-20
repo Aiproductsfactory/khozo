@@ -39,5 +39,14 @@
   "Preparing the photos…": "फोटो तयार होत आहेत…",
   "This covers all {n} photos.": "हे सर्व {n} फोटोंना लागू होते.",
   "Earlier sightings were not searched: none of the new photos shows one clear face.": "आधीच्या माहितीत शोध घेतला गेला नाही: नव्या फोटोंपैकी कोणत्याही फोटोत एक स्पष्ट चेहरा दिसत नाही.",
-  "Show the photos with no person": "व्यक्ती नसलेले फोटो दाखवा"
+  "Show the photos with no person": "व्यक्ती नसलेले फोटो दाखवा",
+  "This photo is very dark.": "हा फोटो खूप अंधारा आहे.",
+  "The face may not show clearly enough to search. If it is safe, move so the light falls on their face and take it again.": "जुळणीचा शोध घेण्यासाठी चेहरा पुरेसा स्पष्ट दिसणार नाही असे होऊ शकते. सुरक्षित असल्यास, उजेड त्यांच्या चेहऱ्यावर पडेल अशा ठिकाणी जा आणि पुन्हा फोटो काढा.",
+  "Very dark": "खूप अंधारा",
+  "This photo looks blurred.": "हा फोटो धूसर दिसत आहे.",
+  "The face may not be clear enough to search. If it is safe, hold the phone still and take it again.": "जुळणीचा शोध घेण्यासाठी चेहरा पुरेसा स्पष्ट नसेल असे होऊ शकते. सुरक्षित असल्यास, फोन स्थिर धरून पुन्हा फोटो काढा.",
+  "Blurred": "धूसर",
+  "Choose another photo": "दुसरा फोटो निवडा",
+  "Take it again": "पुन्हा फोटो काढा",
+  "Keep this photo": "हाच फोटो ठेवा"
 }

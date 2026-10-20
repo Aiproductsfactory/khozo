@@ -14,6 +14,7 @@ import {
 } from '../offlineQueue.js';
 import { formatCoordinates, getDeviceLocation, readPhotoGps } from '../photoLocation.js';
 import { formatBytes, preparePhoto } from '../photoPrep.js';
+import { checkPhoto } from '../photoCheck.js';
 import { saveReceipt } from '../myReports.js';
 import ReceiptActions from '../ReceiptActions.jsx';
 import InstallPrompt from '../InstallPrompt.jsx';
@@ -84,6 +85,23 @@ const SEEN_COPY = {
     danger: msg('If the person is in immediate danger, call 112.'),
     why: msg('What made you think this person needs help?'),
     photoRule: msg('Photograph an adult only if they have asked for help or cannot look after themselves.'),
+  },
+};
+
+/*
+ * What the phone's own look at a photo found (photoCheck.js), said while the
+ * reporter can still take another. The photo is sent either way.
+ */
+const PHOTO_ADVICE = {
+  dark: {
+    title: msg('This photo is very dark.'),
+    advice: msg('The face may not show clearly enough to search. If it is safe, move so the light falls on their face and take it again.'),
+    short: msg('Very dark'),
+  },
+  blurred: {
+    title: msg('This photo looks blurred.'),
+    advice: msg('The face may not be clear enough to search. If it is safe, hold the phone still and take it again.'),
+    short: msg('Blurred'),
   },
 };
 
@@ -158,8 +176,12 @@ export default function Capture() {
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
   // Up to two more photos of the same person - another angle, a clearer face
-  // (shared/photo-set.js): [{ key, file, preview, preparing }].
+  // (shared/photo-set.js): [{ key, file, preview, preparing, advice }].
   const [extras, setExtras] = useState([]);
+  // 'dark' | 'blurred' | null for the first photo, and where it came from,
+  // so the advice offers the camera or the gallery again.
+  const [advice, setAdvice] = useState(null);
+  const [photoSource, setPhotoSource] = useState('camera');
   const [posterSource] = useState(posterSourceFromUrl);
   const [form, setForm] = useState({
     campaignSource: posterSource || '',
@@ -298,9 +320,9 @@ export default function Capture() {
    * The photo's own GPS is read from the original file first: shrinking it
    * (below) redraws the picture and drops the EXIF block that holds it. The
    * shrunk copy, a few hundred KB instead of several MB, is what is sent or
-   * kept in the offline queue.
+   * kept in the offline queue, and what is checked for darkness and blur.
    */
-  const onFile = async (e) => {
+  const onFile = async (e, source) => {
     const picked = e.target.files?.[0];
     // Cleared so choosing the same photo again still fires a change.
     e.target.value = '';
@@ -309,6 +331,8 @@ export default function Capture() {
     setFile(picked);
     setOriginalSize(picked.size || 0);
     setPreview(URL.createObjectURL(picked));
+    setPhotoSource(source);
+    setAdvice(null);
     setStep(2);
     locate(picked);
     setPreparing(true);
@@ -316,6 +340,8 @@ export default function Capture() {
     if (run !== photoRun.current) return;
     setFile(ready);
     setPreparing(false);
+    const found = await checkPhoto(ready);
+    if (run === photoRun.current) setAdvice(found);
   };
 
   // Another photo of the same person. Its place is read only from the first.
@@ -326,8 +352,10 @@ export default function Capture() {
     const added = picked.map((raw) => ({ key: `${Date.now()}-${Math.random().toString(36).slice(2)}`, file: raw, preview: URL.createObjectURL(raw), preparing: true }));
     setExtras((prev) => [...prev, ...added].slice(0, MAX_SIGHTING_PHOTOS - 1));
     for (const extra of added) {
-      preparePhoto(extra.file).then((ready) => {
+      preparePhoto(extra.file).then(async (ready) => {
         setExtras((prev) => prev.map((p) => (p.key === extra.key ? { ...p, file: ready, preparing: false } : p)));
+        const found = await checkPhoto(ready);
+        if (found) setExtras((prev) => prev.map((p) => (p.key === extra.key ? { ...p, advice: found } : p)));
       });
     }
   };
@@ -475,6 +503,14 @@ export default function Capture() {
           </div>
         )}
 
+        {/*
+          The camera and the gallery, outside the steps: "Change photo" and
+          "Take it again" on the second step open them too, and a ref to an
+          input that only the first step draws is empty by then.
+        */}
+        <input ref={cameraRef} type="file" accept="image/*" capture="environment" onChange={(e) => onFile(e, 'camera')} className="hidden" />
+        <input ref={fileRef} type="file" accept="image/*" onChange={(e) => onFile(e, 'gallery')} className="hidden" />
+
         {step === 1 && (
           <div className="card p-5 sm:p-8">
             <h1 className="text-balance text-2xl font-bold tracking-tight text-ink sm:text-3xl">{t(copy.title)}</h1>
@@ -522,8 +558,6 @@ export default function Capture() {
               or sent on by someone else. A large dashed camera box used to sit
               above these and do the same as the first button.
             */}
-            <input ref={cameraRef} type="file" accept="image/*" capture="environment" onChange={onFile} className="hidden" />
-            <input ref={fileRef} type="file" accept="image/*" onChange={onFile} className="hidden" />
             <div className="mt-7 grid gap-3 sm:grid-cols-2">
               <button
                 type="button"
@@ -592,6 +626,24 @@ export default function Capture() {
                 </button>
               </p>
             )}
+            {file && advice && PHOTO_ADVICE[advice] && (
+              <div role="status" className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 sm:px-6">
+                <p className="font-semibold">{t(PHOTO_ADVICE[advice].title)}</p>
+                <p className="mt-0.5">{t(PHOTO_ADVICE[advice].advice)}</p>
+                <div className="mt-2.5 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="btn-primary min-h-11 px-4 py-2 text-sm"
+                    onClick={() => (photoSource === 'gallery' ? fileRef : cameraRef).current?.click()}
+                  >
+                    {photoSource === 'gallery' ? t('Choose another photo') : t('Take it again')}
+                  </button>
+                  <button type="button" className="btn-ghost min-h-11 px-4 py-2 text-sm" onClick={() => setAdvice(null)}>
+                    {t('Keep this photo')}
+                  </button>
+                </div>
+              </div>
+            )}
             {/*
               More photos of the same person: a second angle or a clearer face
               is often the one that matches. Up to three in all.
@@ -603,8 +655,11 @@ export default function Capture() {
                 {extras.length > 0 && (
                   <ul className="mb-2 flex flex-wrap gap-3 pt-2" aria-label={t('Other photos')}>
                     {extras.map((p) => (
-                      <li key={p.key} className="relative">
-                        <img src={p.preview} alt="" className="h-20 w-20 rounded-lg object-cover ring-1 ring-black/10" />
+                      <li key={p.key} className="relative w-20">
+                        <img src={p.preview} alt="" className={`h-20 w-20 rounded-lg object-cover ring-1 ${p.advice ? 'ring-2 ring-amber-400' : 'ring-black/10'}`} />
+                        {p.advice && PHOTO_ADVICE[p.advice] && (
+                          <p className="mt-1 text-center text-xs font-semibold leading-tight text-amber-800">{t(PHOTO_ADVICE[p.advice].short)}</p>
+                        )}
                         <button
                           type="button"
                           onClick={() => removeExtra(p.key)}
@@ -860,7 +915,7 @@ export default function Capture() {
 
             <div className="grid gap-3 sm:flex sm:justify-center">
               <Link to={`/track-sighting?receipt=${encodeURIComponent(result.foundReport.id)}`} className="btn-primary sm:order-1">{t('Track status')}</Link>
-              <button className="btn-ghost sm:order-2" onClick={() => { setStep(1); setResult(null); setFile(null); setPreview(null); setOriginalSize(0); extras.forEach((p) => URL.revokeObjectURL(p.preview)); setExtras([]); clearLocation(); }}>{t('Report another')}</button>
+              <button className="btn-ghost sm:order-2" onClick={() => { setStep(1); setResult(null); setFile(null); setPreview(null); setOriginalSize(0); setAdvice(null); extras.forEach((p) => URL.revokeObjectURL(p.preview)); setExtras([]); clearLocation(); }}>{t('Report another')}</button>
               <Link to="/" className="btn-ghost sm:order-3">{t('Done')}</Link>
             </div>
 
