@@ -12,7 +12,10 @@
 
 import crypto from 'node:crypto';
 
-import { createRequestStore } from '../worker/src/store-sync.js';
+import { createRequestStore, tablesForRequest } from '../worker/src/store-sync.js';
+import registerDashboardRoutes from '../shared/routes/dashboard.js';
+import { createRouter, handleRequest } from '../worker/src/http/router.js';
+import { createAuth, createAuditPublicRateLimit, clientIp, fixedWindowRateLimit } from '../worker/src/http/express-compat.js';
 
 const checks = [];
 const check = (name, ok, detail = '') => {
@@ -35,7 +38,9 @@ function fakeIo(seed = {}) {
     grievances: seed.grievances || [],
     activity: seed.activity || [],
     audit: seed.audit || [],
+    notifications: seed.notifications || [],
   };
+  const reads = [];
   const writes = [];
   const statements = [];
   const photos = new Map();
@@ -50,13 +55,17 @@ function fakeIo(seed = {}) {
   const versionOf = (row) => crypto.createHash('md5').update(JSON.stringify(row)).digest('hex');
 
   return {
+    reads,
     writes,
     statements,
     photos,
     tables,
-    async query(_env, sql) {
+    async query(_env, sql, params = []) {
       const table = /from public\.(\w+)/.exec(sql)?.[1];
-      return { rows: (tables[table] || []).map((data) => ({ data: clone(data) })) };
+      reads.push(table);
+      let rows = tables[table] || [];
+      if (/user_id = \$1/.test(sql)) rows = rows.filter((r) => r.userId === params[0]);
+      return { rows: rows.map((data) => ({ data: clone(data) })) };
     },
     async upsertRecord(_env, table, record) {
       writes.push({ table, id: record.id, record: clone(record) });
@@ -258,6 +267,63 @@ anonymiser.store.updateReport('r_p', { anonymizedAt: '2026-10-19T00:00:00.000Z',
 await anonymiser.flush();
 const late = await adding.store.claimReport('r_p', addOne, (row) => !row.anonymizedAt);
 check('no photo is added to a case anonymised meanwhile', late === null && photoIo.tables.reports.find((r) => r.id === 'r_p').extraPhotos.length === 0);
+
+// --- the alert inbox poll loads only the accounts ----------------------------
+// Every open console polls it every twenty seconds. Loading every case,
+// sighting and audit row for it was most of the Worker's CPU, and most of the
+// requests the Free plan's 10 ms limit cut off.
+check('the alert inbox poll needs only the accounts', tablesForRequest('GET', '/api/dashboard/notifications').join() === 'users');
+check('marking alerts read still loads everything', tablesForRequest('POST', '/api/dashboard/notifications/read').length === 6);
+check('every other request still loads everything', tablesForRequest('GET', '/api/dashboard/stats').length === 6);
+
+const inboxIo = fakeIo({
+  ...seed,
+  notifications: [
+    { id: 'n_1', userId: 'u_1', ts: 2, kind: 'sighting_reported', title: 'Child spotted', readAt: null },
+    { id: 'n_2', userId: 'u_1', ts: 1, kind: 'sighting_reported', title: 'Child spotted', readAt: 5 },
+    { id: 'n_3', userId: 'u_2', ts: 3, kind: 'sighting_reported', title: 'Child spotted', readAt: null },
+  ],
+});
+const light = await createRequestStore({}, null, inboxIo, { tables: tablesForRequest('GET', '/api/dashboard/notifications') });
+check('only the accounts table is read', inboxIo.reads.join() === 'users', inboxIo.reads.join());
+const throws = (fn) => {
+  try {
+    fn();
+    return false;
+  } catch {
+    return true;
+  }
+};
+check('a table left out throws rather than reading as empty', throws(() => light.store.listReports()));
+check('an audit row cannot be added to a chain that was not loaded', throws(() => light.store.addAudit({ action: 'case.viewed' })));
+
+// The real inbox route and sign-in check, as the Worker wires them.
+const lightAuth = createAuth({}, light.store);
+const dashboard = registerDashboardRoutes(createRouter(), {
+  ...light.store,
+  ...lightAuth,
+  isPostgres: true,
+  auditPublicRateLimit: createAuditPublicRateLimit(light.store),
+  clientIp,
+  fixedWindowRateLimit,
+  settings: {},
+});
+const inboxRequest = (token) =>
+  new Request('https://khozo.test/api/dashboard/notifications', { headers: token ? { authorization: `Bearer ${token}` } : {} });
+const officerToken = await lightAuth.signToken(light.store.findUserById('u_1'));
+const inboxResponse = await handleRequest(dashboard, inboxRequest(officerToken), { basePath: '/api/dashboard' });
+const inbox = await inboxResponse.json();
+check(
+  'the inbox route answers from the accounts alone',
+  inboxResponse.status === 200 && inbox.notifications?.length === 2 && inbox.unread === 1,
+  `${inboxResponse.status} ${JSON.stringify(inbox).slice(0, 120)}`
+);
+check('it lists only that officer\'s alerts', inbox.notifications.every((n) => n.userId === 'u_1'));
+check('it reads nothing but the accounts and that officer\'s alerts', inboxIo.reads.join() === 'users,notifications', inboxIo.reads.join());
+const anonymous = await handleRequest(dashboard, inboxRequest(null), { basePath: '/api/dashboard' });
+check('it still refuses a request without a sign-in', anonymous.status === 401, `status ${anonymous.status}`);
+await light.flush();
+check('it writes nothing', inboxIo.writes.length === 0);
 
 const failed = checks.filter((c) => !c.ok);
 console.log(`\n--- ${checks.length - failed.length}/${checks.length} checks passed ---`);

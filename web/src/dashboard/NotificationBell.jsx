@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { asList, timeAgo, txt } from '../lib.jsx';
 import { useT } from '../i18n.jsx';
+import { usePolling } from '../usePolling.js';
 
 const POLL_MS = 20000;
 
@@ -16,7 +17,8 @@ const POLL_MS = 20000;
  * that still has to be read, judged and acted on by a person.
  *
  * `onConnectionChange` reports whether the last poll reached the API, so the
- * header can say so honestly instead of always claiming to be connected.
+ * header can say so honestly instead of always claiming to be connected. The
+ * poll pauses while the tab is hidden (usePolling.js).
  */
 export default function NotificationBell({ onConnectionChange }) {
   const t = useT();
@@ -40,9 +42,8 @@ export default function NotificationBell({ onConnectionChange }) {
 
   useEffect(() => {
     load();
-    const timer = setInterval(load, POLL_MS);
-    return () => clearInterval(timer);
   }, [load]);
+  usePolling(load, POLL_MS);
 
   useEffect(() => {
     function onClickOutside(event) {

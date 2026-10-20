@@ -78,24 +78,65 @@ const norm = (v) => String(v || '').trim().toLowerCase();
 /** Real Postgres access. Tests substitute this to run without a database. */
 const POSTGRES = { query, upsertRecord, upsertMany, readVersioned, updateIfVersion, savePhotoBlob, readPhotoBlob, deletePhotoBlob, photoBlobStats };
 
+/** The tables a replica holds whole, and how each is read. */
+const HYDRATED = {
+  users: 'select data from public.users',
+  reports: 'select data from public.reports order by created_at desc nulls last',
+  foundReports: 'select data from public.found_reports order by created_at desc nulls last',
+  grievances: 'select data from public.grievances order by created_at desc nulls last',
+  activity: 'select data from public.activity order by ts desc',
+  audit: 'select data from public.audit order by ts desc',
+};
+const ALL_TABLES = Object.keys(HYDRATED);
+
+/**
+ * Requests that are answered from part of the replica.
+ *
+ * The alert inbox is polled every twenty seconds by every open console and by
+ * the officer app, and it reads only the signed-in account and that account's
+ * own alerts. Loading every case, sighting and audit row for it was most of
+ * the Worker's CPU, and on the Free plan's 10 ms limit most of the requests
+ * that limit cut off (20 Oct 2026: 457 of 776 in a day).
+ */
+const PARTIAL = [{ method: 'GET', path: '/api/dashboard/notifications', tables: ['users'] }];
+
+/** Which tables a request needs hydrated: all of them unless listed above. */
+export function tablesForRequest(method, pathname) {
+  const route = PARTIAL.find((r) => r.method === method && r.path === pathname);
+  return route ? route.tables : ALL_TABLES;
+}
+
 /**
  * Hydrates the dataset and returns the synchronous store the shared routes use,
  * plus a `flush` that persists everything the request changed.
+ *
+ * `tables` limits the hydrate to the named tables. A table left out is not an
+ * empty table: touching it throws, so a route that starts reading or writing
+ * one fails loudly rather than answering from an empty list, or appending an
+ * audit row to a chain it cannot see.
  */
-export async function createRequestStore(env, ctx, io = POSTGRES) {
-  const [users, reports, foundReports, grievances, activity, audit] = await Promise.all([
-    io.query(env, 'select data from public.users'),
-    io.query(env, 'select data from public.reports order by created_at desc nulls last'),
-    io.query(env, 'select data from public.found_reports order by created_at desc nulls last'),
-    io.query(env, 'select data from public.grievances order by created_at desc nulls last'),
-    io.query(env, 'select data from public.activity order by ts desc'),
-    io.query(env, 'select data from public.audit order by ts desc'),
-  ]).then((results) => results.map((r) => r.rows.map((row) => row.data).filter(Boolean)));
+export async function createRequestStore(env, ctx, io = POSTGRES, { tables = ALL_TABLES } = {}) {
+  const unknown = tables.filter((name) => !HYDRATED[name]);
+  if (unknown.length) throw new Error(`Unknown store table: ${unknown.join(', ')}`);
+  const loaded = await Promise.all(
+    tables.map((name) => io.query(env, HYDRATED[name]).then((r) => r.rows.map((row) => row.data).filter(Boolean)))
+  );
 
   // Notifications are read for one officer at a time, so unlike the tables
   // above they are fetched per request rather than hydrated wholesale — the
   // fan-out is one row per authority per sighting and grows fastest of all.
-  const db = { users, reports, foundReports, grievances, activity, audit, notifications: [] };
+  const db = { notifications: [] };
+  for (const name of ALL_TABLES) {
+    const index = tables.indexOf(name);
+    if (index >= 0) db[name] = loaded[index];
+    else {
+      Object.defineProperty(db, name, {
+        get() {
+          throw new Error(`The ${name} table was not loaded for this request`);
+        },
+      });
+    }
+  }
   let notificationsLoaded = false;
   async function loadNotifications(userId) {
     if (notificationsLoaded) return db.notifications;

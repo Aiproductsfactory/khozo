@@ -8,6 +8,7 @@ import { ErrorBoundary } from '../components.jsx';
 import { currentLocale, msg, t, useT } from '../i18n.jsx';
 import { useDisplay } from '../useDisplay.js';
 import { useBackClose } from '../useBackClose.js';
+import { usePolling } from '../usePolling.js';
 import { ActionMessage, ActionToast, useAction } from './useAction.jsx';
 import { ConfirmMatchDialog, EngineScores, MatchEvidence, currentCandidate, photoCheckFlag, telHref } from './Reunite.jsx';
 import PhotoViewer from './PhotoViewer.jsx';
@@ -267,14 +268,9 @@ export default function FoundReports({ view = 'matches' }) {
   const refreshCases = useCallback(() => {
     api.get('/reports').then(indexCases).catch(() => {});
   }, []);
-  useEffect(() => {
-    const sightings = setInterval(refreshSightings, 15000);
-    const cases = setInterval(refreshCases, 45000);
-    return () => {
-      clearInterval(sightings);
-      clearInterval(cases);
-    };
-  }, [refreshSightings, refreshCases]);
+  // Both pause while the tab is hidden (usePolling.js).
+  usePolling(refreshSightings, 15000);
+  usePolling(refreshCases, 45000);
 
   // Arriving from an alert: show every status so the linked sighting cannot be
   // hidden by whichever filter happened to be selected, then scroll to it.
