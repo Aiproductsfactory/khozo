@@ -22,7 +22,7 @@ import {
   clientIp,
   fixedWindowRateLimit,
 } from './src/http/express-compat.js';
-import { createRequestStore } from './src/store-sync.js';
+import { createRequestStore, tablesForRequest } from './src/store-sync.js';
 import { checkDatabase, scheduled as runScheduledChecks } from './src/ops.js';
 import { detectPerson, matchEngineInfo, probeMatchProviders, rankMatches, rankSightingMatches } from './src/match.js';
 import { createFaceIndex } from '../shared/face-index.js';
@@ -231,7 +231,10 @@ export default {
 
     let flush = null;
     try {
-      const requestStore = await createRequestStore(env, ctx);
+      // The alert inbox poll loads only the accounts table (store-sync.js).
+      const requestStore = await createRequestStore(env, ctx, undefined, {
+        tables: tablesForRequest(request.method, url.pathname),
+      });
       flush = requestStore.flush;
 
       const router = register(createRouter(), buildDeps(env, requestStore.store, ctx));
