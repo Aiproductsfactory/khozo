@@ -32,7 +32,8 @@
  *   { status: 'no_face', warnings }
  *   { status: 'no_answer' | 'unsupported_format' | 'too_large' | 'not_configured' | 'not_asked', detail? }
  */
-import { DISAGREEMENT_GAP, MAX_MATCH_CANDIDATES, thresholdsOf } from './match-config.js';
+import { MAX_MATCH_CANDIDATES, thresholdsOf } from './match-config.js';
+import { enginesDisagreeOn } from './match-verdict.js';
 import { isWeakFace } from './face-screen.js';
 import { MAIN_PHOTO, isBadFacePhoto, leadPhotoOf, photoCountOf, photosOf } from './photo-set.js';
 
@@ -294,6 +295,9 @@ export async function comparePhotos({
   direction = 'forward',
   providers,
   confirmThreshold = 0.8,
+  // Aarakshak's own match line, for the disagreement flag only: candidates are
+  // proposed on the raw score whatever it is (shared/match-verdict.js).
+  aarakshakThreshold = null,
   secondOpinionTopN = MAX_MATCH_CANDIDATES,
   concurrency = 5,
   extraPairBudget = EXTRA_PAIR_BUDGET,
@@ -383,7 +387,10 @@ export async function comparePhotos({
         corroborated: true,
         confirmed: true,
         notChecked: false,
-        enginesDisagree: Math.abs(base.primaryScore - second) >= DISAGREEMENT_GAP,
+        enginesDisagree: enginesDisagreeOn(
+          { aarakshakScore: base.primaryScore, rekognitionScore: second },
+          { aarakshak: aarakshakThreshold, rekognitionConfirm: confirmThreshold }
+        ),
       });
     } else if (r.status === 'not_configured' || r.status === 'not_asked') {
       candidates.push({

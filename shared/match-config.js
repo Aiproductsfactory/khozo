@@ -24,9 +24,6 @@ import { MATCH_REVIEW_THRESHOLD } from './case-domain.js';
  */
 export const MATCH_PIPELINE_VERSION = 'candidates-2026-10';
 
-/** Score gap at which the two engines are said to disagree. */
-export const DISAGREEMENT_GAP = 0.25;
-
 /** How many candidates a search keeps (and an officer can walk through). */
 export const MAX_MATCH_CANDIDATES = 5;
 
@@ -49,7 +46,12 @@ export function engineSettings({
       ? { model: rekognitionModel || null, confirm: round(rekognitionConfirm), secondOpinionTopN: Number(secondOpinionTopN) || 0 }
       : null,
     reviewThreshold: round(MATCH_REVIEW_THRESHOLD),
-    disagreementGap: DISAGREEMENT_GAP,
+    // No longer used: the engines now disagree when they land on different
+    // sides of their own match lines (shared/match-verdict.js), which needs no
+    // setting. Kept so every stored result keeps its configuration hash, and
+    // the re-match batch does not search every sighting again for a change to
+    // a flag that decides nothing about which cases are proposed.
+    disagreementGap: 0.25,
   };
 }
 

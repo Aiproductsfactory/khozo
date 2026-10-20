@@ -370,6 +370,7 @@ async function rankStored(env, photoBuf, stored, readPhoto, { direction = 'forwa
         direction,
         providers: providersFor(env, cfg),
         confirmThreshold: cfg.confirmThreshold,
+        aarakshakThreshold: Number(cfg.aarakshakThreshold),
         secondOpinionTopN: cfg.secondOpinionTopN,
         concurrency: cfg.concurrency,
         // Kept out of the engine settings, so a search's configuration hash

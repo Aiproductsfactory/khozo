@@ -15,6 +15,8 @@
  *
  *   - two engines agree: corroborated, the lower score kept
  *   - Rekognition disagrees: withheld
+ *   - the engines disagree only when they land on different sides of their
+ *     own match lines, never because their numbers are far apart
  *   - Aarakshak finds no face: Rekognition compares alone (no veto)
  *   - Rekognition errors, or cannot read a WebP: kept, flagged "not checked"
  *   - Rekognition unconfigured: an uncorroborated lead
@@ -48,6 +50,10 @@ const behaviour = {
   rekognitionDisagrees: new Set(['Q']),
   rekognitionFails: new Set(['E']),
   groups: new Set(['G']),
+  // Aarakshak's score for the same person, where it is not 0.9: S is the
+  // 20 Oct 2026 pair (0.72 beside Rekognition's 100), L is below its 0.35 line.
+  aarakshakScores: { S: 0.72, L: 0.2 },
+  rekognitionCertain: new Set(['S']),
 };
 const calls = { aarakshak: [], rekognition: [] };
 
@@ -70,7 +76,7 @@ const fakeAarakshak = http.createServer((req, res) => {
     const same = faces[0].person === faces[1].person;
     const group = faces.some((f) => behaviour.groups.has(f.person));
     return send(200, {
-      score: same ? 0.9 : 0.02,
+      score: same ? behaviour.aarakshakScores[faces[0].person] ?? 0.9 : 0.02,
       source_faces: group ? [{}, {}] : [{}],
       target_faces: [{}],
       source_quality_score: 0.8,
@@ -103,7 +109,8 @@ const fakeRekognition = http.createServer((req, res) => {
     }
     const self = source.marker === target.marker;
     const same = source.person === target.person;
-    const similarity = self ? 100 : same ? (behaviour.rekognitionDisagrees.has(source.person) ? 40 : 95) : 0;
+    const sameScore = behaviour.rekognitionDisagrees.has(source.person) ? 40 : behaviour.rekognitionCertain.has(source.person) ? 100 : 95;
+    const similarity = self ? 100 : same ? sameScore : 0;
     const box = { Width: 0.5, Height: 0.5, Left: 0.25, Top: 0.25 };
     return send(200, {
       SourceImageFace: { BoundingBox: box, Confidence: 99.9 },
@@ -138,6 +145,7 @@ process.env.AWS_MAX_ATTEMPTS = '1';
 const worker = await import('../worker/src/match.js');
 const server = await import('../server/src/match.js');
 const { configHashOf } = await import('../shared/match-config.js');
+const { enginesDisagreeOn } = await import('../shared/match-verdict.js');
 
 const store = new Map();
 const readPhoto = async (key) => store.get(key) || null;
@@ -149,7 +157,7 @@ const sightingRow = (id, person) => {
   store.set(`${id}.jpg`, photo(person, 'sighting'));
   return { id, status: 'no_match', state: 'Gujarat', district: 'Ahmedabad', photoFile: `${id}.jpg`, createdAt: Date.now() - 1000, screening: { verdict: 'person' } };
 };
-const cases = [caseRow('r_A', 'A'), caseRow('r_B', 'B'), caseRow('r_Q', 'Q'), caseRow('r_N', 'N'), caseRow('r_E', 'E')];
+const cases = [caseRow('r_A', 'A'), caseRow('r_B', 'B'), caseRow('r_Q', 'Q'), caseRow('r_N', 'N'), caseRow('r_E', 'E'), caseRow('r_S', 'S'), caseRow('r_L', 'L')];
 const sightings = [sightingRow('f_A', 'A'), sightingRow('f_B', 'B')];
 const hints = { state: 'Gujarat', district: 'Ahmedabad' };
 
@@ -210,6 +218,26 @@ try {
 
   const disagreed = await both('Rekognition disagrees', forward(photo('Q', 'sighting')));
   check('a face Rekognition does not confirm is withheld', !candidateFor(disagreed, 'r_Q') && disagreed.engine.secondOpinion?.withheld >= 1, JSON.stringify(disagreed.engine.secondOpinion));
+
+  const scales = await both('Aarakshak 0.72 beside Rekognition 1.00', forward(photo('S', 'sighting')));
+  const sc = candidateFor(scales, 'r_S');
+  check('two scores far apart that both clear their own lines are not a disagreement',
+    sc?.corroborated === true && sc.primaryScore === 0.72 && sc.secondOpinionScore === 1 && sc.enginesDisagree === false, JSON.stringify(sc));
+
+  const split = await both('Aarakshak below its line, Rekognition above', forward(photo('L', 'sighting')));
+  const sp = candidateFor(split, 'r_L');
+  check('one engine above its own line and the other below is a disagreement', sp?.enginesDisagree === true && sp.primaryScore === 0.2, JSON.stringify(sp));
+
+  const lines = { aarakshak: 0.35, rekognitionConfirm: 0.8 };
+  check('the rule reads each score against its own line',
+    enginesDisagreeOn({ aarakshakScore: 0.72, rekognitionScore: 1 }, lines) === false
+      && enginesDisagreeOn({ aarakshakScore: 0.2, rekognitionScore: 0.95 }, lines) === true
+      && enginesDisagreeOn({ aarakshakScore: 0.6, rekognitionScore: 0.4 }, lines) === true
+      && enginesDisagreeOn({ aarakshakScore: 0.02, rekognitionScore: 0 }, lines) === false);
+  check('and says nothing when a score or a line is missing',
+    enginesDisagreeOn({ aarakshakScore: 0.72, rekognitionScore: null }, lines) === null
+      && enginesDisagreeOn({ aarakshakScore: 0.72, rekognitionScore: 1 }, {}) === null
+      && enginesDisagreeOn({ aarakshakScore: 0.72, rekognitionScore: 1 }, { aarakshak: null, rekognitionConfirm: 0.8 }) === null);
 
   const noVeto = await both('Aarakshak finds no face', forward(photo('N', 'sighting')));
   const n = candidateFor(noVeto, 'r_N');

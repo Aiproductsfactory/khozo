@@ -19,6 +19,7 @@ import { currentLocale, msg, useT } from '../i18n.jsx';
 import { expectedAgeAt } from '../../../shared/match-pool.js';
 import { photoUrlOf, viewPhotosOf } from '../../../shared/photo-set.js';
 import { galleryHasGoodFace } from '../../../shared/photo-need.js';
+import { enginesDisagreeOn, matchLine } from '../../../shared/match-verdict.js';
 import { useDisplay } from '../useDisplay.js';
 import { useBackClose } from '../useBackClose.js';
 import { ActionMessage } from './useAction.jsx';
@@ -165,20 +166,47 @@ export function currentCandidate(sighting) {
   };
 }
 
-/** Each engine's number and what it means, as chips. */
-export function EngineScores({ candidate, provider = '' }) {
+/**
+ * The match line each engine was judged against for this sighting
+ * (`matchEngine.thresholds`), or null for one searched before they were kept.
+ */
+export function matchLinesOf(sighting) {
+  const recorded = sighting?.matchEngine?.thresholds;
+  return recorded && typeof recorded === 'object' ? recorded : null;
+}
+
+/**
+ * "Aarakshak 72% (match from 35%)". The two engines score on different
+ * scales, so each number is shown beside its own line (shared/match-verdict.js).
+ */
+function scoreLabel(t, engine, score, line) {
+  const values = { pct: pct(score), line: pct(line) };
+  if (engine === 'aarakshak') {
+    return line != null ? t('Aarakshak {pct} (match from {line})', values) : t('Aarakshak {pct}', values);
+  }
+  return line != null ? t('AWS Rekognition {pct} (match from {line})', values) : t('AWS Rekognition {pct}', values);
+}
+
+/** Each engine's number and what it means, as chips. `lines`: matchLinesOf. */
+export function EngineScores({ candidate, provider = '', lines = null }) {
   const t = useT();
   if (!candidate) return null;
+  // Worked out here from each engine's own line rather than read from the
+  // record: records before 21 Oct 2026 carry a flag from a rule that compared
+  // the two numbers directly, and set it on most of the strongest matches.
+  const disagree = enginesDisagreeOn(candidate, lines || {});
   const chips = [];
   if (candidate.aarakshakScore != null) {
-    chips.push({ key: 'a', text: t('Aarakshak {pct}', { pct: pct(candidate.aarakshakScore) }), className: 'bg-white text-slate-700 ring-slate-200' });
+    chips.push({ key: 'a', text: scoreLabel(t, 'aarakshak', candidate.aarakshakScore, matchLine(lines?.aarakshak)), className: 'bg-white text-slate-700 ring-slate-200' });
   } else if (candidate.secondOpinion === 'sole_engine') {
     chips.push({ key: 'a', text: t('Aarakshak: no face found'), className: 'bg-white text-slate-500 ring-slate-200' });
   }
   if (candidate.rekognitionScore != null) {
-    chips.push({ key: 'r', text: t('AWS Rekognition {pct}', { pct: pct(candidate.rekognitionScore) }), className: 'bg-white text-slate-700 ring-slate-200' });
+    chips.push({ key: 'r', text: scoreLabel(t, 'rekognition', candidate.rekognitionScore, matchLine(lines?.rekognitionConfirm)), className: 'bg-white text-slate-700 ring-slate-200' });
   }
-  if (candidate.corroborated) {
+  if (disagree) {
+    chips.push({ key: 'd', text: t('The two checks disagree — look closely'), className: 'bg-red-50 text-red-700 ring-red-200' });
+  } else if (candidate.corroborated) {
     chips.push({ key: 'c', text: t('Both checks agree'), className: 'bg-emerald-50 text-emerald-700 ring-emerald-200' });
   } else if (candidate.notChecked) {
     chips.push({ key: 'n', text: t('Not checked a second time'), className: 'bg-amber-50 text-amber-800 ring-amber-200' });
@@ -187,9 +215,6 @@ export function EngineScores({ candidate, provider = '' }) {
   } else if (['unavailable', 'not_asked', 'no_answer'].includes(candidate.secondOpinion)) {
     chips.push({ key: 'u', text: t('Not confirmed by a second check'), className: 'bg-amber-50 text-amber-800 ring-amber-200' });
   }
-  if (candidate.enginesDisagree) {
-    chips.push({ key: 'd', text: t('The two checks disagree — look closely'), className: 'bg-red-50 text-red-700 ring-red-200' });
-  }
   if (!chips.length && provider) chips.push({ key: 'p', text: provider, className: 'bg-white text-slate-600 ring-slate-200' });
   return (
     <span className="flex flex-wrap gap-1.5">
@@ -197,6 +222,31 @@ export function EngineScores({ candidate, provider = '' }) {
         <span key={chip.key} className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ${chip.className}`}>{chip.text}</span>
       ))}
     </span>
+  );
+}
+
+/**
+ * Both engines' numbers in one line under the headline score, each beside its
+ * own match line, when a second engine answered. A single blended figure hid
+ * which engine said what.
+ */
+export function EngineScoreLine({ sighting }) {
+  const t = useT();
+  if (sighting?.secondOpinionScore == null) return null;
+  const lines = matchLinesOf(sighting);
+  const parts = [
+    sighting.primaryScore != null && scoreLabel(t, 'aarakshak', sighting.primaryScore, matchLine(lines?.aarakshak)),
+    scoreLabel(t, 'rekognition', sighting.secondOpinionScore, matchLine(lines?.rekognitionConfirm)),
+  ].filter(Boolean);
+  return (
+    <>
+      <span className="mt-1 block text-xs text-slate-500">{parts.join(' · ')}</span>
+      {lines && parts.length > 1 && (
+        <span className="mt-1 block text-xs text-slate-500">
+          {t('The two checks score on different scales. Compare each with the point where it counts a match, not with each other.')}
+        </span>
+      )}
+    </>
   );
 }
 
@@ -246,7 +296,7 @@ export function MatchEvidence({ sighting, candidate = null, report = null }) {
     : [];
   return (
     <div className="space-y-2 text-left">
-      {c && <EngineScores candidate={c} />}
+      {c && <EngineScores candidate={c} lines={matchLinesOf(sighting)} />}
       {reason && <p className="text-xs text-amber-800">{t(reason)} {t('Treat it as a lead from one check only; it has not been confirmed.')}</p>}
       {c?.secondOpinion === 'sole_engine' && (
         <p className="text-xs text-amber-800">{t('Aarakshak could not find a face in this pair, so AWS Rekognition compared it on its own.')}</p>

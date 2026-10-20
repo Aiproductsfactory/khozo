@@ -336,6 +336,7 @@ async function rankStored(photoBuf, stored, readPhoto, { direction = 'forward', 
         direction,
         providers: providersFor(cfg),
         confirmThreshold: cfg.confirmThreshold,
+        aarakshakThreshold: Number(cfg.aarakshakThreshold),
         secondOpinionTopN: cfg.secondOpinionTopN,
         concurrency: cfg.concurrency,
         // Kept out of the engine settings: see worker/src/match.js.

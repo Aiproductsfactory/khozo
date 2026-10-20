@@ -10,7 +10,7 @@ import { useDisplay } from '../useDisplay.js';
 import { useBackClose } from '../useBackClose.js';
 import { usePolling } from '../usePolling.js';
 import { ActionMessage, ActionToast, useAction } from './useAction.jsx';
-import { ConfirmMatchDialog, EngineScores, MatchEvidence, currentCandidate, photoCheckFlag, telHref } from './Reunite.jsx';
+import { ConfirmMatchDialog, EngineScoreLine, EngineScores, MatchEvidence, currentCandidate, matchLinesOf, photoCheckFlag, telHref } from './Reunite.jsx';
 import PhotoViewer from './PhotoViewer.jsx';
 import { MAIN_PHOTO, photoUrlOf, viewPhotosOf } from '../../../shared/photo-set.js';
 
@@ -940,7 +940,7 @@ export default function FoundReports({ view = 'matches' }) {
                         two they are looking at.
                       */}
                       <div className="mt-2">
-                        <EngineScores candidate={current} provider={txt(f.matchEngine?.provider) || engineLabel.provider} />
+                        <EngineScores candidate={current} provider={txt(f.matchEngine?.provider) || engineLabel.provider} lines={matchLinesOf(f)} />
                       </div>
                       {casePhotoFlag && (
                         <p className={`mt-2 rounded-lg px-2 py-1 text-[11px] font-semibold ring-1 ${casePhotoFlag.className}`}>{t(casePhotoFlag.label)}</p>
@@ -1390,15 +1390,7 @@ export default function FoundReports({ view = 'matches' }) {
               <span className="text-3xl font-extrabold text-slate-900">
                 {Math.round((Number(compareModal.sighting.matchScore) || 0) * 100)}%
               </span>
-              {/* Both engines' numbers, when there are two. A single blended
-                  figure hid which engine said what. */}
-              {compareModal.sighting.secondOpinionScore != null && (
-                <span className="mt-1 block text-xs text-slate-500">
-                  {txt(compareModal.sighting.matchEngine?.provider)} {Math.round((Number(compareModal.sighting.primaryScore) || 0) * 100)}%
-                  {' · '}
-                  AWS Rekognition {Math.round((Number(compareModal.sighting.secondOpinionScore) || 0) * 100)}%
-                </span>
-              )}
+              <EngineScoreLine sighting={compareModal.sighting} />
               <span className="mt-2 block text-xs text-slate-500">
                 {isAdultCase(compareModal.matched)
                   ? t('A score is a prompt to look. You are confirming this is the same person. Verify with them before anyone else is told.')

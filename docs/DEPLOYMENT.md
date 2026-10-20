@@ -271,8 +271,13 @@ runs both against the same stand-in providers and fails on any difference.
    Taking the higher let one engine overrule the other, so two engines that
    disagreed produced a more confident number than either alone. A candidate
    Rekognition scores below the bar is withheld: two engines looked and did not
-   agree. Where both answered and differ by 0.25 or more the candidate is
-   flagged `enginesDisagree` for the reviewer.
+   agree. The two scores are on different scales (Aarakshak's same-person
+   scores run 0.48-0.86; Rekognition's are nearly always 0.99 or more), so
+   they are never compared with each other: a candidate is flagged
+   `enginesDisagree` only when one engine puts it at or above its own line
+   (`AARAKSHAK_THRESHOLD`, `KHOZO_REKOGNITION_CONFIRM`) and the other below
+   (`shared/match-verdict.js`). The review screens show each score beside its
+   line, and work the flag out from the lines recorded on the sighting.
 2. **No single-engine veto.** A pair Aarakshak could not answer for - no face
    found, an error, a timeout - is *unknown*, not a score of 0, and Rekognition
    compares it on its own, held to the same 0.80 bar (`secondOpinion:
