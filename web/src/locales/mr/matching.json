@@ -44,6 +44,8 @@
   "Aarakshak {pct}": "आरक्षक {pct}",
   "Aarakshak: no face found": "आरक्षक: चेहरा आढळला नाही",
   "AWS Rekognition {pct}": "AWS Rekognition {pct}",
+  "Aarakshak: {band}": "आरक्षक: {band}",
+  "View case details": "प्रकरणाचा तपशील पाहा",
   "Aarakshak: {band} — {score} (match from {line})": "आरक्षक: {band} — {score} ({line} पासून जुळणी मानली जाते)",
   "Aarakshak: {band} — {score}": "आरक्षक: {band} — {score}",
   "Aarakshak scores how alike the two faces are, from 0 to 1: two different photos of the same person usually score about 0.5 to 0.85, never 1. AWS says how sure it is, in per cent. Compare each with its own match line, not with each other.": "आरक्षक दोन चेहरे किती जुळतात हे 0 ते 1 या गुणांत सांगते: एकाच व्यक्तीचे दोन वेगळे फोटो साधारणपणे सुमारे 0.5 ते 0.85 येतात, कधीही 1 नाही. AWS किती खात्री आहे हे टक्क्यांत सांगते. प्रत्येक गुणाची तुलना त्याच्या स्वतःच्या जुळणी-मर्यादेशी करा, एकमेकांशी नाही.",

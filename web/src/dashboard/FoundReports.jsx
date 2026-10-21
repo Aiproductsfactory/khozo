@@ -929,7 +929,7 @@ export default function FoundReports({ view = 'matches' }) {
                         two they are looking at.
                       */}
                       <div className="mt-2">
-                        <EngineScores candidate={current} provider={txt(f.matchEngine?.provider) || engineLabel.provider} lines={matchLinesOf(f)} />
+                        <EngineScores candidate={current} provider={txt(f.matchEngine?.provider) || engineLabel.provider} lines={matchLinesOf(f)} brief />
                       </div>
                       {casePhotoFlag && (
                         <p className={`mt-2 rounded-lg px-2 py-1 text-[11px] font-semibold ring-1 ${casePhotoFlag.className}`}>{t(casePhotoFlag.label)}</p>
@@ -966,6 +966,13 @@ export default function FoundReports({ view = 'matches' }) {
                       >
                         {t('Compare the two photographs')}
                       </button>
+                      {/* The case itself in Cases & FIRs (Cases.jsx opens ?id=). */}
+                      <Link
+                        to={`/app/cases?id=${encodeURIComponent(matched.id)}`}
+                        className="mt-2 block w-full rounded-lg border border-slate-200 bg-white py-2 text-center text-sm font-semibold text-slate-700 hover:bg-slate-50 sm:text-xs"
+                      >
+                        {t('View case details')}
+                      </Link>
                     </>
                   ) : (
                     <p className="mt-2 text-xs text-slate-500">

@@ -207,17 +207,25 @@ export function matchLinesOf(sighting) {
  * score from 0 to 1, which is what it is, and AWS's as the confidence it is
  * (shared/match-verdict.js).
  */
-function scoreLabel(t, engine, score, line) {
+function scoreLabel(t, engine, score, line, { brief = false } = {}) {
   if (engine === 'aarakshak') {
-    const values = { band: t(similarityBand(score, line ?? undefined).label), score: decimal(score), line: decimal(line) };
+    const band = t(similarityBand(score, line ?? undefined).label);
+    // Brief: the words alone, not a percentage Aarakshak's score is not.
+    if (brief) return t('Aarakshak: {band}', { band });
+    const values = { band, score: decimal(score), line: decimal(line) };
     return line != null ? t('Aarakshak: {band} — {score} (match from {line})', values) : t('Aarakshak: {band} — {score}', values);
   }
   const values = { pct: pct(score), line: pct(line) };
-  return line != null ? t('AWS Rekognition {pct} (match from {line})', values) : t('AWS Rekognition {pct}', values);
+  return line != null && !brief ? t('AWS Rekognition {pct} (match from {line})', values) : t('AWS Rekognition {pct}', values);
 }
 
-/** Each engine's number and what it means, as chips. `lines`: matchLinesOf. */
-export function EngineScores({ candidate, provider = '', lines = null }) {
+/**
+ * Each engine's number and what it means, as chips. `lines`: matchLinesOf.
+ * `brief`, on the queue card: Aarakshak in words and AWS's percentage, no
+ * lines; the numbers and their lines are in the compare dialog, where an
+ * officer looks closely.
+ */
+export function EngineScores({ candidate, provider = '', lines = null, brief = false }) {
   const t = useT();
   if (!candidate) return null;
   // Worked out here from each engine's own line rather than read from the
@@ -226,12 +234,12 @@ export function EngineScores({ candidate, provider = '', lines = null }) {
   const disagree = enginesDisagreeOn(candidate, lines || {});
   const chips = [];
   if (candidate.aarakshakScore != null) {
-    chips.push({ key: 'a', text: scoreLabel(t, 'aarakshak', candidate.aarakshakScore, matchLine(lines?.aarakshak)), className: 'bg-white text-slate-700 ring-slate-200' });
+    chips.push({ key: 'a', text: scoreLabel(t, 'aarakshak', candidate.aarakshakScore, matchLine(lines?.aarakshak), { brief }), className: 'bg-white text-slate-700 ring-slate-200' });
   } else if (candidate.secondOpinion === 'sole_engine') {
     chips.push({ key: 'a', text: t('Aarakshak: no face found'), className: 'bg-white text-slate-500 ring-slate-200' });
   }
   if (candidate.rekognitionScore != null) {
-    chips.push({ key: 'r', text: scoreLabel(t, 'rekognition', candidate.rekognitionScore, matchLine(lines?.rekognitionConfirm)), className: 'bg-white text-slate-700 ring-slate-200' });
+    chips.push({ key: 'r', text: scoreLabel(t, 'rekognition', candidate.rekognitionScore, matchLine(lines?.rekognitionConfirm), { brief }), className: 'bg-white text-slate-700 ring-slate-200' });
   }
   if (disagree) {
     chips.push({ key: 'd', text: t('The two checks disagree — look closely'), className: 'bg-red-50 text-red-700 ring-red-200' });

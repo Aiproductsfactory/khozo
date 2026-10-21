@@ -44,6 +44,8 @@
   "Aarakshak {pct}": "આરક્ષક {pct}",
   "Aarakshak: no face found": "આરક્ષક: ચહેરો મળ્યો નથી",
   "AWS Rekognition {pct}": "AWS Rekognition {pct}",
+  "Aarakshak: {band}": "આરક્ષક: {band}",
+  "View case details": "કેસની વિગતો જુઓ",
   "Aarakshak: {band} — {score} (match from {line})": "આરક્ષક: {band} — {score} ({line} થી મેળ ગણાય)",
   "Aarakshak: {band} — {score}": "આરક્ષક: {band} — {score}",
   "Aarakshak scores how alike the two faces are, from 0 to 1: two different photos of the same person usually score about 0.5 to 0.85, never 1. AWS says how sure it is, in per cent. Compare each with its own match line, not with each other.": "આરક્ષક બે ચહેરા કેટલા મળતા આવે છે તે 0 થી 1 ના સ્કોરમાં કહે છે: એક જ વ્યક્તિના બે જુદા ફોટા સામાન્ય રીતે આશરે 0.5 થી 0.85 આવે છે, ક્યારેય 1 નહીં. AWS તે કેટલું ખાતરીપૂર્વક છે તે ટકામાં કહે છે. દરેક સ્કોરને તેની પોતાની મેળ-રેખા સાથે સરખાવો, એકબીજા સાથે નહીં.",
