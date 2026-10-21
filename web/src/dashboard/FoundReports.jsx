@@ -12,6 +12,7 @@ import { usePolling } from '../usePolling.js';
 import { ActionMessage, ActionToast, useAction } from './useAction.jsx';
 import { ConfirmMatchDialog, EngineScoreLine, EngineScores, MatchEvidence, currentCandidate, matchLinesOf, photoCheckFlag, similarityBand, telHref } from './Reunite.jsx';
 import PhotoViewer from './PhotoViewer.jsx';
+import { AskLocalPolice, LOCAL_POLICE_ROLES, LocalPoliceRequests } from './LocalPolice.jsx';
 import { MAIN_PHOTO, photoUrlOf, viewPhotosOf } from '../../../shared/photo-set.js';
 
 /**
@@ -616,6 +617,9 @@ export default function FoundReports({ view = 'matches' }) {
         </div>
       </div>
 
+      {/* Other police asking this desk to go to a place in its area. */}
+      {view === 'matches' && LOCAL_POLICE_ROLES.includes(user.role) && <LocalPoliceRequests highlightId={highlightId} />}
+
       <div className="flex flex-wrap items-center gap-2">
         {config.filters.map((tab) => (
           <button
@@ -1074,6 +1078,21 @@ export default function FoundReports({ view = 'matches' }) {
                   </div>
                   <ActionMessage action={action} id={`review:${f.id}`} />
                 </>
+              )}
+
+              {/*
+                Seen outside the case's district: the case's officers cannot go
+                there, so they can ask the police there to (LocalPolice.jsx).
+              */}
+              {f.seenOutsideCaseDistrict && LOCAL_POLICE_ROLES.includes(user.role) && !f.anonymizedAt && !['matched', 'rejected'].includes(f.status) && (
+                <AskLocalPolice
+                  f={f}
+                  user={user}
+                  action={action}
+                  onAsked={(next) => {
+                    if (next && typeof next === 'object') setRows((list) => list.map((row) => (row.id === f.id ? next : row)));
+                  }}
+                />
               )}
 
               {/*

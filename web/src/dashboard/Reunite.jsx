@@ -14,7 +14,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { useAuth } from '../auth.jsx';
-import { asList, fmtDate, isAdultCase, personCategoryOf, ProtectedImage, txt, genderLabel } from '../lib.jsx';
+import { asList, fmtDate, grewUpWhileMissing, isAdultCase, personCategoryOf, ProtectedImage, txt, genderLabel } from '../lib.jsx';
 import { currentLocale, msg, useT } from '../i18n.jsx';
 import { expectedAgeAt } from '../../../shared/match-pool.js';
 import { photoUrlOf, viewPhotosOf } from '../../../shared/photo-set.js';
@@ -407,6 +407,7 @@ export function ConfirmMatchDialog({ report, sighting, action, onSubmit, onCance
   const [v, setV] = useState({ method: 'in_person', verifiedBy: '', place: '', note: '' });
   const subject = report || sighting;
   const adult = isAdultCase(subject);
+  const grewUp = grewUpWhileMissing(subject);
   const recovery = !sighting;
   const valid = verificationValid(v);
   const busy = action.busy('confirm');
@@ -520,6 +521,7 @@ export function ConfirmMatchDialog({ report, sighting, action, onSubmit, onCance
 
         {adult && (
           <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900">
+            {grewUp && <span className="block font-semibold">{t('Missing as a child, but 18 or over now.')}</span>}
             {t('Verify with the person first; share their location with the family only with their consent.')}
           </p>
         )}
@@ -617,6 +619,7 @@ export function FamilyContactList({ report }) {
 export function FamilyContactPanel({ report, phoneHint = '', action, onReport }) {
   const t = useT();
   const adult = isAdultCase(report);
+  const grewUp = grewUpWhileMissing(report);
   const [form, setForm] = useState({ method: 'call', note: '' });
   const [consent, setConsent] = useState(false);
   // The last answer from POST /send-sms, shown until the next case.
@@ -662,6 +665,7 @@ export function FamilyContactPanel({ report, phoneHint = '', action, onReport })
   return (
     <div className={`mt-6 rounded-xl p-4 ${adult ? 'bg-amber-50 text-amber-900' : 'bg-khozo-light'}`}>
       <p className="text-sm font-semibold">{adult ? t('Next step: verify with the person') : t('Tell the family')}</p>
+      {grewUp && <p className="mt-1 text-xs font-semibold">{t('Missing as a child, but 18 or over now.')}</p>}
       <p className="mt-1 text-xs">
         {adult
           ? t('Verify with the person first; share their location with the family only with their consent.')

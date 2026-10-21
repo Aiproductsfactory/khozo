@@ -13,7 +13,7 @@
 
 import { nanoid } from 'nanoid';
 
-import { POLICE_ROLES, canAccessReport, isPoliceOnly, sameDistrict, sameState, sameStatePlace, scopeFoundReports, scopeReports } from '../scope.js';
+import { POLICE_ROLES, SEEN_OUTSIDE_HINT, canAccessReport, canSeeLocalPoliceRequest, isPoliceOnly, sameDistrict, sameDistrictPlace, sameState, sameStatePlace, scopeFoundReports, scopeReports, seenOutsideCaseDistrict } from '../scope.js';
 import { resolveSightingLocation, reverseGeocode } from '../geocode.js';
 import { sightingScreenVerdict } from '../face-screen.js';
 import { campaignSourceOf } from '../campaign-source.js';
@@ -631,9 +631,14 @@ export default function registerReportRoutes(router, deps) {
     return `${foundLocation}${state ? `, ${[district, state].filter(Boolean).join(', ')}` : ''}`;
   }
 
-  /** Where the sighting itself was, for an alert. */
+  /**
+   * Where the sighting itself was, for an alert: the place the reporter gave.
+   * A strong match files the sighting under the case's district, and an alert
+   * built from that told Ahmedabad officers a child seen in Mumbai had been
+   * seen "..., Ahmedabad, Gujarat".
+   */
   function sightingWhere(sighting) {
-    return placeText(sighting.foundLocation, sighting);
+    return placeText(sighting.foundLocation, reportedLocationOf(sighting));
   }
 
   /**
@@ -670,7 +675,7 @@ export default function registerReportRoutes(router, deps) {
         title: personCategory === 'woman'
           ? 'Possible match — woman spotted'
           : personCategory === 'adult' ? 'Possible match — person spotted' : 'Possible match — child spotted',
-        body: matchedBody || `A sighting was reported at ${sightingWhere(sighting)}.`,
+        body: `${matchedBody || `A sighting was reported at ${sightingWhere(sighting)}.`}${seenOutsideCaseDistrict(sighting, matchedReport) ? SEEN_OUTSIDE_HINT : ''}`,
         priority: 'high',
         recipients: officers,
         // `matched` lets the alert open the page that actually contains the
@@ -861,7 +866,9 @@ export default function registerReportRoutes(router, deps) {
       if (report && !canAccessReport(req.user, report)) {
         return res.status(403).json({ error: 'Photo is outside your jurisdiction' });
       }
-      if (found && scopeFoundReports(req.user, [found], listReports()).length !== 1) {
+      // The police asked to help where a sighting was made see its photo
+      // (POST /found/:id/local-police).
+      if (found && scopeFoundReports(req.user, [found], listReports()).length !== 1 && !canSeeLocalPoliceRequest(req.user, found)) {
         return res.status(403).json({ error: 'Photo is outside your jurisdiction' });
       }
     }
@@ -1796,6 +1803,9 @@ export default function registerReportRoutes(router, deps) {
       reporterPhoneVisible: f.confidentialReporter ? null : f.reporterPhone || null,
       matchCandidates: candidates,
       matchedReport: matched ? caseForReview(matched, f, user) : null,
+      // Reported outside the matched case's district: its officers may ask the
+      // police there to help (POST /found/:id/local-police).
+      seenOutsideCaseDistrict: matched ? seenOutsideCaseDistrict(f, matched) : false,
     };
   }
 
@@ -2560,6 +2570,238 @@ export default function registerReportRoutes(router, deps) {
       engine: search?.ok ? engineSummary(search.engine) : null,
       linked: Boolean(search?.linked),
     });
+  });
+
+  // ---- The police where the person was seen -----------------------------------
+  //
+  // A strong match files a sighting under the matched case's district, so a
+  // child from an Ahmedabad case seen in Mumbai - or in Patna, or in Surat - is
+  // reviewed by Ahmedabad's officers, who cannot go there. These routes let the
+  // case's officers ask the police where the person was seen to help, and let
+  // those police answer. The police asked see that one sighting (photo, place,
+  // time, the note they were sent), never the case it may match: what is in
+  // the case stays with the officers who own it (shared/scope.js,
+  // canSeeLocalPoliceRequest).
+
+  /**
+   * Where a linked sighting was reported, when that is outside the matched
+   * case's district: the place whose police can go there. Null when it is in
+   * the case's own district (its officers are those police) or the reporter
+   * gave no place at all.
+   */
+  function outOfAreaPlace(sighting, report) {
+    if (!sighting || !report) return null;
+    const place = placeFields(reportedLocationOf(sighting));
+    const district = place.district || place.districtText || null;
+    if (!place.state && !district) return null;
+    if (sameDistrictPlace({ ...place, district }, report)) return null;
+    return { ...place, district };
+  }
+
+  function placeLabel(place) {
+    return [place?.district || place?.districtText, place?.state].filter(Boolean).join(', ') || 'an unrecorded place';
+  }
+
+  /** Police desks that can see the request, other than the case's own officers. */
+  function localPoliceDesks(sighting, exclude = new Set()) {
+    return listUsers().filter((u) => u.role !== 'super_admin' && !exclude.has(u.id) && canSeeLocalPoliceRequest(u, sighting));
+  }
+
+  /** What the police asked to help see: the sighting, never the case. */
+  function localPoliceView(f) {
+    const lp = f.localPolice || {};
+    return {
+      id: f.id,
+      createdAt: f.createdAt,
+      personCategory: personCategoryOf(f),
+      ageApprox: f.ageApprox ?? null,
+      gender: f.gender || null,
+      foundLocation: f.foundLocation,
+      geoAddress: f.geoAddress || null,
+      lat: f.lat ?? null,
+      lng: f.lng ?? null,
+      reportedLocation: reportedLocationOf(f),
+      note: f.note || null,
+      concernReason: f.concernReason || null,
+      reporterName: publicReporterName(f),
+      reporterPhone: f.confidentialReporter ? null : f.reporterPhone || null,
+      photoUrl: f.photoFile ? `/api/reports/photo/${f.id}` : null,
+      extraPhotos: extraPhotosView(f),
+      localPolice: {
+        requestedAt: lp.requestedAt,
+        requestedByName: lp.requestedByName,
+        requestedFrom: lp.requestedFrom,
+        contactPhone: lp.contactPhone || null,
+        note: lp.note || null,
+        adult: Boolean(lp.adult),
+        place: lp.place,
+        replies: Array.isArray(lp.replies) ? lp.replies : [],
+      },
+    };
+  }
+
+  /**
+   * The case's officers ask the police where the person was seen to help. The
+   * police desks covering that place are alerted (where, when, who is asking
+   * and how to reach them; never a name) and may open the sighting. With no
+   * police desk for that place on Khozo yet, nobody is alerted and the answer
+   * says so, so the officer phones the local police instead. Asking again
+   * re-sends the alert, to desks added since as well.
+   */
+  router.post('/found/:id/local-police', protectedRoute, requireRole(...POLICE_ROLES), async (req, res) => {
+    const f = findFoundReport(req.params.id);
+    if (!f) return res.status(404).json({ error: 'Found report not found' });
+    const matched = f.matchedReportId ? findReport(f.matchedReportId) : null;
+    if (!matched || !canAccessReport(req.user, matched)) {
+      return res.status(403).json({ error: 'Only the officers of the case this sighting may match can ask for help' });
+    }
+    if (f.anonymizedAt || ['matched', 'rejected'].includes(f.status)) {
+      return res.status(409).json({ error: 'This sighting is closed' });
+    }
+    const place = outOfAreaPlace(f, matched);
+    if (!place) {
+      return res.status(409).json({ error: 'The sighting is in the case’s own district, or has no place recorded' });
+    }
+    const read = readFields(req.body, { note: ['text', 500], phone: ['text', 20] });
+    if (read.error) return res.status(400).json({ error: read.error });
+    const asker = listUsers().find((u) => u.id === req.user.id) || req.user;
+    const contactPhone = cleanText(read.body.phone, 20) || asker.phone || null;
+    const now = Date.now();
+    const adult = isAdultCase(matched) || isAdultCategory(personCategoryOf(f));
+    const previous = f.localPolice?.reportId === matched.id ? f.localPolice : null;
+    updateFoundReport(f.id, {
+      localPolice: {
+        reportId: matched.id,
+        place,
+        requestedAt: now,
+        firstRequestedAt: previous?.firstRequestedAt || previous?.requestedAt || now,
+        requestedById: req.user.id,
+        requestedByName: req.user.name,
+        requestedByRole: req.user.role,
+        requestedFrom: caseWhere(matched),
+        contactPhone,
+        note: cleanText(read.body.note, 500) || null,
+        adult,
+        replies: previous?.replies || [],
+      },
+    });
+    const asked = findFoundReport(f.id);
+    const officers = new Set(caseOfficers(matched).map((u) => u.id));
+    const desks = localPoliceDesks(asked, officers);
+    const category = personCategoryOf(asked);
+    const who = category === 'woman' ? 'A woman' : category === 'adult' ? 'A person' : 'A child';
+    const seen = placeText(asked.foundLocation, reportedLocationOf(asked));
+    const care = adult
+      ? 'If you find the person, ask whether they are safe and need help. They decide whether their family is told where they are.'
+      : 'If you find the child, keep them safe and take them to the Child Welfare Committee.';
+    const contact = `${req.user.name}${contactPhone ? `, ${contactPhone}` : ''}`;
+    if (desks.length) {
+      notifyAuthorities({
+        kind: 'local_police_request',
+        title: `Police in ${caseWhere(matched)} ask for your help`,
+        body: `${who} seen at ${seen} may be the subject of a missing case held by police in ${caseWhere(matched)}. Please go to the place. ${care} Contact: ${contact}. Open the sighting in Khozo for the photo and the exact place.`,
+        priority: 'high',
+        recipients: desks,
+        scope: { state: place.state || null, district: place.district || null, foundReportId: asked.id, localPolice: true },
+      });
+    }
+    addAudit({
+      actorId: req.user.id,
+      actorName: req.user.name,
+      actorRole: req.user.role,
+      action: 'sighting.local_police_requested',
+      targetType: 'foundReport',
+      targetId: f.id,
+      summary: `Asked police in ${placeLabel(place)} to help with sighting ${f.id}`,
+      scope: { state: matched.state, district: matched.district, matchedReportId: matched.id },
+      metadata: { place: { state: place.state || null, district: place.district || null }, desksAlerted: desks.length, again: Boolean(previous) },
+    });
+    res.json({
+      foundReport: reviewerSightingFor(req.user, asked),
+      place: placeLabel(place),
+      desksAlerted: desks.length,
+    });
+  });
+
+  /** Sightings other police have asked this desk to help with. */
+  router.get('/found/local-police', protectedRoute, requireRole(...POLICE_ROLES), (req, res) => {
+    const requests = listFoundReports()
+      .filter((f) => f.localPolice && canSeeLocalPoliceRequest(req.user, f))
+      // A desk that owns the case reviews the sighting in its own queue.
+      .filter((f) => {
+        if (req.user.role === 'super_admin') return true;
+        const matched = findReport(f.matchedReportId);
+        return !matched || !canAccessReport(req.user, matched);
+      })
+      .sort((a, b) => (b.localPolice.requestedAt || 0) - (a.localPolice.requestedAt || 0))
+      .map(localPoliceView);
+    res.json({ requests });
+  });
+
+  const LOCAL_POLICE_OUTCOMES = {
+    found: 'Found the person',
+    not_found: 'Went to the place; the person was not there',
+    update: 'Update',
+  };
+
+  /**
+   * The police asked answer: found the person, not there, or an update. The
+   * case's officers are told at once, and a find at high priority.
+   */
+  router.post('/found/:id/local-police/reply', protectedRoute, requireRole(...POLICE_ROLES), (req, res) => {
+    const f = findFoundReport(req.params.id);
+    if (!f) return res.status(404).json({ error: 'Found report not found' });
+    if (!canSeeLocalPoliceRequest(req.user, f)) {
+      return res.status(403).json({ error: 'No request for help on this sighting has reached your desk' });
+    }
+    const read = readFields(req.body, { outcome: ['text', 20], note: ['text', 500] });
+    if (read.error) return res.status(400).json({ error: read.error });
+    const outcome = read.body.outcome;
+    if (!LOCAL_POLICE_OUTCOMES[outcome]) {
+      return res.status(400).json({ error: 'Outcome must be found, not_found or update' });
+    }
+    const note = cleanText(read.body.note, 500) || null;
+    if (outcome === 'update' && !note) return res.status(400).json({ error: 'Write the update' });
+    const responder = listUsers().find((u) => u.id === req.user.id) || req.user;
+    const desk = placeLabel(responder.jurisdiction || {});
+    const reply = {
+      at: Date.now(),
+      byId: req.user.id,
+      byName: req.user.name,
+      byRole: req.user.role,
+      byPhone: responder.phone || null,
+      desk,
+      outcome,
+      note,
+    };
+    updateFoundReport(f.id, { localPolice: { ...f.localPolice, replies: [...(f.localPolice.replies || []), reply] } });
+    const updated = findFoundReport(f.id);
+    const matched = findReport(f.matchedReportId);
+    if (matched) {
+      const officers = caseOfficers(matched).filter((u) => u.id !== req.user.id);
+      if (officers.length) {
+        notifyAuthorities({
+          kind: 'local_police_reply',
+          title: outcome === 'found' ? `Police in ${desk} found the person` : `Reply from police in ${desk}`,
+          body: `${LOCAL_POLICE_OUTCOMES[outcome]}${note ? `: ${note}` : '.'} (${req.user.name}${reply.byPhone ? `, ${reply.byPhone}` : ''}). Sighting at ${placeText(updated.foundLocation, reportedLocationOf(updated))}.`,
+          priority: outcome === 'found' ? 'high' : 'normal',
+          recipients: officers,
+          scope: { state: matched.state, district: matched.district, foundReportId: f.id, matched: true },
+        });
+      }
+    }
+    addAudit({
+      actorId: req.user.id,
+      actorName: req.user.name,
+      actorRole: req.user.role,
+      action: 'sighting.local_police_replied',
+      targetType: 'foundReport',
+      targetId: f.id,
+      summary: `Police in ${desk} replied on sighting ${f.id}: ${LOCAL_POLICE_OUTCOMES[outcome]}`,
+      scope: { state: matched?.state || null, district: matched?.district || null, matchedReportId: f.matchedReportId },
+      metadata: { outcome },
+    });
+    res.json({ request: localPoliceView(updated) });
   });
 
   /**

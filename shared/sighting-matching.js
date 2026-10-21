@@ -26,7 +26,7 @@
  * in shared/case-domain.js), and only the police officers who can open a case
  * are ever told a sighting may match it.
  */
-import { POLICE_ROLES, canAccessReport } from './scope.js';
+import { POLICE_ROLES, SEEN_OUTSIDE_HINT, canAccessReport, seenOutsideCaseDistrict } from './scope.js';
 import { MATCH_REVIEW_THRESHOLD, isAdultCategory, isPendingCitizenIntake, personCategoryOf } from './case-domain.js';
 import {
   expectedAgeAt,
@@ -287,7 +287,7 @@ export function createSightingMatcher(deps) {
         userId: recipient.id,
         kind: 'sighting_reported',
         title,
-        body,
+        body: seenOutsideCaseDistrict(sighting, report) ? `${body}${SEEN_OUTSIDE_HINT}` : body,
         priority: 'high',
         scope: { state: sighting.state, district: sighting.district, foundReportId: sighting.id, matched: true },
         inJurisdiction: !sighting.state || !recipient.jurisdiction?.state || recipient.jurisdiction.state === sighting.state,
@@ -296,7 +296,9 @@ export function createSightingMatcher(deps) {
     return officers;
   }
 
-  const sightingWhere = (sighting) => placeText(sighting.foundLocation, sighting);
+  // The place the reporter gave, not the case's district the sighting is filed
+  // under once it is linked (reportedLocationOf in shared/routes/reports.js).
+  const sightingWhere = (sighting) => placeText(sighting.foundLocation, sighting.reportedLocation || sighting);
 
   // ---- Writing a sighting safely ----------------------------------------------
 

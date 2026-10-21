@@ -22,6 +22,7 @@ import { PHOTO_MAX_BYTES, detectImageMime } from './photo-format.js';
 import { extraPhotosView } from './photo-set.js';
 import { canonicalPlace } from './geo/index.js';
 import { isFullAadhaar, maskAadhaar, storedAadhaarFingerprint } from './privacy.js';
+import { expectedAgeAt } from './match-pool.js';
 
 const DAY = 86400000;
 const REPORT_PHOTO_RETENTION_DAYS = 3650;
@@ -408,8 +409,23 @@ function isAdultCategory(category) {
   return category === 'woman' || category === 'adult';
 }
 
-function isAdultCase(record) {
-  return isAdultCategory(personCategoryOf(record));
+/**
+ * An adult today: registered as a woman or an adult, or missing as a child
+ * long enough ago to be 18 or over now (age when missing plus the years
+ * since, as the face search reckons it). A girl who went missing at 15 in 2010
+ * is a woman today, and the rule that she decides whether her family is told
+ * where she is must protect her too. A department's register lists children by
+ * their age when they went missing, so the category alone never says this.
+ */
+function isAdultCase(record, at = Date.now()) {
+  if (isAdultCategory(personCategoryOf(record))) return true;
+  const age = expectedAgeAt(record, at);
+  return age != null && age >= 18;
+}
+
+/** Registered as a missing child, and 18 or over today (isAdultCase). */
+function grewUpWhileMissing(record, at = Date.now()) {
+  return !isAdultCategory(personCategoryOf(record)) && isAdultCase(record, at);
 }
 
 /** Absent means child. Anything else that is not a known category is an error. */
@@ -718,7 +734,9 @@ function caseStatusUpdatedAt(report) {
 function publicCaseStatus(report) {
   const active = ['missing', 'under_review', 'intake_pending'].includes(report.status);
   const personCategory = personCategoryOf(report);
-  const adult = isAdultCategory(personCategory);
+  // Grown up while missing counts too: the found message must not tell the
+  // case-number holder more about a woman than she agreed to.
+  const adult = isAdultCase(report);
   return {
     id: report.id,
     status: report.status,
@@ -752,6 +770,10 @@ function publicCaseStatus(report) {
     // Who the case is about (child / woman / adult) decides the helpline the
     // page offers. It is the family's own case, and it names nobody.
     personCategory,
+    // 18 or over today, so the page calls a traced person "found", never
+    // "reunited" (that is their choice). Only once found, where the message
+    // above already says as much: an open case's page gives no age or band.
+    ...(report.status === 'found' ? { adult } : {}),
   };
 }
 
@@ -1645,6 +1667,7 @@ export {
   personCategoryOf,
   isAdultCategory,
   isAdultCase,
+  grewUpWhileMissing,
   parsePersonCategory,
   categoryAge,
   publicHelplineText,

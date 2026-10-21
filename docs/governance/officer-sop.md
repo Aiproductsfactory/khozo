@@ -104,6 +104,45 @@ clear a queue**: a child alone, a person who seems confused or hurt, or a sighti
 unsure of is followed up, not dismissed. A woman's or adult's sighting shows why the reporter
 thought she needs help; "no reason given" is a reason to look harder, not to dismiss.
 
+### Seen outside your district
+
+A sighting that may match your case can come from anywhere in India: a child from an
+Ahmedabad case seen in Mumbai, Surat or Patna. Khozo files it under your case, so you review
+it. The alert says where it was seen and that it is outside your district.
+
+1. Review it like any other possible match (above). If it is clearly not the person, press
+   **Not this person**.
+2. If it may be, press **Ask the police there to help** on the sighting. Add a note (what to
+   look for, never the person's name) and your phone number.
+3. Khozo alerts the police desks covering that place. They see the sighting (photo, place,
+   time, your note and phone), **never your case**. CWC, NGOs and other desks are not told.
+4. If Khozo says no police desk for that place is on Khozo yet, phone the police station there
+   or the city's control room and give them the place and time only. Follow up in writing
+   through your nodal officer.
+5. Their answer ("Found the person", "Not there" or an update) comes back to you as an alert
+   and on the sighting.
+6. Only you confirm the match (section 5), after identity is checked in person, by you or by
+   the officers there at your request, and recorded in the verification record.
+7. A child found in another state is produced before the CWC there (JJ Act s.31). That CWC
+   decides on sending the child home to the CWC of your district (JJ Act s.95), with an
+   escort; a girl travels with a woman officer.
+8. An adult decides whether her family is told where she is (section 6). That includes anyone
+   registered as a missing child who is 18 or over today: Khozo treats them as an adult.
+
+### When other police ask you to help
+
+Requests from other police appear at the top of **Matches**, and you are alerted.
+
+1. Go to the place in the request as soon as you can. Take a woman officer for a girl or a
+   woman.
+2. For a child: if you find the child, keep the child safe and produce the child before your
+   CWC within 24 hours. For a woman or adult: ask whether she is safe and needs help; she
+   decides whether her family is told where she is.
+3. Answer in Khozo (**Reply to the police who asked**): found, not there, or an update. Phone
+   the officer who asked if it is urgent; their number is on the request.
+4. You see the sighting, not their case. Do not forward the photo or the request outside
+   Khozo.
+
 ## 5. In-person verification (before "Confirm")
 
 1. Go to the place and time in the sighting. Take [a woman officer for a girl or a woman]
@@ -178,6 +217,8 @@ closed in error:
   their case numbers do not work on the public status page.
 - Their photographs are still compared with every public sighting. A possible match is sent
   only to police who can open the case.
+- Asking the police where a person was seen to help (section 4) shares that sighting with
+  them, not the police-only record.
 - Do not print, screenshot or forward them. If a CWC needs details to protect a found child,
   give only what that child's care needs, through the formal referral, and note it.
 - Do not change a police-only record to open visibility without [the Department's written

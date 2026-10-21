@@ -73,8 +73,37 @@ export function isAdultCategory(category) {
   return category === 'woman' || category === 'adult';
 }
 
+const YEAR_MS = 365.25 * 86400000;
+
+/**
+ * Age when missing plus the years since: expectedAgeAt in shared/match-pool.js,
+ * repeated here so the public pages do not load the matching code with it.
+ */
+function ageNow(record, at = Date.now()) {
+  const raw = record?.age;
+  const age = raw == null || raw === '' ? NaN : Number(raw);
+  if (!Number.isFinite(age)) return null;
+  const created = Number(record?.createdAt);
+  const since = Date.parse(record?.dateOfMissing || '') || (Number.isFinite(created) ? created : Date.parse(record?.createdAt || '')) || 0;
+  if (!since || at <= since) return Math.floor(age);
+  return Math.floor(age + (at - since) / YEAR_MS);
+}
+
+/**
+ * An adult today: a woman or adult case, or a child case 18 or over now. The
+ * server applies the same rule (isAdultCase in shared/case-domain.js), and a
+ * family's status page is told it directly (`adult`).
+ */
 export function isAdultCase(record) {
-  return isAdultCategory(personCategoryOf(record));
+  if (typeof record?.adult === 'boolean') return record.adult;
+  if (isAdultCategory(personCategoryOf(record))) return true;
+  const age = ageNow(record);
+  return age != null && age >= 18;
+}
+
+/** Registered as a missing child, and 18 or over today. */
+export function grewUpWhileMissing(record) {
+  return !isAdultCategory(personCategoryOf(record)) && isAdultCase(record);
 }
 
 export function categoryLabel(category) {

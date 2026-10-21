@@ -270,6 +270,46 @@ export function canAccessReport(user, report) {
   return scopeReports(user, [report]).length === 1;
 }
 
+// A sighting that may match a case from another district is filed in the
+// case's district, so the police where the person was actually seen can no
+// longer open it - and they are the ones who can go there. When the case's
+// officers ask them for help (POST /found/:id/local-police), the police desks
+// covering the place it was reported may open that one sighting: never the
+// case it may match, and only while the link stands. Acting on the link
+// (confirm, reject, refer) stays with the case's officers, because every other
+// sighting route still checks scopeFoundReports.
+/**
+ * Whether a sighting was reported outside the district of the case it may
+ * match: its case's officers cannot go there, and may ask the police there.
+ */
+export function seenOutsideCaseDistrict(sighting, report) {
+  const reported = sighting?.reportedLocation;
+  if (!report || !reported) return false;
+  const district = reported.district || reported.districtText || null;
+  if (!reported.state && !reported.stateCode && !district) return false;
+  return !sameDistrictPlace({ ...reported, district }, report);
+}
+
+/** The line added to a possible-match alert for such a sighting. */
+export const SEEN_OUTSIDE_HINT = ' It was seen outside your district: open the sighting to ask the police there to help.';
+
+export function isLocalPoliceRequestOpen(f) {
+  return Boolean(f?.localPolice && f.matchedReportId && f.localPolice.reportId === f.matchedReportId && !f.anonymizedAt);
+}
+
+export function canSeeLocalPoliceRequest(user, f) {
+  if (!user || !isLocalPoliceRequestOpen(f) || !hasJurisdiction(user)) return false;
+  if (!POLICE_ROLES.includes(user.role)) return false;
+  if (user.role === 'super_admin') return true;
+  // A place with no district (only a state) goes to that state's desks, not
+  // to every station in the state.
+  const place = f.localPolice.place || {};
+  const where = placeOf(place);
+  if (STATE_ROLES.includes(user.role)) return hasState(where) && inUserState(user, place);
+  if (!hasDistrict(where)) return false;
+  return canAccessSightingLocation(user, place);
+}
+
 export function scopeFoundReports(user, foundReports = [], reports = []) {
   if (!user || !hasJurisdiction(user)) return [];
   const visibleReportIds = new Set(scopeReports(user, reports).map((r) => r.id));
