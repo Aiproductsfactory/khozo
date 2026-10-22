@@ -532,8 +532,8 @@ export default function Cases() {
   const [photoReplace, setPhotoReplace] = useState({ caseId: '', file: null, consent: false });
   // Photos the family brought, to add beside the others (POST /:id/photos).
   const [photoAdd, setPhotoAdd] = useState({ caseId: '', files: [], consent: false });
-  // Which case's video panels are open: the CCTV search, and photos from a
-  // family's video. Each is closed again when another case is opened.
+  // Which case has the "Check CCTV video" window open, and which has the
+  // photos-from-a-family's-video panel open.
   const [videoSearchOpen, setVideoSearchOpen] = useState(null);
   const [videoPhotosOpen, setVideoPhotosOpen] = useState(null);
   const [photoResult, setPhotoResult] = useState(null);
@@ -595,6 +595,11 @@ export default function Cases() {
   const canVerifyIntake = INTAKE_VERIFY_ROLES.includes(user.role);
   const canManageBulletin = BULLETIN_ROLES.includes(user.role);
   const canRematch = REMATCH_ROLES.includes(user.role);
+  // Checking CCTV for a person: the same cases and roles as searching earlier
+  // sightings (POST /reports/:id/video-search, POST /reports/:id/rematch).
+  const canVideoSearch = (r) => Boolean(canRematch && r?.photoFile && r.caseOrigin !== 'found_child_intake'
+    && !['found', 'closed', 'intake_pending'].includes(r.status)
+    && r.intakeStatus !== 'pending_verification' && !r.anonymizedAt);
   const canTransferCase = CASE_TRANSFER_ROLES.includes(user.role);
   const canReopen = REOPEN_ROLES.includes(user.role);
   const canReplacePhoto = PHOTO_REPLACE_ROLES.includes(user.role);
@@ -1516,6 +1521,20 @@ export default function Cases() {
                         : viewPhotosOf(selected).length > 1 ? t('View all {n} photos', { n: viewPhotosOf(selected).length }) : t('View full photo')}
                     </button>
                   )}
+                  {/* Checking CCTV footage for this person: at the top of the
+                      case, where an officer looks first (web/src/video/VideoCaseSearch.jsx). */}
+                  {canVideoSearch(selected) && (
+                    <button
+                      type="button"
+                      onClick={() => setVideoSearchOpen(selected.id)}
+                      className="mt-3 inline-flex min-h-11 items-center gap-2 rounded-xl bg-khozo px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-khozo-dark focus:outline-none focus-visible:ring-2 focus-visible:ring-khozo focus-visible:ring-offset-2"
+                    >
+                      <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M3 7h12a2 2 0 0 1 2 2v1l4-2v8l-4-2v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z" />
+                      </svg>
+                      {t('Check CCTV video')}
+                    </button>
+                  )}
                 </div>
               </div>
               <button onClick={() => setSelected(null)} className="hidden rounded-lg px-2 py-1 text-sm font-medium text-gray-500 hover:bg-gray-100 hover:text-ink sm:inline">{t('Close')}</button>
@@ -1933,35 +1952,6 @@ export default function Cases() {
                     </div>
                 )}
               </div>
-            )}
-
-            {/* Searching a CCTV export for this person (web/src/video/VideoCaseSearch.jsx):
-                the same cases and roles as the search above (POST /reports/:id/video-search). */}
-            {canRematch && selected.photoFile && selected.caseOrigin !== 'found_child_intake'
-              && !['found', 'closed', 'intake_pending'].includes(selected.status)
-              && selected.intakeStatus !== 'pending_verification' && !selected.anonymizedAt && (
-              <details
-                className="group mt-6 rounded-xl border border-black/5 open:bg-gray-50/40"
-                open={videoSearchOpen === selected.id}
-                onToggle={(e) => setVideoSearchOpen(e.currentTarget.open ? selected.id : null)}
-              >
-                <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 p-4 [&::-webkit-details-marker]:hidden">
-                  <span>
-                    <span className="block text-sm font-medium">{t('Search a CCTV video for this person')}</span>
-                    <span className="mt-0.5 block text-xs text-gray-600">{t('Find the faces in a video on this computer and compare each with this case’s photo.')}</span>
-                  </span>
-                  <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5 shrink-0 text-gray-400 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="m6 9 6 6 6-6" />
-                  </svg>
-                </summary>
-                {videoSearchOpen === selected.id && (
-                  <div className="border-t border-black/5 p-4">
-                    <Suspense fallback={<p className="text-sm text-gray-500">{t('Loading…')}</p>}>
-                      <VideoCaseSearch key={selected.id} report={selected} />
-                    </Suspense>
-                  </div>
-                )}
-              </details>
             )}
 
             {canManageBulletin && (
@@ -3223,6 +3213,14 @@ export default function Cases() {
             </div>
           </div>
         </div>
+      )}
+
+      {selected && videoSearchOpen === selected.id && canVideoSearch(selected) && (
+        <ErrorBoundary>
+          <Suspense fallback={null}>
+            <VideoCaseSearch key={selected.id} report={selected} onClose={() => setVideoSearchOpen(null)} />
+          </Suspense>
+        </ErrorBoundary>
       )}
 
       {selected && photoView?.caseId === selected.id && (

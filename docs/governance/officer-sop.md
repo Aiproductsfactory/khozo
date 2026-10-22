@@ -292,20 +292,24 @@ or case through WhatsApp.
 
 ## 15. Searching a CCTV video for a person
 
-Open the case, then **Search a CCTV video for this person**. Use it only for an open case you
-are working on, with footage your unit holds lawfully.
+Open the case and press **Check CCTV video**, under the photo. Use it only for an open case
+you are working on, with footage your unit holds lawfully.
 
-- Export the footage from the camera system as MP4 if you can. Some makers' own formats will
-  not open; the screen says so.
-- Say where the camera is, exactly. Add when the recording starts, so each face shows the
-  time it was seen.
+1. **Choose the CCTV video.** Export it from the camera system as MP4 if you can. Some
+   makers' own formats will not open; the screen says so.
+2. **Say where the camera is**, exactly.
+3. Press **Start checking** and keep the window open. Under **More options** you can add
+   when the recording starts, so each match shows the real time.
+4. For each possible match, press **See full picture**. If it is the person, press **Add to
+   case**.
+
+- **Add to case** records the camera, the time and the file's fingerprint in the case notes.
+  Keep the original footage as your unit keeps evidence; Khozo does not keep it.
 - The video stays on your computer. Each face found is compared with this case's photo only,
   and is not kept. Every search is in the audit log with your name, the file's fingerprint
   and the camera's place, and the nodal officer reads it every month.
-- A result is a moment to look at, not an identification. Look at the whole frame. If it
-  looks like the person, go to the place and follow section 5 before anyone is told.
-- **Add to the case notes** records the camera, the time and the file's fingerprint. Keep
-  the original footage as your unit keeps evidence; Khozo does not keep it.
+- A match is a moment to look at, not an identification. If it looks like the person, go
+  to the place and follow section 5 before anyone is told.
 - No result does not mean the person was not there. Faces that are small, turned away, dark
   or blurred cannot be compared: cameras looking down from poles rarely give a usable face.
 - Never search footage for anyone who is not a registered missing person.
