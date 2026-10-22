@@ -325,10 +325,19 @@ check('an old forward-linked sighting’s district is not known, not the case’
       address: { building: 'Vidhya Building', road: 'Sector 11', suburb: 'CBD Belapur', city: 'Navi Mumbai', state_district: 'Thane', state: 'Maharashtra', postcode: '400614', country: 'India' },
     }),
   });
-  const h = harness([SIGHTING, BELAPUR, TYPED], undefined, { fetchImpl: nominatim });
+  const h = harness([SIGHTING, BELAPUR, TYPED, OLD_REVERSE, OLD_UNLINKED], undefined, { fetchImpl: nominatim });
   const before = await call(h.handler('GET', '/found/all'), { user: AHD_POLICE });
   const old = before.payload?.foundReports?.find((f) => f.id === 'f_old');
-  check('the card is not told the person was seen in Ahmedabad', old && !old.reportedLocation?.district && !old.reportedLocation?.state && old.district === 'Ahmedabad', JSON.stringify(old?.reportedLocation));
+  // The card reads `reportedLocation` and, without it, nothing: so the field
+  // must be there, saying "not known", not merely absent.
+  check('the card is told where the person was seen is not known, not Ahmedabad',
+    old?.reportedLocation && old.reportedLocation.district === null && old.reportedLocation.state === null && old.district === 'Ahmedabad',
+    JSON.stringify(old?.reportedLocation));
+  const oldReverse = before.payload?.foundReports?.find((f) => f.id === 'f_old_reverse');
+  check('the card is told an old reverse-linked sighting was seen in Mumbai', oldReverse?.reportedLocation?.district === 'Mumbai', JSON.stringify(oldReverse?.reportedLocation));
+  const national = await call(h.handler('GET', '/found/all'), { user: { id: 'u_nat', role: 'super_admin', name: 'National Desk', jurisdiction: {} } });
+  const oldUnlinked = national.payload?.foundReports?.find((f) => f.id === 'f_old_unlinked');
+  check('the card is told an old unlinked sighting was seen where it is filed', oldUnlinked?.reportedLocation?.district === 'Thane', JSON.stringify(oldUnlinked?.reportedLocation));
 
   const looked = await call(h.handler('POST', '/found/:id/address'), { params: { id: 'f_old' }, user: AHD_POLICE });
   check('looking up the address places the sighting from its coordinates', looked.status === 200 && looked.payload?.reportedLocation?.district === 'Thane' && looked.payload.reportedLocation.state === 'Maharashtra', `HTTP ${looked.status} ${JSON.stringify(looked.payload)}`);

@@ -1893,6 +1893,9 @@ export default function registerReportRoutes(router, deps) {
       // The cases an officer turned down, only those this desk may open.
       rejectedLinks: (Array.isArray(f.rejectedLinks) ? f.rejectedLinks : []).filter((l) => l && reportsById[l.reportId]),
       personCategory: personCategoryOf(f),
+      // Where the person was seen. The card shows this, never the sighting's
+      // own state and district, which a match sets to the case's.
+      reportedLocation: reportedLocationOf(f),
       reporterName: publicReporterName(f),
       reporterPhone: f.confidentialReporter ? null : f.reporterPhone || null,
       reporterPhoneVisible: f.confidentialReporter ? null : f.reporterPhone || null,

@@ -23,6 +23,7 @@
   "Person detected in the photo": "फोटोमध्ये व्यक्ती आढळली",
   "No person detected — screened out of the general alert": "कोणतीही व्यक्ती आढळली नाही — सर्वसाधारण सूचनेतून वगळले",
   "Not checked: the face check did not answer": "तपासणी झाली नाही — कोणत्याही ओळख सेवेने प्रतिसाद दिला नाही",
+  "Face found when compared with a case": "प्रकरणाशी तुलना करताना चेहरा आढळला",
   "Face match · {provider}": "बायोमेट्रिक · {provider}",
   "Compared by details · {provider}": "बिगर-बायोमेट्रिक · {provider}",
   "No comparison run yet": "अद्याप कोणतीही तुलना झालेली नाही",

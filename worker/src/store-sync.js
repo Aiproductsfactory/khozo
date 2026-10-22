@@ -104,11 +104,17 @@ const PARTIAL = [
   { method: 'POST', path: '/api/dashboard/push-token', tables: ['users'] },
   { method: 'POST', path: '/api/dashboard/push-token/remove', tables: ['users'] },
   { method: 'POST', path: '/api/dashboard/push-test', tables: ['users'] },
+  // A photo (GET /api/reports/photo/:key): whose record it is, and who is
+  // asking. The Sightings page asks for one per sighting and per case, thirty
+  // or more at once, and each loaded every grievance, activity and audit row
+  // only to send one image - 2.9 s a photo against 1.3 s for the inbox poll
+  // (22 Oct 2026), and some photos not there after half a minute.
+  { method: 'GET', prefix: '/api/reports/photo/', tables: ['users', 'reports', 'foundReports'] },
 ];
 
 /** Which tables a request needs hydrated: all of them unless listed above. */
 export function tablesForRequest(method, pathname) {
-  const route = PARTIAL.find((r) => r.method === method && r.path === pathname);
+  const route = PARTIAL.find((r) => r.method === method && (r.prefix ? pathname.startsWith(r.prefix) : r.path === pathname));
   return route ? route.tables : ALL_TABLES;
 }
 

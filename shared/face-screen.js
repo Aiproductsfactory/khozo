@@ -13,6 +13,7 @@
  * console (what the review card says), so the two never disagree.
  */
 import { WEAK_FACE_WARNINGS } from './face-index.js';
+import { MAIN_PHOTO } from './photo-set.js';
 
 /** Below this Aarakshak quality score a face is too poor to call a person. */
 export const CLEAR_FACE_QUALITY = 0.5;
@@ -49,4 +50,38 @@ export function sightingScreenVerdict(screening) {
   if (screening.officer?.verdict === 'no_person' || screening.officer?.verdict === 'person') return screening.officer.verdict;
   if (screening.verdict === 'person') return screenShowsPerson(screening) ? 'person' : 'unclear_face';
   return screening.verdict;
+}
+
+/**
+ * Whether a face-matching engine found a face in the sighting's main photo
+ * while comparing it with a case. An engine gives a score only when it found
+ * a face on both sides, so a score for that photo is the face. A score of 0
+ * is not counted: older records may hold 0 for an engine that did not answer.
+ *
+ * The scores are read where the review card reads them (currentCandidate in
+ * web/src/dashboard/Reunite.jsx): the candidate list, and, for the current
+ * link, the sighting's own evidence fields - all a link made before the list
+ * was kept, or by the reverse search then, has.
+ */
+export function faceFoundByComparison(sighting) {
+  const scored = (...scores) => scores.some((s) => Number(s) > 0);
+  const onMain = (pair) => (pair?.sighting || MAIN_PHOTO) === MAIN_PHOTO;
+  const candidates = Array.isArray(sighting?.matchCandidates) ? sighting.matchCandidates : [];
+  if (candidates.some((c) => c && scored(c.aarakshakScore, c.rekognitionScore) && onMain(c.photoPair))) return true;
+  return Boolean(sighting?.matchedReportId
+    && scored(sighting.primaryScore, sighting.secondOpinionScore)
+    && onMain(sighting.matchedPhotoPair));
+}
+
+/**
+ * What the review card says about a sighting's main photo: the screen's
+ * verdict, or `face_compared` when the screen never answered (`unverified`)
+ * but an engine has since found a face in the photo while comparing it with
+ * a case. A sighting sent while no engine answered the screen kept its photo
+ * behind "Not screened" for good, beside a match both engines had made from
+ * the face in it - and an officer cannot weigh a match without the photo.
+ */
+export function sightingPhotoVerdict(sighting) {
+  const verdict = sightingScreenVerdict(sighting?.screening);
+  return verdict === 'unverified' && faceFoundByComparison(sighting) ? 'face_compared' : verdict;
 }

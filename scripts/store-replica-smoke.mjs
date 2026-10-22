@@ -14,6 +14,7 @@ import crypto from 'node:crypto';
 
 import { createRequestStore, tablesForRequest } from '../worker/src/store-sync.js';
 import registerDashboardRoutes from '../shared/routes/dashboard.js';
+import registerReportRoutes from '../shared/routes/reports.js';
 import { createRouter, handleRequest } from '../worker/src/http/router.js';
 import { createAuth, createAuditPublicRateLimit, clientIp, fixedWindowRateLimit } from '../worker/src/http/express-compat.js';
 
@@ -324,6 +325,79 @@ const anonymous = await handleRequest(dashboard, inboxRequest(null), { basePath:
 check('it still refuses a request without a sign-in', anonymous.status === 401, `status ${anonymous.status}`);
 await light.flush();
 check('it writes nothing', inboxIo.writes.length === 0);
+
+// --- a photo loads only the accounts, the cases and the sightings ------------
+// The Sightings page asks for one photo per sighting and per case, thirty or
+// more at once, and each loaded every grievance, activity and audit row.
+const PHOTO_TABLES = 'users,reports,foundReports';
+check('a photo needs only the accounts, the cases and the sightings', tablesForRequest('GET', '/api/reports/photo/f_9').join() === PHOTO_TABLES);
+check('only for reading a photo, and only under /photo/',
+  tablesForRequest('POST', '/api/reports/photo/f_9').length === 6
+  && tablesForRequest('GET', '/api/reports/photos').length === 6
+  && tablesForRequest('GET', '/api/reports/found/all').length === 6);
+
+const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00]);
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
+const servingIo = fakeIo({
+  ...seed,
+  users: [
+    ...seed.users,
+    { id: 'u_mum', email: 'mumbai@khozo.org', role: 'police', name: 'Mumbai Desk', jurisdiction: { state: 'Maharashtra', district: 'Mumbai' } },
+    { id: 'u_goa', email: 'goa@khozo.org', role: 'police', name: 'Goa Desk', jurisdiction: { state: 'Goa', district: 'North Goa' } },
+  ],
+  found_reports: [
+    ...seed.found_reports,
+    {
+      id: 'f_9', foundLocation: 'Dadar station', status: 'pending_review', state: 'Maharashtra', district: 'Mumbai',
+      matchedReportId: 'r_1', photoFile: 'f_9.jpg', extraPhotos: [{ id: 'p_abc12345', file: 'f_9_p_abc12345.png' }],
+    },
+  ],
+  activity: [{ id: 'a_1', ts: 1, action: 'x' }],
+  audit: [{ id: 'au_1', ts: 1, action: 'x' }],
+});
+servingIo.photos.set('r_1', { buffer: JPEG, mime: 'image/jpeg' });
+servingIo.photos.set('f_9.jpg', { buffer: JPEG, mime: 'image/jpeg' });
+servingIo.photos.set('f_9_p_abc12345.png', { buffer: PNG, mime: 'image/png' });
+
+/** One photo request through the real report routes and sign-in check, on a replica holding only what the Worker loads for it. */
+async function photoRequest(path, userId) {
+  const reads = servingIo.reads.length;
+  const { store: s, flush: done } = await createRequestStore({}, null, servingIo, { tables: tablesForRequest('GET', new URL(path, 'https://khozo.test').pathname) });
+  const auth = createAuth({}, s);
+  const router = createRouter();
+  registerReportRoutes(router, {
+    ...s,
+    ...auth,
+    isPostgres: true,
+    auditPublicRateLimit: createAuditPublicRateLimit(s),
+    clientIp,
+    fixedWindowRateLimit,
+    upload: { single: () => (_req, _res, next) => next() },
+    rankMatches: async () => ({ candidates: [], engine: { provider: 'stub', biometric: false } }),
+    detectPerson: async () => ({ verdict: 'unverified', faces: null }),
+    settings: {},
+  });
+  const token = userId ? await auth.signToken(s.findUserById(userId)) : null;
+  const response = await handleRequest(router, new Request(`https://khozo.test${path}`, { headers: token ? { authorization: `Bearer ${token}` } : {} }), { basePath: '/api/reports' });
+  const body = Buffer.from(await response.arrayBuffer());
+  await done();
+  return { status: response.status, type: response.headers.get('content-type') || '', body, tables: [...new Set(servingIo.reads.slice(reads))].sort().join() };
+}
+
+const sightingPhoto = await photoRequest('/api/reports/photo/f_9', 'u_mum');
+check('a sighting photo is served from the accounts, cases and sightings alone',
+  sightingPhoto.status === 200 && sightingPhoto.body.equals(JPEG) && sightingPhoto.type.includes('image/jpeg'),
+  `${sightingPhoto.status} ${sightingPhoto.type}`);
+check('and nothing else is read for it', sightingPhoto.tables === 'found_reports,reports,users', sightingPhoto.tables);
+const casePhoto = await photoRequest('/api/reports/photo/r_1', 'u_mum');
+check('a case photo too', casePhoto.status === 200 && casePhoto.body.equals(JPEG), `${casePhoto.status}`);
+const extraPhoto = await photoRequest('/api/reports/photo/f_9?p=p_abc12345', 'u_mum');
+check('an extra photo too', extraPhoto.status === 200 && extraPhoto.body.equals(PNG) && extraPhoto.type.includes('image/png'), `${extraPhoto.status} ${extraPhoto.type}`);
+check('a desk outside the district is still refused', (await photoRequest('/api/reports/photo/f_9', 'u_goa')).status === 403);
+check('no photo is served without a sign-in', (await photoRequest('/api/reports/photo/f_9', null)).status === 401);
+check('an unknown photo is still not found', (await photoRequest('/api/reports/photo/f_nope', 'u_mum')).status === 404);
+check('a sighting with no photo is still not found', (await photoRequest('/api/reports/photo/f_1', 'u_mum')).status === 404);
+check('serving photos writes nothing', servingIo.writes.length === 0, `${servingIo.writes.length} writes`);
 
 const failed = checks.filter((c) => !c.ok);
 console.log(`\n--- ${checks.length - failed.length}/${checks.length} checks passed ---`);
