@@ -14,7 +14,7 @@ export type LanguagePack = {
   danger: string;
   /** Scene 3: what to send, and where. */
   send: string;
-  /** Scene 4: who sees it, and what it costs. */
+  /** Scene 4: who sees it (authorised officials: police, and for a child the CWC), and what it costs. */
   onlyPolice: string;
   /** Scene 5: the one thing never to do. */
   dontForward: string;
@@ -27,7 +27,7 @@ export type LanguagePack = {
     nameOptional: string;
     send: string;
     sent: string;
-    police: string;
+    officials: string;
     forwarded: string;
     emergency: string;
   };
@@ -76,10 +76,10 @@ export const ENGLISH: LanguagePack = {
   see: 'Seen a child, woman or person who seems lost?',
   danger: 'In danger? Call {emergency} first.',
   send: 'No danger? Send a photo, or just the place, to the police.',
-  onlyPolice: 'Only the police see it. Free. No login. Your name is optional.',
+  onlyPolice: 'Only authorised officials see it. Free. No login. Your name is optional.',
   dontForward: 'Never forward the photo.',
   motto: 'See it. Send it to the police. Don’t forward it.',
-  ui: { photoAdded: 'Photo added', place: 'Near Platform 4', nameOptional: 'Your name (optional)', send: 'Send to the police', sent: 'Sent to the police ✓', police: 'THE POLICE', forwarded: 'Forwarded', emergency: 'Emergency' },
+  ui: { photoAdded: 'Photo added', place: 'Near Platform 4', nameOptional: 'Your name (optional)', send: 'Send to the police', sent: 'Sent to the police ✓', officials: 'OFFICIALS', forwarded: 'Forwarded', emergency: 'Emergency' },
 };
 
 export const GUJARATI: LanguagePack = {
@@ -88,10 +88,10 @@ export const GUJARATI: LanguagePack = {
   see: 'ખોવાયેલ લાગતા કોઈ બાળક, મહિલા કે વ્યક્તિને આપે જોયું છે?',
   danger: 'જોખમ હોય તો પહેલાં {emergency} પર ફોન કરો.',
   send: 'જોખમ નથી? ફોટો, કે ફક્ત જગ્યા, પોલીસને મોકલો.',
-  onlyPolice: 'ફક્ત પોલીસ જ જુએ છે. મફત. લૉગ ઇન વિના. નામ આપવું ફરજિયાત નથી.',
+  onlyPolice: 'ફક્ત અધિકૃત અધિકારીઓ જ જુએ છે. મફત. લૉગ ઇન વિના. નામ આપવું ફરજિયાત નથી.',
   dontForward: 'ફોટો ક્યારેય ફોરવર્ડ ન કરો.',
   motto: 'જુઓ. પોલીસને મોકલો. ફોરવર્ડ ન કરો.',
-  ui: { photoAdded: 'ફોટો ઉમેર્યો', place: 'પ્લેટફોર્મ 4 પાસે', nameOptional: 'આપનું નામ (વૈકલ્પિક)', send: 'પોલીસને મોકલો', sent: 'પોલીસને મોકલ્યું ✓', police: 'પોલીસ', forwarded: 'ફોરવર્ડ કરેલું', emergency: 'ઇમરજન્સી' },
+  ui: { photoAdded: 'ફોટો ઉમેર્યો', place: 'પ્લેટફોર્મ 4 પાસે', nameOptional: 'આપનું નામ (વૈકલ્પિક)', send: 'પોલીસને મોકલો', sent: 'પોલીસને મોકલ્યું ✓', officials: 'અધિકારીઓ', forwarded: 'ફોરવર્ડ કરેલું', emergency: 'ઇમરજન્સી' },
 };
 
 export const HINDI: LanguagePack = {
@@ -100,10 +100,10 @@ export const HINDI: LanguagePack = {
   see: 'क्या आपने कोई खोया हुआ-सा बच्चा, महिला या व्यक्ति देखा है?',
   danger: 'ख़तरा हो तो पहले {emergency} पर कॉल करें।',
   send: 'ख़तरा नहीं? फ़ोटो, या सिर्फ़ जगह, पुलिस को भेजें।',
-  onlyPolice: 'सिर्फ़ पुलिस देखती है। मुफ़्त। बिना लॉग इन के। नाम देना ज़रूरी नहीं।',
+  onlyPolice: 'सिर्फ़ अधिकृत अधिकारी देखते हैं। मुफ़्त। बिना लॉग इन के। नाम देना ज़रूरी नहीं।',
   dontForward: 'फ़ोटो कभी फ़ॉरवर्ड न करें।',
   motto: 'देखें। पुलिस को भेजें। फ़ॉरवर्ड न करें।',
-  ui: { photoAdded: 'फ़ोटो जोड़ी गई', place: 'प्लेटफ़ॉर्म 4 के पास', nameOptional: 'आपका नाम (वैकल्पिक)', send: 'पुलिस को भेजें', sent: 'पुलिस को भेजा गया ✓', police: 'पुलिस', forwarded: 'फ़ॉरवर्ड किया गया', emergency: 'इमरजेंसी' },
+  ui: { photoAdded: 'फ़ोटो जोड़ी गई', place: 'प्लेटफ़ॉर्म 4 के पास', nameOptional: 'आपका नाम (वैकल्पिक)', send: 'पुलिस को भेजें', sent: 'पुलिस को भेजा गया ✓', officials: 'अधिकारी', forwarded: 'फ़ॉरवर्ड किया गया', emergency: 'इमरजेंसी' },
 };
 
 export const LANGUAGES: Record<string, LanguagePack> = { en: ENGLISH, gu: GUJARATI, hi: HINDI };

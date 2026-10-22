@@ -9,7 +9,7 @@ Six scenes, 25 seconds:
 | 0–4 | See | A child alone on a platform at dusk. "Seen a child, woman or person who seems lost?" |
 | 4–8 | Danger | A phone ringing 112. "In danger? Call 112 first." The other helplines beneath. |
 | 8–13 | Send | The report form on a phone: a photo, a place, Send. "No danger? Send a photo, or just the place, to the police." |
-| 13–17 | Only the police | The photo travels from the phone to a shield with a lock, past two crossed-out chat bubbles. "Only the police see it. Free. No login. Your name is optional." |
+| 13–17 | Only officials | The photo travels from the phone to a shield with a lock, past two crossed-out chat bubbles. "Only authorised officials see it. Free. No login. Your name is optional." |
 | 17–20 | Don't forward | A chat bubble with a forward arrow, crossed out. "Never forward the photo." |
 | 20–25 | Motto | "See it. Send it to the police. Don't forward it." in each language, the address, the helplines, the issuer and the Khozo logo. |
 

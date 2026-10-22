@@ -174,7 +174,7 @@ export const Journey: React.FC<{ size: number; colours: Colours; pack: LanguageP
           <rect x="-16" y="-8" width="32" height="26" rx="4" fill="#fff" />
           <path d="M-9 -8v-8a9 9 0 0 1 18 0v8" fill="none" stroke="#fff" strokeWidth="4" />
         </g>
-        <text y="80" textAnchor="middle" fontFamily={fontFor(pack.script)} fontSize="14" fontWeight="700" fill={colours.deep}>{pack.ui.police}</text>
+        <text y="80" textAnchor="middle" fontFamily={fontFor(pack.script)} fontSize="14" fontWeight="700" fill={colours.deep}>{pack.ui.officials}</text>
       </g>
       {/* the photo in flight */}
       <g transform={`translate(${x} ${y}) rotate(${t * 20})`} opacity={1 - arrive * 0.9}>
