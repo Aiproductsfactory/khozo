@@ -81,6 +81,7 @@ const clickText = (text, tag = 'button') => `
 
 const SHOTS = [
   { name: 'landing', path: '/' },
+  { name: 'landing-menu', path: '/', setup: click('[data-public-menu-button]'), viewport: true },
   { name: 'report', path: '/report' },
   { name: 'report-form', path: '/report', setup: click('[data-action="continue-without-photo"]') },
   { name: 'track-sighting', path: '/track-sighting' },

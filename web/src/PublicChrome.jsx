@@ -8,6 +8,7 @@
 // a family who landed on /track-case from WhatsApp had no way to find the
 // guidance or the help desks without going back to the home page first.
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from './auth.jsx';
 import { Logo } from './components.jsx';
@@ -218,10 +219,11 @@ export function PublicHeader() {
         </nav>
         <div className="flex min-w-0 items-center gap-2">
           <LanguageSwitcher className="shrink-0" />
+          {/* A phone's bar has no room beside the language switcher; there the way in is the first thing in the menu. */}
           {user ? (
-            <Link to="/app" className="hidden text-sm font-semibold text-khozo-dark hover:underline lg:inline">{t('Dashboard')}</Link>
+            <Link to="/app" className="hidden text-sm font-semibold text-khozo-dark hover:underline sm:inline">{t('Dashboard')}</Link>
           ) : (
-            <Link to="/login" className="hidden whitespace-nowrap text-sm font-semibold text-gray-600 hover:text-ink lg:inline">{t('Officer log in')}</Link>
+            <Link to="/login" className="hidden whitespace-nowrap text-sm font-semibold text-gray-600 hover:text-ink sm:inline">{t('Officer log in')}</Link>
           )}
           {!onReport && (
             <Link to="/report" className="btn-primary hidden sm:inline-flex">
@@ -233,6 +235,7 @@ export function PublicHeader() {
             onClick={() => setOpen(true)}
             aria-expanded={open}
             aria-label={t('Menu')}
+            data-public-menu-button
             className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-gray-700 hover:bg-gray-100 lg:hidden"
           >
             <PublicIcon.menu className="h-[22px] w-[22px]" />
@@ -240,7 +243,13 @@ export function PublicHeader() {
         </div>
       </div>
 
-      {open && (
+      {/*
+        Rendered on <body>, not inside the header. The header's backdrop blur
+        makes it the containing block for anything position:fixed inside it,
+        so the drawer was clipped to the 64 px bar — a logo and a close button
+        with nothing to tap — on every phone, on every public page.
+      */}
+      {open && createPortal(
         <div className="fixed inset-0 z-[70] lg:hidden" role="dialog" aria-modal="true" aria-label={t('Menu')}>
           <div className="absolute inset-0 bg-ink/40" onClick={() => setOpen(false)} />
           <div className="animate-drawer-in-right absolute inset-y-0 right-0 flex w-[88vw] max-w-sm flex-col overflow-y-auto overscroll-contain bg-white shadow-2xl">
@@ -260,6 +269,18 @@ export function PublicHeader() {
               <Link to="/report" className="btn-primary w-full">
                 <PublicIcon.camera className="h-5 w-5 shrink-0" /> {t('Send a photo')}
               </Link>
+              {/*
+                The officer's way in, where the eye lands when the menu opens.
+                It used to be a small grey row under the emergency numbers, at
+                the very bottom, and an officer on a phone could not find it.
+              */}
+              {user ? (
+                <Link to="/app" className="btn-ghost mt-2 w-full">{t('Dashboard')}</Link>
+              ) : (
+                <Link to="/login" className="btn-ghost mt-2 w-full">
+                  <PublicIcon.shield className="h-5 w-5 shrink-0 text-khozo" /> {t('Officer log in')}
+                </Link>
+              )}
             </div>
             <nav aria-label={t('Main navigation')} className="mt-3 flex-1 px-3">
               <ul>
@@ -277,15 +298,9 @@ export function PublicHeader() {
               <p className="text-xs font-bold uppercase tracking-wider text-red-700">{t('Immediate danger')}</p>
               <EmergencyCalls className="mt-2" />
             </div>
-            <div className="border-t border-black/5 px-5 py-3">
-              {user ? (
-                <Link to="/app" className="flex min-h-11 items-center text-sm font-semibold text-khozo-dark">{t('Dashboard')}</Link>
-              ) : (
-                <Link to="/login" className="flex min-h-11 items-center text-sm font-semibold text-gray-600">{t('Officer log in')}</Link>
-              )}
-            </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </header>
   );
