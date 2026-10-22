@@ -35,6 +35,15 @@ export function joinPlace(...parts) {
   return parts.filter(Boolean).join(', ') || 'Location under review';
 }
 
+/**
+ * Where a sighting was seen. A strong match files it under the matched case's
+ * district; `reportedLocation` keeps the place the reporter gave.
+ */
+export function sightingPlace(sighting) {
+  const seen = sighting?.reportedLocation && typeof sighting.reportedLocation === 'object' ? sighting.reportedLocation : sighting;
+  return joinPlace(seen?.district || seen?.districtText, seen?.state);
+}
+
 /** Maps a report/sighting status to a label + badge tone. */
 export function statusMeta(status) {
   const map = {

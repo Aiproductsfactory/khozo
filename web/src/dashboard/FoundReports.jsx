@@ -827,9 +827,15 @@ export default function FoundReports({ view = 'matches' }) {
                           {addressLookup[f.id]?.error && <span className="ml-2 text-amber-700">{t(addressLookup[f.id].error)}</span>}
                         </span>
                       )}
-                      {(txt(f.district) || txt(f.state)) && (
+                      {/*
+                        Where the person was seen, not where the sighting is
+                        filed: a strong match files it under the case's
+                        district, and a child seen in Mumbai was shown here as
+                        seen in "Ahmedabad Rural, Gujarat".
+                      */}
+                      {(txt(reported.district || reported.districtText) || txt(reported.state)) && (
                         <span className="block text-xs font-normal text-slate-500">
-                          {d.places(f.district, f.state)}
+                          {d.places(reported.district || reported.districtText, reported.state)}
                           {f.locationSource === 'coordinates' && ` · ${t('from the reporter’s location')}`}
                         </span>
                       )}

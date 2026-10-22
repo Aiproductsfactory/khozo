@@ -9,7 +9,7 @@ import { useAsync } from '../hooks/useAsync';
 import { officerApi } from '../services/api';
 import { useAuth } from '../services/auth';
 import { useTheme } from '../theme';
-import { joinPlace, matchBand, relativeTime, statusMeta } from '../utils/format';
+import { matchBand, relativeTime, sightingPlace, statusMeta } from '../utils/format';
 
 const FILTERS = [
   { label: 'Needs action', value: 'open', clearable: false },
@@ -47,7 +47,7 @@ function SightingRow({ item, onPress }) {
             {item.foundLocation || 'Location not specified'}
           </Text>
           <Text variant="small" tone="muted" numberOfLines={1} style={{ marginTop: 2 }}>
-            {joinPlace(item.district, item.state)} · {relativeTime(item.createdAt)}
+            {sightingPlace(item)} · {relativeTime(item.createdAt)}
           </Text>
         </View>
         <Badge label={meta.label} tone={meta.tone} />

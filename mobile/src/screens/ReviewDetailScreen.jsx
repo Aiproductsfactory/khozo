@@ -8,7 +8,7 @@ import { useProtectedImage } from '../hooks/useProtectedImage';
 import { officerApi } from '../services/api';
 import { useAuth } from '../services/auth';
 import { useTheme } from '../theme';
-import { formatDateTime, joinPlace, matchBand, relativeTime, statusMeta } from '../utils/format';
+import { formatDateTime, joinPlace, matchBand, relativeTime, sightingPlace, statusMeta } from '../utils/format';
 
 const DECISIONS = [
   {
@@ -174,7 +174,7 @@ export default function ReviewDetailScreen() {
         <View style={{ flex: 1 }}>
           <Text variant="title">{sighting.foundLocation || 'Location not specified'}</Text>
           <Text variant="small" tone="muted" style={{ marginTop: 2 }}>
-            {joinPlace(sighting.district, sighting.state)} · {relativeTime(sighting.createdAt)}
+            {sightingPlace(sighting)} · {relativeTime(sighting.createdAt)}
           </Text>
         </View>
         <Badge label={meta.label} tone={meta.tone} />

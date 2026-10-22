@@ -178,6 +178,18 @@ async function call(handler, { body = {}, params = {}, query = {}, user = null }
   return { status, payload };
 }
 
+// What the case's officers are shown on the Matches card: the place the child
+// was seen (reportedLocation), which the card must use rather than the case's
+// district the sighting is filed under.
+{
+  const h = harness();
+  const list = await call(h.handler('GET', '/found/all'), { user: AHD_POLICE });
+  const row = list.payload?.foundReports?.find((f) => f.id === 'f_m1');
+  check('the case’s officers get where the child was seen as well as where it is filed',
+    row?.reportedLocation?.district === 'Mumbai' && row?.district === 'Ahmedabad' && row?.seenOutsideCaseDistrict === true,
+    JSON.stringify({ seen: row?.reportedLocation, filed: row && { state: row.state, district: row.district } }));
+}
+
 // Asking for help.
 {
   const h = harness();
