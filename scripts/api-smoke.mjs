@@ -1689,6 +1689,7 @@ async function candidateAndPhotoChecks({ superAdmin, admin, sjpu, cwc, parent, f
   fake.down = false;
   const missed = await stored(missedSighting.foundReport.id);
   assert(!missed.matchedReportId && missed.matchEngine?.biometric === false, 'precondition: no face was compared during the outage');
+  assert(missed.screening?.verdict === 'unverified' && missed.screening.raisesAlert === false, `precondition: the photo could not be screened during the outage: ${JSON.stringify(missed.screening)}`);
   assert(missedCase.report.photoCheck?.verdict === 'unchecked' && missedCase.report.photoCheck.faces === null, `a case photo no engine could screen is "not checked": ${JSON.stringify(missedCase.report.photoCheck)}`);
   const searched = await request('POST', `/reports/found/${missedSighting.foundReport.id}/rematch`, { token: sjpu.token });
   assert(
@@ -1696,8 +1697,21 @@ async function candidateAndPhotoChecks({ superAdmin, admin, sjpu, cwc, parent, f
       searched.foundReport?.matchedReportId === missedCase.report.id,
     `searching a sighting again links what the outage missed: ${JSON.stringify({ linked: searched.linked, engine: searched.engine })}`
   );
+  // The screen the outage left unanswered ran with the search: the photo is
+  // no longer held back as "Not screened", the alert decision taken when the
+  // sighting arrived stands, and the earlier attempt is kept on the record.
+  const rescreened = await stored(missedSighting.foundReport.id);
+  assert(
+    rescreened.screening?.verdict === 'person' && rescreened.screening.faces === 1 && rescreened.screening.raisesAlert === false &&
+      rescreened.screening.firstCheckedAt === missed.screening.checkedAt && !('reason' in rescreened.screening),
+    `searching again screens the photo the outage left unscreened: ${JSON.stringify(rescreened.screening)}`
+  );
+  assert(searched.foundReport?.screening?.verdict === 'person', 'the answer to "Search again" carries the screened photo');
   const rematchAudit = (await request('GET', '/dashboard/audit', { token: superAdmin.token })).audit.find((row) => row.action === 'sighting.rematched' && row.targetId === missedSighting.foundReport.id);
   assert(rematchAudit?.metadata?.linked === true && rematchAudit.metadata.configHash, 'searching again is audited with the configuration it ran under');
+  assert(rematchAudit.metadata.rescreened === 'person', `the audit says the search screened the photo: ${JSON.stringify(rematchAudit.metadata)}`);
+  const searchedTwice = await request('POST', `/reports/found/${missedSighting.foundReport.id}/rematch`, { token: sjpu.token });
+  assert(searchedTwice.foundReport?.screening?.checkedAt === rescreened.screening.checkedAt, 'a photo already screened is not screened again on the next search');
 
   await expectStatus(403, () => request('POST', '/dashboard/rematch-sightings', { token: sjpu.token, body: {} }), 'a police desk runs the re-match batch');
   let since = null;

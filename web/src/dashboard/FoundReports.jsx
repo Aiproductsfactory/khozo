@@ -186,7 +186,15 @@ export default function FoundReports({ view = 'matches' }) {
     setAddressLookup((m) => ({ ...m, [f.id]: { busy: true } }));
     try {
       const data = await api.post(`/reports/found/${f.id}/address`);
-      setRows((list) => list.map((row) => (row.id === f.id ? { ...row, geoAddress: data?.geoAddress || row.geoAddress } : row)));
+      // The answer may also carry where the person was seen, for a sighting
+      // that had no reported place until its coordinates were looked up.
+      setRows((list) => list.map((row) => (row.id === f.id
+        ? {
+            ...row,
+            geoAddress: data?.geoAddress || row.geoAddress,
+            ...(data?.reportedLocation ? { reportedLocation: data.reportedLocation, locationSource: data.locationSource || row.locationSource } : {}),
+          }
+        : row)));
       setAddressLookup((m) => ({ ...m, [f.id]: null }));
     } catch (e) {
       setAddressLookup((m) => ({ ...m, [f.id]: { error: txt(e?.message) || 'Request failed' } }));

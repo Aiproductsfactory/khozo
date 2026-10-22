@@ -22,7 +22,7 @@ import { concernReasonOf, dismissalApproval, dismissalReasonOf } from '../sighti
 import { anonymiseSighting } from '../retention.js';
 import { canonicalPlace, placeFields } from '../geo/index.js';
 import { expectedAgeAt, isForwardPoolCase, isFoundChildIntake, isRematchEligible, isReverseMatchCandidate, wasLinkRejected } from '../match-pool.js';
-import { createSightingMatcher, engineRecordOf, engineSummary, evidenceOf, isReverseLinked } from '../sighting-matching.js';
+import { createSightingMatcher, engineRecordOf, engineSummary, evidenceOf, isReverseLinked, reportedLocationOf } from '../sighting-matching.js';
 import { detectImageMime } from '../photo-format.js';
 import {
   MAIN_PHOTO, MAX_CASE_PHOTOS, MAX_SIGHTING_PHOTOS, TOO_MANY_PHOTOS,
@@ -643,17 +643,6 @@ export default function registerReportRoutes(router, deps) {
    */
   function sightingWhere(sighting) {
     return placeText(sighting.foundLocation, reportedLocationOf(sighting));
-  }
-
-  /**
-   * The jurisdiction the reporter gave (or their phone placed them in). A
-   * strong match overwrites the sighting's own state and district with the
-   * matched case's, so this is kept separately; records from before it was
-   * kept fall back to the sighting's current jurisdiction.
-   */
-  function reportedLocationOf(sighting) {
-    if (sighting?.reportedLocation) return sighting.reportedLocation;
-    return { state: sighting?.state || null, district: sighting?.district || null };
   }
 
   /**
@@ -2480,6 +2469,9 @@ export default function registerReportRoutes(router, deps) {
         comparedAgainst: after.matchEngine?.comparedAgainst ?? 0,
         configHash: after.matchEngine?.configHash || null,
         linked: result.linked,
+        // The photo's screen, when this search ran the one that never
+        // answered when the sighting arrived.
+        rescreened: result.rescreened || null,
       },
     });
     res.json({
@@ -2535,8 +2527,40 @@ export default function registerReportRoutes(router, deps) {
     const resolved = await reverseGeocode(f.lat, f.lng, { fetchImpl });
     const geoAddress = resolved?.address || null;
     if (!geoAddress) return res.status(502).json({ error: 'The address could not be found. Open the location in Maps instead.' });
-    updateFoundReport(f.id, { geoAddress });
-    res.json({ geoAddress });
+    // A sighting from before the reporter's place was kept apart from the
+    // case's (reportedLocation), linked to a case, so that nothing on it says
+    // where the person was seen: the coordinates say, and are kept now as
+    // they would have been at intake. A place the reporter gave is never
+    // replaced by one.
+    const known = reportedLocationOf(f);
+    const unplaced = !f.reportedLocation && !known.state && !known.district && Boolean(resolved.stateCode);
+    const placed = unplaced
+      ? {
+          reportedLocation: {
+            state: resolved.state,
+            stateCode: resolved.stateCode,
+            district: resolved.district || null,
+            districtCode: resolved.districtCode || null,
+            districtText: resolved.districtText || null,
+          },
+          locationSource: 'coordinates',
+        }
+      : {};
+    updateFoundReport(f.id, { geoAddress, ...placed });
+    if (unplaced) {
+      addAudit({
+        actorId: req.user.id,
+        actorName: req.user.name,
+        actorRole: req.user.role,
+        action: 'sighting.placed',
+        targetType: 'foundReport',
+        targetId: f.id,
+        summary: `Placed sighting ${f.id} in ${[placed.reportedLocation.district || placed.reportedLocation.districtText, placed.reportedLocation.state].filter(Boolean).join(', ')} from its coordinates`,
+        scope: { state: f.state || null, district: f.district || null, matchedReportId: f.matchedReportId || null },
+        metadata: { from: known, to: placed.reportedLocation, source: 'coordinates' },
+      });
+    }
+    res.json({ geoAddress, ...placed });
   });
 
   /**

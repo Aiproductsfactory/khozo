@@ -24,6 +24,7 @@ import process from 'node:process';
 
 import registerReportRoutes from '../shared/routes/reports.js';
 import { canSeeLocalPoliceRequest, scopeFoundReports, seenOutsideCaseDistrict } from '../shared/scope.js';
+import { reportedLocationOf } from '../shared/sighting-matching.js';
 import { grewUpWhileMissing, isAdultCase, publicCaseStatus } from '../shared/case-domain.js';
 
 const checks = [];
@@ -113,7 +114,7 @@ function recorder() {
   return { router, routes };
 }
 
-function harness(initial = [SIGHTING], reports = [CASE_AHD, CASE_GROWN]) {
+function harness(initial = [SIGHTING], reports = [CASE_AHD, CASE_GROWN], { fetchImpl = null } = {}) {
   const sightings = initial.map((row) => structuredClone(row));
   const cases = reports.map((row) => structuredClone(row));
   const audit = [];
@@ -155,7 +156,7 @@ function harness(initial = [SIGHTING], reports = [CASE_AHD, CASE_GROWN]) {
     rankMatches: async () => ({ candidates: [], engine: { provider: 'stub', modelVersion: null, biometric: false } }),
     detectPerson: async () => ({ verdict: 'person', faces: 1, provider: 'stub', checkedAt: Date.now() }),
     upload: { single: () => (_req, _res, next) => next() },
-    fetchImpl: async () => { throw new Error('no network in this test'); },
+    fetchImpl: fetchImpl || (async () => { throw new Error('no network in this test'); }),
     settings: {},
   });
   const handler = (method, path) => routes.find((r) => r.method === method && r.path === path)?.handler;
@@ -294,6 +295,54 @@ async function call(handler, { body = {}, params = {}, query = {}, user = null }
   check('nor a record that the family was told', told.status === 409, `HTTP ${told.status} ${told.payload?.error || ''}`);
   const child = await call(h.handler('POST', '/:id/send-sms'), { params: { id: 'r_1' }, body: {}, user: AHD_POLICE });
   check('a child’s family needs no such consent', child.payload?.code !== 'person_consent_required', `HTTP ${child.status} ${child.payload?.code || ''}`);
+}
+
+// --- Sightings from before the reporter's place was kept apart from the case's ----
+// Until 17 Oct 2026 a strong match overwrote the sighting's own state and
+// district with the case's, and nothing else recorded where the person was
+// seen: a sighting typed as "Vidhya Building, CBD Belapur" read on the card
+// as seen in Ahmedabad, Gujarat. Such a record now says nothing about the
+// district until its coordinates are looked up or an officer places it.
+const BELAPUR = {
+  id: 'f_old', status: 'pending_review', personCategory: 'child', ageApprox: 12, gender: 'Female',
+  ...AHMEDABAD, foundLocation: 'Vidhya Building, CBD Belapur', lat: 19.0186, lng: 73.0396,
+  reporterName: 'Anonymous citizen', photoFile: 'f_old.jpg', matchedReportId: 'r_1', matchScore: 0.9,
+  matchCandidates: [{ reportId: 'r_1', score: 0.9, status: 'proposed' }], createdAt: Date.parse('2026-09-04'),
+};
+const OLD_REVERSE = { ...BELAPUR, id: 'f_old_reverse', reverseMatch: { reportId: 'r_1', previous: { ...MUMBAI, status: 'no_match' } } };
+const OLD_UNLINKED = { ...BELAPUR, id: 'f_old_unlinked', state: 'Maharashtra', district: 'Thane', matchedReportId: null, matchCandidates: [] };
+// A sighting from after the change: the reporter's place is on the record.
+const TYPED = { ...BELAPUR, id: 'f_typed', reportedLocation: { ...MUMBAI } };
+check('an old unlinked sighting’s own fields are the reporter’s', reportedLocationOf(OLD_UNLINKED).district === 'Thane');
+check('an old reverse-linked sighting was seen where the link found it', reportedLocationOf(OLD_REVERSE).district === 'Mumbai');
+check('an old forward-linked sighting’s district is not known, not the case’s', reportedLocationOf(BELAPUR).district === null && reportedLocationOf(BELAPUR).state === null);
+{
+  // Nominatim's answer for the coordinates, as shared/geocode.js reads it.
+  const nominatim = async () => ({
+    ok: true,
+    json: async () => ({
+      display_name: 'Vidhya Building, Sector 11, CBD Belapur, Navi Mumbai, Thane, Maharashtra, 400614, India',
+      address: { building: 'Vidhya Building', road: 'Sector 11', suburb: 'CBD Belapur', city: 'Navi Mumbai', state_district: 'Thane', state: 'Maharashtra', postcode: '400614', country: 'India' },
+    }),
+  });
+  const h = harness([SIGHTING, BELAPUR, TYPED], undefined, { fetchImpl: nominatim });
+  const before = await call(h.handler('GET', '/found/all'), { user: AHD_POLICE });
+  const old = before.payload?.foundReports?.find((f) => f.id === 'f_old');
+  check('the card is not told the person was seen in Ahmedabad', old && !old.reportedLocation?.district && !old.reportedLocation?.state && old.district === 'Ahmedabad', JSON.stringify(old?.reportedLocation));
+
+  const looked = await call(h.handler('POST', '/found/:id/address'), { params: { id: 'f_old' }, user: AHD_POLICE });
+  check('looking up the address places the sighting from its coordinates', looked.status === 200 && looked.payload?.reportedLocation?.district === 'Thane' && looked.payload.reportedLocation.state === 'Maharashtra', `HTTP ${looked.status} ${JSON.stringify(looked.payload)}`);
+  const stored = h.sightings.find((s) => s.id === 'f_old');
+  check('the record keeps it, marked as from the reporter’s location', stored.reportedLocation?.districtCode && stored.locationSource === 'coordinates' && typeof stored.geoAddress === 'string' && stored.geoAddress.length > 0, JSON.stringify({ reportedLocation: stored.reportedLocation, locationSource: stored.locationSource, geoAddress: stored.geoAddress }));
+  check('and stays filed under the case it may match', stored.state === 'Gujarat' && stored.district === 'Ahmedabad' && stored.matchedReportId === 'r_1');
+  check('the placement is audited as from the coordinates', h.audit.some((a) => a.action === 'sighting.placed' && a.targetId === 'f_old' && a.metadata?.source === 'coordinates' && a.metadata.to?.district === 'Thane'), JSON.stringify(h.audit.map((a) => a.action)));
+  const after = await call(h.handler('GET', '/found/all'), { user: AHD_POLICE });
+  const row = after.payload?.foundReports?.find((f) => f.id === 'f_old');
+  check('the card now says Thane, Maharashtra, outside the case’s district', row?.reportedLocation?.district === 'Thane' && row.seenOutsideCaseDistrict === true, JSON.stringify(row?.reportedLocation));
+
+  const typed = await call(h.handler('POST', '/found/:id/address'), { params: { id: 'f_typed' }, user: AHD_POLICE });
+  const typedRow = h.sightings.find((s) => s.id === 'f_typed');
+  check('a place the reporter gave is never replaced by the coordinates', typed.status === 200 && !typed.payload?.reportedLocation && typedRow.reportedLocation.district === 'Mumbai' && typedRow.locationSource !== 'coordinates', `HTTP ${typed.status} ${JSON.stringify(typed.payload)}`);
 }
 
 const failed = checks.filter((c) => !c.ok);

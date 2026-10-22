@@ -174,13 +174,23 @@ export function engineSummary(engine) {
 }
 
 /**
- * The jurisdiction the reporter gave (or their phone placed them in). A
- * strong match overwrites the sighting's own state and district with the
- * matched case's, so this is kept separately; records from before it was kept
- * fall back to the sighting's current jurisdiction.
+ * The jurisdiction the reporter gave (or their phone placed them in): where
+ * the person was seen. A strong match overwrites the sighting's own state and
+ * district with the matched case's, so this is kept separately. For a record
+ * from before it was kept, only an unlinked sighting's own fields are the
+ * reporter's; a linked one's are the case's (see below).
  */
 export function reportedLocationOf(sighting) {
   if (sighting?.reportedLocation) return sighting.reportedLocation;
+  // Before the field was kept, a link overwrote the sighting's own state and
+  // district with the case's. A reverse link kept them on the link; a forward
+  // link kept nothing, so where the person was seen is not known - the card
+  // showed a sighting typed as "CBD Belapur" as seen in Ahmedabad, Gujarat.
+  if (isReverseLinked(sighting)) {
+    const previous = sighting.reverseMatch.previous;
+    return { state: previous.state || null, district: previous.district || null };
+  }
+  if (sighting?.matchedReportId) return { state: null, district: null };
   return { state: sighting?.state || null, district: sighting?.district || null };
 }
 
@@ -488,20 +498,26 @@ export function createSightingMatcher(deps) {
       return { ok: false, reason: 'The sighting photo could not be read.' };
     }
     const reported = reportedLocationOf(sighting);
-    const search = await forwardSearch(photo, {
-      state: reported.state,
-      district: reported.district,
-      gender: sighting.gender || null,
-      ageApprox: sighting.ageApprox ?? null,
-      excludeReportIds: [...rejectedReportIds(sighting)],
-      probeId: lead.id,
-      probeExtras: photos.filter((p) => p.id !== lead.id && p.check?.verdict !== 'no_face'),
-      retryIndexWithExtras: !(lead.check?.verdict === 'usable' || sightingScreenShowsPerson(sighting, lead.id)) && lead.check?.verdict !== 'no_face',
-    });
+    const [search, rescreen] = await Promise.all([
+      forwardSearch(photo, {
+        state: reported.state,
+        district: reported.district,
+        gender: sighting.gender || null,
+        ageApprox: sighting.ageApprox ?? null,
+        excludeReportIds: [...rejectedReportIds(sighting)],
+        probeId: lead.id,
+        probeExtras: photos.filter((p) => p.id !== lead.id && p.check?.verdict !== 'no_face'),
+        retryIndexWithExtras: !(lead.check?.verdict === 'usable' || sightingScreenShowsPerson(sighting, lead.id)) && lead.check?.verdict !== 'no_face',
+      }),
+      rescreenMainPhoto(sighting, lead, photo),
+    ]);
     const before = { status: sighting.status, matchedReportId: sighting.matchedReportId || null };
     const updated = await commitSighting(
       sighting.id,
-      (row) => forwardPatch(row, search, { trigger }),
+      (row) => ({
+        ...forwardPatch(row, search, { trigger }),
+        ...(rescreen ? { screening: rescreenedScreening(row.screening, rescreen) } : {}),
+      }),
       (row) => row.status === before.status && (row.matchedReportId || null) === before.matchedReportId && !row.anonymizedAt
     );
     if (!updated) return { ok: false, conflict: true, reason: 'The sighting changed while it was being compared. Open it again.' };
@@ -530,7 +546,40 @@ export function createSightingMatcher(deps) {
       });
       alertCaseOfficers(updated, report, `A sighting at ${sightingWhere(updated)} may match a case.`);
     }
-    return { ok: true, sighting: updated, engine: search.engine, linked };
+    return { ok: true, sighting: updated, engine: search.engine, linked, rescreened: rescreen?.verdict || null };
+  }
+
+  /**
+   * Screens the main photo again when its screen never answered. When the
+   * sighting arrived during an outage, or before an engine was configured,
+   * the screen was stored as `unverified`, and nothing ran it again: the
+   * review queue held the photo back as "Not screened" for good, even after
+   * a later search had compared the face in it. Returns the new screen, or
+   * null when there is nothing to do or still no answer. An officer's own
+   * reading of the photo (`screening.officer`) is the verdict already and is
+   * not second-guessed.
+   */
+  async function rescreenMainPhoto(sighting, lead, photo) {
+    if (lead?.id !== MAIN_PHOTO || typeof detectPerson !== 'function') return null;
+    if (sightingScreenVerdict(sighting.screening) !== 'unverified') return null;
+    try {
+      const screen = await detectPerson(photo);
+      return screen && ['person', 'no_person'].includes(screen.verdict) ? screen : null;
+    } catch (err) {
+      console.warn('[matching] sighting photo screen failed:', err?.message || err);
+      return null;
+    }
+  }
+
+  /**
+   * The sighting's screen with the answer in place of "no engine answered".
+   * Whether the sighting raised the general alert when it arrived
+   * (`raisesAlert`) is a decision already taken and stays as recorded; the
+   * officers of a case it now matches are told by rematchSighting.
+   */
+  function rescreenedScreening(current, screen) {
+    const { reason, ...kept } = current || {};
+    return { ...kept, ...screen, firstCheckedAt: current?.checkedAt ?? null };
   }
 
   // ---- An officer's decision ---------------------------------------------------
@@ -811,6 +860,8 @@ export function createSightingMatcher(deps) {
    * Whether a stored sighting's forward search should be run again:
    *   - its last search had no biometric answer (an outage, no engine
    *     configured, no face found by the engines then available);
+   *   - its photo was never screened (no engine answered then), which holds
+   *     it back in the review queue until a search screens it;
    *   - it compared fewer cases than the current budget would: comparisons
    *     failed (`failedPairs`), or the budget has been raised since and cases
    *     were left out (`pool.notCompared`);
@@ -823,6 +874,7 @@ export function createSightingMatcher(deps) {
     if (!isRematchEligible(sighting) || sighting.matchedReportId) return false;
     const engine = sighting.matchEngine;
     if (!engine || !engine.biometric) return true;
+    if (sightingScreenVerdict(sighting.screening) === 'unverified') return true;
     if (current.configHash && engine.configHash !== current.configHash) return true;
     if ((Number(engine.failedPairs) || 0) > 0) return true;
     const limit = Number(engine.pool?.limit);
