@@ -7,6 +7,7 @@
 
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
+import { normalisePhone } from '../phone.js';
 import { nanoid } from 'nanoid';
 
 import { readFields } from '../case-domain.js';
@@ -82,8 +83,10 @@ export default function registerAuthRoutes(router, deps) {
     return String(value || '').replace(/\D/g, '');
   }
   
+  // The number as it is stored and compared: "+91 98765 43210" and
+  // "098765 43210" are the same account as 9876543210 (shared/phone.js).
   function otpKey(phone) {
-    return digits(phone);
+    return normalisePhone(phone);
   }
 
   /**
@@ -93,9 +96,9 @@ export default function registerAuthRoutes(router, deps) {
    * desk's number, so more than one can come back.
    */
   function usersByPhone(phone) {
-    const want = digits(phone);
+    const want = normalisePhone(phone);
     if (!want || typeof listUsers !== 'function') return [];
-    return listUsers().filter((u) => u && digits(u.phone) === want);
+    return listUsers().filter((u) => u && normalisePhone(u.phone) === want);
   }
 
   /** An email address as typed, or null when none was given. */
@@ -304,16 +307,22 @@ export default function registerAuthRoutes(router, deps) {
     let user = null;
     if (login.includes('@')) {
       user = findUserByEmail(login.toLowerCase()) || null;
-    } else if (/^\d{7,15}$/.test(digits(login))) {
+    } else if (/^\d{7,15}$/.test(normalisePhone(login))) {
       const holders = usersByPhone(login);
       if (holders.length === 1) {
         user = holders[0];
       } else if (holders.length > 1) {
-        // Desks can share a station's phone. The password says whose account
-        // this is; only when two such accounts share a password too is the
-        // email needed.
-        const matching = holders.filter((u) => u.passwordHash && bcrypt.compareSync(password || '', u.passwordHash));
-        if (matching.length > 1) {
+        // Desks can share a station's phone, and a citizen may share it too.
+        // The password says whose account this is. Each check costs a bcrypt
+        // comparison (tens of milliseconds of CPU, which the Worker's plan
+        // limits), so at most two accounts are tried: citizens first, since
+        // they are the ones who sign in by number. Two matches, or more
+        // holders than were tried with none matching, means the email is
+        // needed: every desk account has one.
+        const ordered = [...holders.filter((u) => PUBLIC_ROLES.includes(u.role)), ...holders.filter((u) => !PUBLIC_ROLES.includes(u.role))];
+        const tried = ordered.slice(0, 2);
+        const matching = tried.filter((u) => u.passwordHash && bcrypt.compareSync(password || '', u.passwordHash));
+        if (matching.length > 1 || (matching.length === 0 && ordered.length > tried.length)) {
           return res.status(409).json({ error: 'More than one account uses this mobile number. Sign in with your email address instead.', code: 'phone_shared' });
         }
         user = matching[0] || null;

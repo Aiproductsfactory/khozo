@@ -130,6 +130,39 @@ async function signUp(h, body) {
   check('police accounts still cannot be self-registered', blocked.status === 403);
 }
 
+// Indian numbers however they are typed: +91, a leading 0, spaces.
+{
+  const h = harness();
+  const res = await signUp(h, { name: 'Plus Ninety-one', phone: '+91 98765 43210', password: 'abc12345', role: 'parent' });
+  const u = h.db.users.find((x) => x.name === 'Plus Ninety-one');
+  check('"+91 98765 43210" is stored as 9876543210', res.status === 201 && u?.phone === '9876543210', `HTTP ${res.status} ${u?.phone}`);
+  const plain = await h.call('POST', '/login', { email: '9876543210', password: 'abc12345' });
+  check('and signs in typed without the +91', plain.status === 200);
+  const zero = await h.call('POST', '/login', { email: '098765 43210', password: 'abc12345' });
+  check('and typed with a leading 0', zero.status === 200);
+  const dupe = await signUp(h, { name: 'Same number again', phone: '0 98765 43210', password: 'other', role: 'parent' });
+  check('a second account on the same number, typed differently, is refused', dupe.status === 409 && dupe.payload?.code === 'phone_taken');
+  // A desk from a bulk sheet keeps its +91 in storage.
+  h.db.users.push({ id: 'u_sheet', role: 'police', name: 'PS Naroda', email: 'ps.naroda@gujarat.test', passwordHash: hash('naroda-pass'), phone: '+919000000301', jurisdiction: { level: 'station', state: 'Gujarat', district: 'Ahmedabad', station: 'Naroda' } });
+  const sheet = await h.call('POST', '/login', { email: '9000000301', password: 'naroda-pass' });
+  check('a desk stored as +91… signs in by its ten digits', sheet.status === 200 && sheet.payload?.user?.id === 'u_sheet');
+}
+
+// A number held by more than two accounts costs at most two password checks.
+{
+  const h = harness();
+  for (const [id, pw] of [['u_a', 'pass-a'], ['u_b', 'pass-b'], ['u_c', 'pass-c']]) {
+    h.db.users.push({ id, role: 'police', name: id, email: `${id}@gujarat.test`, passwordHash: hash(pw), phone: '9000000909', jurisdiction: { level: 'station', state: 'Gujarat', district: 'Ahmedabad', station: 'X' } });
+  }
+  const third = await h.call('POST', '/login', { email: '9000000909', password: 'pass-c' });
+  check('the third holder of a number is asked for the email (two checks at most)', third.status === 409 && third.payload?.code === 'phone_shared', `HTTP ${third.status}`);
+  const first = await h.call('POST', '/login', { email: '9000000909', password: 'pass-a' });
+  check('one of the first two still signs in by number', first.status === 200 && first.payload?.user?.id === 'u_a');
+  const citizen = await signUp(h, { name: 'Citizen on desk number', phone: '9000000909', password: 'citizen-pass', role: 'parent' });
+  const byNumber = await h.call('POST', '/login', { email: '9000000909', password: 'citizen-pass' });
+  check('a citizen on that number is tried first and signs in', citizen.status === 201 && byNumber.status === 200 && byNumber.payload?.user?.role === 'parent', `HTTP ${citizen.status}/${byNumber.status}`);
+}
+
 const failed = checks.filter((ok) => !ok).length;
 console.log(`\n${checks.length - failed}/${checks.length} checks passed`);
 process.exit(failed ? 1 : 0);
