@@ -46,9 +46,25 @@ check('the bot check reports its state', human.status === 200, human.body ? (hum
 for (const [path, release] of [
   ['/api/reports/found/local-police', 'asking the police where a person was seen (out-of-area-sightings)'],
   ['/api/reports/found/all', 'the review queue'],
+  ['/api/reports/found/station-alerts', 'sightings sent to the nearest station (station-alerts)'],
 ]) {
   const res = await get(path);
   check(`${release} is deployed`, res.status === 401 || res.status === 403, `GET ${path} → HTTP ${res.status}${res.status === 404 ? ' (old code is live)' : ''}`);
+}
+
+// Account activation (accounts from a sheet) is public, so it is asked with
+// no code: the route answers "not a valid link", where old code answers that
+// there is no such route. Nothing is changed either way.
+try {
+  const res = await fetch(`${base}/api/auth/activate/check`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'user-agent': 'khozo-check-live' },
+    body: JSON.stringify({ email: '', code: '' }),
+  });
+  const body = await res.json().catch(() => null);
+  check('activation links for accounts from a sheet are deployed', body?.code === 'activation_invalid', `POST /api/auth/activate/check → HTTP ${res.status}${body?.code ? ` ${body.code}` : ' (old code is live)'}`);
+} catch (error) {
+  check('activation links for accounts from a sheet are deployed', false, String(error?.message || error));
 }
 
 const photo = await get('/api/reports/photo/does-not-exist');
