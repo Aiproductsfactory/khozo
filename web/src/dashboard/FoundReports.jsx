@@ -25,7 +25,7 @@ function photoPairOf(sighting, matched) {
   return candidate?.photoPair || (sighting?.matchedReportId === matched?.id ? sighting?.matchedPhotoPair : null) || null;
 }
 import { POLICE_ROLES } from '../../../shared/scope.js';
-import { sightingScreenVerdict } from '../../../shared/face-screen.js';
+import { sightingPhotoVerdict, sightingScreenVerdict } from '../../../shared/face-screen.js';
 
 // Who may search a sighting again (POST /reports/found/:id/rematch): police
 // roles. Who may place a sighting in a district (POST /found/:id/place): the
@@ -117,9 +117,10 @@ function isCoordinateText(value) {
 }
 
 /** What the intake screen found, for the reviewer who has to weigh it. */
-function screeningNote(screening) {
+function screeningNote(f) {
+  const screening = f?.screening;
   if (!screening) return null;
-  const verdict = sightingScreenVerdict(screening);
+  const verdict = sightingPhotoVerdict(f);
   // An officer looked and said what is in the photo: that is the answer.
   if (screening.officer?.verdict) {
     return {
@@ -147,6 +148,11 @@ function screeningNote(screening) {
   }
   if (screening.verdict === 'no_person') {
     return { label: t('No person detected — screened out of the general alert'), className: 'bg-amber-50 text-amber-700' };
+  }
+  // The screen never answered, but an engine found the face when it compared
+  // the photo with a case (shared/face-screen.js).
+  if (verdict === 'face_compared') {
+    return { label: t('Face found when compared with a case'), className: 'bg-slate-100 text-slate-700' };
   }
   if (screening.verdict === 'unverified') {
     return { label: t('Not checked: the face check did not answer'), className: 'bg-slate-100 text-slate-600' };
@@ -686,7 +692,7 @@ export default function FoundReports({ view = 'matches' }) {
           const matched = (f.matchedReport && typeof f.matchedReport === 'object' ? f.matchedReport : null)
             || (f.matchedReportId ? reportsById[f.matchedReportId] : null);
           const band = confidenceBand(f.matchScore);
-          const screen = screeningNote(f.screening);
+          const screen = screeningNote(f);
           // Who was seen, and who the matched case is about. Childline/CWC,
           // CCI intake and "reunite" are child-protection steps; for a woman
           // or adult the next step is to verify with the person.
@@ -707,7 +713,10 @@ export default function FoundReports({ view = 'matches' }) {
             : null;
           const lastSearch = comparedLine(f.matchEngine);
           const searched = searches[f.id];
-          const reported = f.reportedLocation && typeof f.reportedLocation === 'object' ? f.reportedLocation : f;
+          // Where the person was seen, as the server reads it (reportedLocationOf
+          // in shared/sighting-matching.js). Not the sighting's own state and
+          // district: a match files it under the case's.
+          const reported = f.reportedLocation && typeof f.reportedLocation === 'object' ? f.reportedLocation : {};
           const needsPlacing = canPlace && !txt(reported.district) && !f.anonymizedAt && !['matched', 'rejected'].includes(f.status);
           const placing = placements[f.id];
           return (
@@ -750,7 +759,7 @@ export default function FoundReports({ view = 'matches' }) {
                 <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-100 sm:h-28 sm:w-28">
                   {/* A text report has no photo to hold back: it falls through
                       to "No photo — text report". */}
-                  {f.screening && !['person', 'no_photo'].includes(sightingScreenVerdict(f.screening)) && !revealed[f.id] ? (
+                  {f.screening && !['person', 'no_photo', 'face_compared'].includes(sightingPhotoVerdict(f)) && !revealed[f.id] ? (
                     <button
                       onClick={() => setRevealed((r) => ({ ...r, [f.id]: true }))}
                       className="grid h-full w-full place-items-center gap-1 px-2 text-center hover:bg-slate-200"

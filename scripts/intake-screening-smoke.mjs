@@ -23,7 +23,7 @@ import process from 'node:process';
 import registerReportRoutes from '../shared/routes/reports.js';
 import { resolveSightingLocation } from '../shared/geocode.js';
 import { screenPhoto } from '../shared/match-pipeline.js';
-import { sightingScreenVerdict } from '../shared/face-screen.js';
+import { faceFoundByComparison, sightingPhotoVerdict, sightingScreenVerdict } from '../shared/face-screen.js';
 import { isReverseMatchCandidate } from '../shared/match-pool.js';
 
 const checks = [];
@@ -341,6 +341,25 @@ const nominatim = (address) => async () => ({
   check('a record screened before clearFace existed is judged by its stored quality',
     sightingScreenVerdict({ verdict: 'person', faces: 1, quality: 0.3, warnings: [] }) === 'unclear_face'
     && sightingScreenVerdict({ verdict: 'person', faces: 1, quality: 0.92, warnings: [] }) === 'person');
+
+  // A photo the screen never answered for, that an engine has since compared
+  // with a case: the card shows it (the face was found), and says how it is known.
+  const unanswered = { verdict: 'unverified', faces: null, provider: null };
+  const scored = { reportId: 'r_1', status: 'proposed', aarakshakScore: 0.91, rekognitionScore: 1 };
+  check('an unscreened photo an engine found a face in when comparing it is shown',
+    sightingPhotoVerdict({ screening: unanswered, matchCandidates: [scored] }) === 'face_compared'
+    && faceFoundByComparison({ matchCandidates: [{ ...scored, aarakshakScore: null }] })
+    && faceFoundByComparison({ matchCandidates: [{ ...scored, rekognitionScore: null }] }));
+  check('an unscreened photo with no comparison stays not screened',
+    sightingPhotoVerdict({ screening: unanswered, matchCandidates: [] }) === 'unverified'
+    && sightingPhotoVerdict({ screening: unanswered, matchCandidates: [{ ...scored, aarakshakScore: null, rekognitionScore: null }] }) === 'unverified');
+  check('a comparison made with another of the sighting\'s photos says nothing about the main one',
+    sightingPhotoVerdict({ screening: unanswered, matchCandidates: [{ ...scored, photoPair: { sighting: 'p_extra', case: 'main' } }] }) === 'unverified'
+    && sightingPhotoVerdict({ screening: unanswered, matchCandidates: [{ ...scored, photoPair: { sighting: 'main', case: 'p_2' } }] }) === 'face_compared');
+  check('a screen that answered, or an officer, is not overruled by a comparison',
+    sightingPhotoVerdict({ screening: { verdict: 'no_person', faces: 0 }, matchCandidates: [scored] }) === 'no_person'
+    && sightingPhotoVerdict({ screening: { verdict: 'person', faces: 1, quality: 0.3, warnings: [] }, matchCandidates: [scored] }) === 'unclear_face'
+    && sightingPhotoVerdict({ screening: { ...unanswered, officer: { verdict: 'no_person' } }, matchCandidates: [scored] }) === 'no_person');
 
   // The route: an unclear face reaches one reviewer, not every desk.
   const { handler, notifications, sightings } = harness({ screen: small });
