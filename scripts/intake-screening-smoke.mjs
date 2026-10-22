@@ -356,6 +356,19 @@ const nominatim = (address) => async () => ({
   check('a comparison made with another of the sighting\'s photos says nothing about the main one',
     sightingPhotoVerdict({ screening: unanswered, matchCandidates: [{ ...scored, photoPair: { sighting: 'p_extra', case: 'main' } }] }) === 'unverified'
     && sightingPhotoVerdict({ screening: unanswered, matchCandidates: [{ ...scored, photoPair: { sighting: 'main', case: 'p_2' } }] }) === 'face_compared');
+  // As live: linked by the reverse search before candidates were kept, so the
+  // scores are only on the sighting itself, where the card reads them.
+  const reverseLinked = {
+    screening: unanswered, matchCandidates: [], matchedReportId: 'r_1',
+    primaryScore: 0.768, secondOpinionScore: 1, matchedPhotoPair: { case: 'main', sighting: 'main' },
+  };
+  check('a link whose scores are only on the sighting counts too', sightingPhotoVerdict(reverseLinked) === 'face_compared');
+  check('those scores count only while the link stands, and only for the main photo',
+    sightingPhotoVerdict({ ...reverseLinked, matchedReportId: null }) === 'unverified'
+    && sightingPhotoVerdict({ ...reverseLinked, matchedPhotoPair: { case: 'main', sighting: 'p_extra' } }) === 'unverified');
+  check('a score of 0 is not a face',
+    sightingPhotoVerdict({ ...reverseLinked, primaryScore: 0, secondOpinionScore: 0 }) === 'unverified'
+    && sightingPhotoVerdict({ screening: unanswered, matchCandidates: [{ ...scored, aarakshakScore: 0, rekognitionScore: null }] }) === 'unverified');
   check('a screen that answered, or an officer, is not overruled by a comparison',
     sightingPhotoVerdict({ screening: { verdict: 'no_person', faces: 0 }, matchCandidates: [scored] }) === 'no_person'
     && sightingPhotoVerdict({ screening: { verdict: 'person', faces: 1, quality: 0.3, warnings: [] }, matchCandidates: [scored] }) === 'unclear_face'

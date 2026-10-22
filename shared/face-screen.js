@@ -55,13 +55,22 @@ export function sightingScreenVerdict(screening) {
 /**
  * Whether a face-matching engine found a face in the sighting's main photo
  * while comparing it with a case. An engine gives a score only when it found
- * a face on both sides, so a scored candidate for that photo is the face.
+ * a face on both sides, so a score for that photo is the face. A score of 0
+ * is not counted: older records may hold 0 for an engine that did not answer.
+ *
+ * The scores are read where the review card reads them (currentCandidate in
+ * web/src/dashboard/Reunite.jsx): the candidate list, and, for the current
+ * link, the sighting's own evidence fields - all a link made before the list
+ * was kept, or by the reverse search then, has.
  */
 export function faceFoundByComparison(sighting) {
+  const scored = (...scores) => scores.some((s) => Number(s) > 0);
+  const onMain = (pair) => (pair?.sighting || MAIN_PHOTO) === MAIN_PHOTO;
   const candidates = Array.isArray(sighting?.matchCandidates) ? sighting.matchCandidates : [];
-  return candidates.some((c) => c
-    && (c.aarakshakScore != null || c.rekognitionScore != null)
-    && (c.photoPair?.sighting || MAIN_PHOTO) === MAIN_PHOTO);
+  if (candidates.some((c) => c && scored(c.aarakshakScore, c.rekognitionScore) && onMain(c.photoPair))) return true;
+  return Boolean(sighting?.matchedReportId
+    && scored(sighting.primaryScore, sighting.secondOpinionScore)
+    && onMain(sighting.matchedPhotoPair));
 }
 
 /**
