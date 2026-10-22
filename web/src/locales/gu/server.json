@@ -75,5 +75,14 @@
   "Visit": "મુલાકાત",
   "Match confirmed": "મેળની પુષ્ટિ થઈ",
   "Case reopened": "કેસ ફરી ખોલાયો",
-  "Family contacted": "પરિવારનો સંપર્ક કરાયો"
+  "Family contacted": "પરિવારનો સંપર્ક કરાયો",
+  "Name, mobile number and password are required": "નામ, મોબાઇલ નંબર અને પાસવર્ડ જરૂરી છે",
+  "That email address does not look right. Correct it, or leave it empty.": "આ ઇમેઇલ સરનામું બરાબર લાગતું નથી. તેને સુધારો, અથવા ખાલી છોડો.",
+  "An account with this mobile number already exists. Sign in instead.": "આ મોબાઇલ નંબરથી ખાતું પહેલેથી છે. તેના બદલે સાઇન ઇન કરો.",
+  "More than one account uses this mobile number. Sign in with your email address instead.": "આ મોબાઇલ નંબર એકથી વધુ ખાતામાં છે. તેના બદલે આપના ઇમેઇલથી સાઇન ઇન કરો.",
+  "Wrong email, mobile number or password": "ઇમેઇલ, મોબાઇલ નંબર કે પાસવર્ડ ખોટો છે",
+  "An account with this email already exists": "આ ઇમેઇલથી ખાતું પહેલેથી છે",
+  "Mobile number is required for OTP verification": "OTP ચકાસણી માટે મોબાઇલ નંબર જરૂરી છે",
+  "OTP verification is required before registration": "ખાતું ખોલતાં પહેલાં OTP ચકાસણી જરૂરી છે",
+  "OTP verification failed": "OTP ચકાસણી નિષ્ફળ ગઈ"
 }

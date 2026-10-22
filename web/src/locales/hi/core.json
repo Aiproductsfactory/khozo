@@ -52,5 +52,8 @@
   "No match": "कोई मिलान नहीं",
   "This section could not be shown. Reload, or contact your administrator.": "यह भाग दिखाया नहीं जा सका। पेज फिर से लोड करें, या अपने एडमिनिस्ट्रेटर से संपर्क करें।",
   "Reload": "फिर से लोड करें",
-  "Open in Maps": "मैप में खोलें"
+  "Open in Maps": "मैप में खोलें",
+  "Email or mobile number": "ईमेल या मोबाइल नंबर",
+  "Email, or the mobile number you signed up with": "ईमेल, या वह मोबाइल नंबर जिससे आपने खाता बनाया था",
+  "Email (optional)": "ईमेल (वैकल्पिक)"
 }

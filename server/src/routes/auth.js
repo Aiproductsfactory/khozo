@@ -3,12 +3,12 @@
 import { Router } from 'express';
 
 import registerAuthRoutes from '../../../shared/routes/auth.js';
-import { findUserByEmail, addUser, addAudit, updateUser } from '../store.js';
+import { findUserByEmail, listUsers, addUser, addAudit, updateUser } from '../store.js';
 import { signToken, publicUser, authRequired } from '../auth.js';
 import { auditPublicRateLimit, clientIp, fixedWindowRateLimit } from '../rateLimit.js';
 
 export default registerAuthRoutes(Router(), {
-  findUserByEmail, addUser, addAudit, updateUser,
+  findUserByEmail, listUsers, addUser, addAudit, updateUser,
   signToken, publicUser, authRequired,
   auditPublicRateLimit, clientIp, fixedWindowRateLimit,
   settings: {

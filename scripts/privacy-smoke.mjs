@@ -126,6 +126,30 @@ const iso = (offsetDays) => new Date(NOW + offsetDays * DAY).toISOString();
   check('its candidate list keeps ids and scores only', s.matchCandidates[0].reportId === 'r_9' && s.matchCandidates[0].score === 0.8 && !s.matchCandidates[0].warnings);
 }
 
+// ---- A closed case is kept 10 years from the day it ended
+{
+  const reports = [
+    // Registered almost 10 years ago, found last month: its own date is near,
+    // but it is kept 10 years from the day it was found.
+    { id: 'r_found_late', status: 'found', retentionUntil: iso(-5), foundAt: iso(-30), photoFile: 'fl.jpg' },
+    // Closed 11 years ago, its own date long past: due.
+    { id: 'r_closed_long_ago', status: 'closed', retentionUntil: iso(-400), closure: { closedAt: iso(-4100) }, photoFile: 'cl.jpg' },
+    // A case with no date of ending keeps its own date.
+    { id: 'r_closed_no_end', status: 'closed', retentionUntil: iso(-5), photoFile: 'cn.jpg' },
+  ];
+  const foundReports = [
+    // The sighting that confirmed the late find stays with that case.
+    { id: 'f_found_late', status: 'matched', matchedReportId: 'r_found_late', retentionUntil: iso(-1) },
+  ];
+  const plan = planRetention({ reports, foundReports, now: NOW });
+  const due = plan.cases.anonymise.map((x) => x.id).sort().join(',');
+  check('a case found last month is kept, though registered nearly 10 years ago', !due.includes('r_found_late'));
+  check('a case closed more than 10 years ago is due', due.includes('r_closed_long_ago'));
+  check('a closed case with no recorded end keeps its own date', due.includes('r_closed_no_end'));
+  const kept = plan.sightings.extend.find((x) => x.id === 'f_found_late');
+  check('the sighting that confirmed the late find is kept as long as that case', Boolean(kept) && Date.parse(kept.until) > NOW + 3600 * DAY);
+}
+
 // ---- Retention plan
 function world() {
   const reports = [

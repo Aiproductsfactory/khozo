@@ -99,12 +99,12 @@ export default function Login() {
           <h2 className="mt-6 text-2xl font-bold">{t('Log in to Khozo')}</h2>
           <p className="mt-1 text-sm text-gray-500">{t('Please log in to your account.')}</p>
 
-          {err && <div className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{err}</div>}
+          {err && <div className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{t(err)}</div>}
 
           <form onSubmit={submit} className="mt-6 space-y-4">
             <div>
-              <label className="label">{t('Email address')}</label>
-              <input className="field" type="email" inputMode="email" autoComplete="username" autoCapitalize="off" autoCorrect="off" spellCheck={false} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@agency.gov.in" required />
+              <label className="label">{t('Email or mobile number')}</label>
+              <input className="field" type="text" inputMode="email" autoComplete="username" autoCapitalize="off" autoCorrect="off" spellCheck={false} value={email} onChange={(e) => setEmail(e.target.value)} placeholder={t('Email, or the mobile number you signed up with')} required />
             </div>
             <div>
               <label className="label">{t('Password')}</label>

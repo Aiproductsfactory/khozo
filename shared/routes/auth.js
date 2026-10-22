@@ -38,7 +38,7 @@ export function hashPassword(password) {
 
 export default function registerAuthRoutes(router, deps) {
   const {
-    findUserByEmail, addUser, addAudit, updateUser,
+    findUserByEmail, listUsers, addUser, addAudit, updateUser,
     signToken, publicUser, authRequired,
     auditPublicRateLimit, clientIp, fixedWindowRateLimit,
     settings = {},
@@ -85,6 +85,25 @@ export default function registerAuthRoutes(router, deps) {
   function otpKey(phone) {
     return digits(phone);
   }
+
+  /**
+   * The accounts that hold a mobile number. A citizen signs up with a mobile
+   * number and need not have an email address (many people in villages have
+   * none), so the number is how they sign in. Official accounts may share a
+   * desk's number, so more than one can come back.
+   */
+  function usersByPhone(phone) {
+    const want = digits(phone);
+    if (!want || typeof listUsers !== 'function') return [];
+    return listUsers().filter((u) => u && digits(u.phone) === want);
+  }
+
+  /** An email address as typed, or null when none was given. */
+  function emailOf(value) {
+    const text = String(value || '').trim().toLowerCase();
+    return text || null;
+  }
+  const looksLikeEmail = (text) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text);
   
   /**
    * Generates a one-time code.
@@ -183,13 +202,15 @@ export default function registerAuthRoutes(router, deps) {
   router.post('/register', registerLimit, async (req, res) => {
     const read = readFields(req.body, REGISTER_FIELDS);
     if (read.error) return res.status(400).json({ error: read.error });
-    const { name, email, password, phone, otp, org, state, district, station } = read.body;
+    const { name, password, phone, otp, org, state, district, station } = read.body;
+    // Optional: the mobile number, verified by OTP below, is the account.
+    const email = emailOf(read.body.email);
     const role = read.body.role || 'parent';
-    if (!name || !email || !password)
-      return res.status(400).json({ error: 'Name, email and password are required' });
+    if (!name || !password)
+      return res.status(400).json({ error: 'Name, mobile number and password are required' });
     if (!PUBLIC_ROLES.includes(role)) {
       addAudit({
-        actorName: email || 'Unknown registrant',
+        actorName: email || (phone ? `mobile ...${digits(phone).slice(-4)}` : 'Unknown registrant'),
         actorRole: 'public',
         action: 'auth.privileged_registration_blocked',
         targetType: 'user',
@@ -198,7 +219,8 @@ export default function registerAuthRoutes(router, deps) {
       });
       return res.status(403).json({ error: 'Police and government accounts must be provisioned by an administrator' });
     }
-    if (findUserByEmail(email)) return res.status(409).json({ error: 'An account with this email already exists' });
+    if (email && !looksLikeEmail(email)) return res.status(400).json({ error: 'That email address does not look right. Correct it, or leave it empty.' });
+    if (email && findUserByEmail(email)) return res.status(409).json({ error: 'An account with this email already exists' });
     const cleanPhone = otpKey(phone);
     if (!/^\d{7,15}$/.test(cleanPhone)) return res.status(400).json({ error: 'Mobile number is required for OTP verification' });
     const challenge = otpStore.get(cleanPhone);
@@ -207,7 +229,7 @@ export default function registerAuthRoutes(router, deps) {
     if (challenge.attempts > 5 || String(otp || '').trim() !== challenge.code) {
       otpStore.set(cleanPhone, challenge);
       addAudit({
-        actorName: email || 'Unknown registrant',
+        actorName: email || `mobile ...${cleanPhone.slice(-4)}`,
         actorRole: 'public',
         action: 'auth.otp_failed',
         targetType: 'otp',
@@ -217,6 +239,15 @@ export default function registerAuthRoutes(router, deps) {
       return res.status(400).json({ error: 'OTP verification failed' });
     }
     otpStore.delete(cleanPhone);
+
+    // One citizen account per mobile number: it is how an account without an
+    // email signs in. Checked only after the OTP, so that nobody can learn
+    // whether a number has an account without holding that phone. An official
+    // desk sharing the number does not block it (the password tells the two
+    // apart at sign-in).
+    if (usersByPhone(cleanPhone).some((u) => PUBLIC_ROLES.includes(u.role))) {
+      return res.status(409).json({ error: 'An account with this mobile number already exists. Sign in instead.', code: 'phone_taken' });
+    }
   
     const levelByRole = {
       super_admin: 'national',
@@ -255,7 +286,7 @@ export default function registerAuthRoutes(router, deps) {
       targetId: user.id,
       summary: `Public ${role} account registered`,
       scope: { state, district },
-      metadata: { phoneVerified: true, phoneSuffix: cleanPhone.slice(-4) },
+      metadata: { phoneVerified: true, phoneSuffix: cleanPhone.slice(-4), withEmail: Boolean(email) },
     });
     const token = await tokenFor(res, user);
     if (!token) return;
@@ -263,17 +294,38 @@ export default function registerAuthRoutes(router, deps) {
   });
   
   router.post('/login', loginLimit, async (req, res) => {
-    const read = readFields(req.body, { email: ['text', 160], password: 'secret' });
+    const read = readFields(req.body, { email: ['text', 160], phone: ['text', 20], password: 'secret' });
     if (read.error) return res.status(400).json({ error: read.error });
-    const { email, password } = read.body;
-    const user = findUserByEmail(email || '');
+    const { password } = read.body;
+    // One box takes either: an email address, or the mobile number a citizen
+    // signed up with. (The field is still called `email`, which the Android
+    // app sends.)
+    const login = String(read.body.email || read.body.phone || '').trim();
+    let user = null;
+    if (login.includes('@')) {
+      user = findUserByEmail(login.toLowerCase()) || null;
+    } else if (/^\d{7,15}$/.test(digits(login))) {
+      const holders = usersByPhone(login);
+      if (holders.length === 1) {
+        user = holders[0];
+      } else if (holders.length > 1) {
+        // Desks can share a station's phone. The password says whose account
+        // this is; only when two such accounts share a password too is the
+        // email needed.
+        const matching = holders.filter((u) => u.passwordHash && bcrypt.compareSync(password || '', u.passwordHash));
+        if (matching.length > 1) {
+          return res.status(409).json({ error: 'More than one account uses this mobile number. Sign in with your email address instead.', code: 'phone_shared' });
+        }
+        user = matching[0] || null;
+      }
+    }
     // An account made from a sheet has no password until its officer opens
     // the activation link (POST /activate below).
     if (user && !user.passwordHash && user.activation) {
       return res.status(403).json({ error: 'This account is not active yet. Open the activation link you were sent to set your password, or ask your state desk for a new one.', code: 'activation_required' });
     }
     if (!user || !user.passwordHash || !bcrypt.compareSync(password || '', user.passwordHash))
-      return res.status(401).json({ error: 'Invalid email or password' });
+      return res.status(401).json({ error: 'Wrong email, mobile number or password' });
     // Signed first: a server that cannot sign changes nothing.
     const token = await tokenFor(res, user);
     if (!token) return;

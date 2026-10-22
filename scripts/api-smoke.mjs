@@ -2249,7 +2249,11 @@ async function run() {
       district: 'Perambalur',
     },
   }), 'public registration wrong OTP');
-  const samePhone = await request('POST', '/auth/register', {
+  // A second citizen account on a number that already has one is refused: the
+  // number is how an account without an email signs in. (It used to be allowed,
+  // and this check made sure the newcomer saw none of the first parent's
+  // cases; refusing the account is the stronger guarantee.)
+  const samePhone = await expectStatus(409, () => request('POST', '/auth/register', {
     body: {
       name: 'Same Phone Parent',
       email: 'same.phone.parent@khozo.org',
@@ -2260,9 +2264,8 @@ async function run() {
       state: 'Tamil Nadu',
       district: 'Perambalur',
     },
-  });
-  const samePhoneReports = await request('GET', '/reports', { token: samePhone.token });
-  assert(samePhoneReports.reports.length === 0, 'unverified same-phone parent should not inherit another parent report');
+  }), 'second citizen account on the same mobile number');
+  assert(samePhone?.data?.code === 'phone_taken' || samePhone?.code === 'phone_taken', 'the refusal names the reason (phone_taken)');
 
   const badAgeReportForm = new FormData();
   badAgeReportForm.set('childName', 'Impossible Age Child');
@@ -2493,7 +2496,19 @@ async function run() {
     headers: { Authorization: `Bearer ${parent.token}` },
   });
   assert(parentPhoto.ok, `parent should fetch own photo, got ${parentPhoto.status}`);
-  await expectStatus(403, () => request('GET', photoReport.report.photoUrl.replace('/api', ''), { token: samePhone.token }), 'same-phone report photo access');
+  // Another parent, on their own number, cannot fetch this parent's photo.
+  const otherParent = await request('POST', '/auth/register', {
+    body: {
+      name: 'Other Parent',
+      password: 'khozo123',
+      role: 'parent',
+      phone: '9788197571',
+      otp: await publicOtp('9788197571'),
+      state: 'Tamil Nadu',
+      district: 'Perambalur',
+    },
+  });
+  await expectStatus(403, () => request('GET', photoReport.report.photoUrl.replace('/api', ''), { token: otherParent.token }), 'another parent’s report photo access');
 
   const cwcStats = await request('GET', '/dashboard/stats', { token: cwc.token });
   assert(cwcStats.scope === 'Mumbai', `CWC scope should be Mumbai, got ${cwcStats.scope}`);

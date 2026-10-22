@@ -65,7 +65,7 @@ export default function Register() {
         <h1 className="text-3xl font-bold">{t('Create your Khozo account')}</h1>
         <p className="mt-1 text-gray-500">{t('Public sign-up is for parents, citizens and NGOs. An administrator creates police and government accounts.')}</p>
 
-        {err && <div className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{err}</div>}
+        {err && <div className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{t(err)}</div>}
 
         <div className="mt-8 grid gap-8 lg:grid-cols-[1.1fr_1.4fr]">
           <div>
@@ -93,13 +93,15 @@ export default function Register() {
                 <label className="label">{t('Full name')} *</label>
                 <input className="field" autoComplete="name" value={form.name} onChange={set('name')} required />
               </div>
+              {/* The mobile number is the account: many people in villages have
+                  no email address, so email is optional and sign-in takes either. */}
               <div>
-                <label className="label">{t('Email')} *</label>
-                <input className="field" type="email" inputMode="email" autoComplete="email" autoCapitalize="off" spellCheck={false} value={form.email} onChange={set('email')} required />
+                <label className="label" htmlFor="reg-phone">{t('Mobile no.')} *</label>
+                <input id="reg-phone" className="field" type="tel" inputMode="tel" autoComplete="tel" value={form.phone} onChange={set('phone')} required />
               </div>
               <div>
-                <label className="label">{t('Mobile no.')}</label>
-                <input className="field" type="tel" inputMode="tel" autoComplete="tel" value={form.phone} onChange={set('phone')} />
+                <label className="label" htmlFor="reg-email">{t('Email (optional)')}</label>
+                <input id="reg-email" className="field" type="email" inputMode="email" autoComplete="email" autoCapitalize="off" spellCheck={false} value={form.email} onChange={set('email')} />
               </div>
               <div>
                 <label className="label">OTP *</label>

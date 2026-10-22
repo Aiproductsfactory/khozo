@@ -52,5 +52,8 @@
   "No match": "जुळणी नाही",
   "This section could not be shown. Reload, or contact your administrator.": "हा भाग दाखवता आला नाही. पान पुन्हा लोड करा, किंवा तुमच्या प्रशासकाशी संपर्क साधा.",
   "Reload": "पुन्हा लोड करा",
-  "Open in Maps": "नकाशात उघडा"
+  "Open in Maps": "नकाशात उघडा",
+  "Email or mobile number": "ईमेल किंवा मोबाइल नंबर",
+  "Email, or the mobile number you signed up with": "ईमेल, किंवा ज्या मोबाइल नंबरने तुम्ही खाते उघडले तो",
+  "Email (optional)": "ईमेल (ऐच्छिक)"
 }

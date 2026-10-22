@@ -251,7 +251,7 @@ function stakeholderUsers(now = Date.now()) {
 function ensureStakeholderUsers() {
   let changed = false;
   for (const user of stakeholderUsers()) {
-    if (!db.users.some((u) => u.id === user.id || u.email.toLowerCase() === user.email.toLowerCase())) {
+    if (!db.users.some((u) => u.id === user.id || (u.email && user.email && u.email.toLowerCase() === user.email.toLowerCase()))) {
       db.users.push(user);
       changed = true;
     }
@@ -651,8 +651,10 @@ export function photoMimeType(filename) {
 }
 
 // --- Users ---
+// An account may have no email (a citizen signs up with a mobile number), so
+// a missing address never matches, and never throws.
 export const findUserByEmail = (email) =>
-  db.users.find((u) => u.email.toLowerCase() === String(email).toLowerCase());
+  (email ? db.users.find((u) => typeof u.email === 'string' && u.email.toLowerCase() === String(email).toLowerCase()) : null) || undefined;
 export const findUserById = (id) => db.users.find((u) => u.id === id);
 export const listUsers = () => db.users;
 export function addUser(user) {

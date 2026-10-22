@@ -17,7 +17,7 @@
     "dev:web": "npm run dev -w web",
     "seed:test-data": "node scripts/seed-test-data.mjs",
     "test:accounts": "node scripts/test-accounts.mjs",
-    "test:all": "npm run test:coverage && npm run smoke:api && npm run smoke:worker && npm run smoke:alerts && npm run smoke:intake && npm run smoke:match-pool && npm run smoke:match-engines && npm run smoke:face-index && npm run smoke:geo && npm run smoke:scope && npm run smoke:store && npm run smoke:web-routes && npm run smoke:pwa && npm run smoke:bulk-import && npm run smoke:audit-chain && npm run smoke:script-display && npm run smoke:ops && npm run smoke:privacy && npm run smoke:photo-strip && npm run smoke:photo-check && npm run smoke:trafficking && npm run smoke:multi-photo && npm run smoke:misuse && npm run smoke:out-of-area && npm run smoke:station-alerts && npm run smoke:bulk-accounts",
+    "test:all": "npm run test:coverage && npm run smoke:api && npm run smoke:worker && npm run smoke:alerts && npm run smoke:intake && npm run smoke:match-pool && npm run smoke:match-engines && npm run smoke:face-index && npm run smoke:geo && npm run smoke:scope && npm run smoke:store && npm run smoke:web-routes && npm run smoke:pwa && npm run smoke:bulk-import && npm run smoke:audit-chain && npm run smoke:script-display && npm run smoke:ops && npm run smoke:privacy && npm run smoke:photo-strip && npm run smoke:photo-check && npm run smoke:trafficking && npm run smoke:multi-photo && npm run smoke:misuse && npm run smoke:out-of-area && npm run smoke:station-alerts && npm run smoke:bulk-accounts && npm run smoke:register-mobile",
     "test:coverage": "node scripts/api-coverage.mjs",
     "smoke:store": "node scripts/store-replica-smoke.mjs",
     "smoke:api": "node scripts/api-smoke.mjs",
@@ -51,7 +51,8 @@
     "smoke:out-of-area": "node scripts/out-of-area-smoke.mjs",
     "smoke:station-alerts": "node scripts/station-alerts-smoke.mjs",
     "smoke:bulk-accounts": "node scripts/bulk-accounts-smoke.mjs",
-    "check:live": "node scripts/check-live.mjs"
+    "check:live": "node scripts/check-live.mjs",
+    "smoke:register-mobile": "node scripts/register-mobile-smoke.mjs"
   },
   "devDependencies": {
     "concurrently": "^10.0.3",

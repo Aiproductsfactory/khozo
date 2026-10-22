@@ -52,5 +52,8 @@
   "No match": "મેળ નથી",
   "This section could not be shown. Reload, or contact your administrator.": "આ ભાગ બતાવી શકાયો નથી. પાનું ફરી લોડ કરો, અથવા તમારા એડમિનિસ્ટ્રેટરનો સંપર્ક કરો.",
   "Reload": "ફરી લોડ કરો",
-  "Open in Maps": "નકશામાં ખોલો"
+  "Open in Maps": "નકશામાં ખોલો",
+  "Email or mobile number": "ઇમેઇલ અથવા મોબાઇલ નંબર",
+  "Email, or the mobile number you signed up with": "ઇમેઇલ, અથવા જે મોબાઇલ નંબરથી આપે ખાતું ખોલ્યું હતું તે",
+  "Email (optional)": "ઇમેઇલ (વૈકલ્પિક)"
 }

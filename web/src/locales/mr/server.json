@@ -75,5 +75,14 @@
   "Visit": "भेट",
   "Match confirmed": "जुळणीची खात्री झाली",
   "Case reopened": "प्रकरण पुन्हा उघडले",
-  "Family contacted": "कुटुंबाशी संपर्क झाला"
+  "Family contacted": "कुटुंबाशी संपर्क झाला",
+  "Name, mobile number and password are required": "नाव, मोबाइल नंबर आणि पासवर्ड आवश्यक आहेत",
+  "That email address does not look right. Correct it, or leave it empty.": "हा ईमेल पत्ता बरोबर वाटत नाही. तो दुरुस्त करा, किंवा रिकामा ठेवा.",
+  "An account with this mobile number already exists. Sign in instead.": "या मोबाइल नंबरने खाते आधीच आहे. त्याऐवजी साइन इन करा.",
+  "More than one account uses this mobile number. Sign in with your email address instead.": "हा मोबाइल नंबर एकापेक्षा जास्त खात्यांमध्ये आहे. त्याऐवजी तुमच्या ईमेलने साइन इन करा.",
+  "Wrong email, mobile number or password": "ईमेल, मोबाइल नंबर किंवा पासवर्ड चुकीचा आहे",
+  "An account with this email already exists": "या ईमेलने खाते आधीच आहे",
+  "Mobile number is required for OTP verification": "OTP पडताळणीसाठी मोबाइल नंबर आवश्यक आहे",
+  "OTP verification is required before registration": "खाते उघडण्यापूर्वी OTP पडताळणी आवश्यक आहे",
+  "OTP verification failed": "OTP पडताळणी अयशस्वी झाली"
 }

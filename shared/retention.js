@@ -46,6 +46,33 @@ function timeOf(value) {
 const isOpenCase = (report) => Boolean(report) && !report.anonymizedAt && !CLOSED_CASE.has(report.status);
 
 /**
+ * How long a case is kept after it is found or closed: the same 10 years a
+ * case is first given, counted again from the day it ended. The record and
+ * its photographs are the reference if the same person goes missing again,
+ * and a case registered in 2016 and found in 2025 must not be deleted a year
+ * later because its clock started at registration.
+ */
+export const CLOSED_CASE_KEEP_DAYS = 3650;
+
+/** When a found or closed case ended, or null. */
+export function caseEndedAt(report) {
+  return timeOf(report?.closure?.closedAt) ?? timeOf(report?.foundAt) ?? null;
+}
+
+/**
+ * The date a case may be anonymised: its own date, or, once it has ended,
+ * CLOSED_CASE_KEEP_DAYS after it ended, whichever is later. Null when it has
+ * no date.
+ */
+export function caseKeepUntil(report) {
+  const own = timeOf(report?.retentionUntil);
+  const ended = CLOSED_CASE.has(report?.status) ? caseEndedAt(report) : null;
+  const afterEnd = ended == null ? null : ended + CLOSED_CASE_KEEP_DAYS * DAY_MS;
+  if (own == null) return afterEnd;
+  return afterEnd == null ? own : Math.max(own, afterEnd);
+}
+
+/**
  * Why a sighting past its date is kept, and with which case, or null when it
  * is not: `{ reason, caseId }`. `casesById` maps case ids to cases.
  *
@@ -101,10 +128,12 @@ export function planRetention({ reports = [], foundReports = [], now = Date.now(
     // another 180 days. One whose case has itself ended goes with it.
     const escalation = sightingEscalation(f, casesById);
     const linked = escalation ? casesById.get(escalation.caseId) : null;
-    const linkedUntil = timeOf(linked?.retentionUntil);
+    // The case's own keep-until date, which for a found case runs from the
+    // day it was found: the confirming sighting is part of that record.
+    const linkedUntil = linked ? caseKeepUntil(linked) : null;
     const caseLives = linked && !linked.anonymizedAt && (isOpenCase(linked) || (linkedUntil != null && linkedUntil > now));
     if (escalation && caseLives) {
-      const until = linkedUntil != null && linkedUntil > now ? linked.retentionUntil : new Date(now + 180 * DAY_MS).toISOString();
+      const until = new Date(linkedUntil != null && linkedUntil > now ? linkedUntil : now + 180 * DAY_MS).toISOString();
       plan.sightings.extend.push({ id: f.id, reason: escalation.reason, caseId: linked.id, until });
     } else {
       plan.sightings.anonymise.push({ id: f.id, reason: escalation ? 'case_ended' : 'retention_expired' });
@@ -113,7 +142,7 @@ export function planRetention({ reports = [], foundReports = [], now = Date.now(
 
   for (const r of reports) {
     if (!r || r.anonymizedAt) continue;
-    const until = timeOf(r.retentionUntil);
+    const until = caseKeepUntil(r);
     if (until == null) continue;
     if (until > now) {
       if (until <= soon) plan.dueSoon.cases += 1;
