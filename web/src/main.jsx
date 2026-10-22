@@ -45,6 +45,7 @@ const Login = page(() => import('./pages/Login.jsx'));
 const Register = page(() => import('./pages/Register.jsx'));
 const Capture = page(() => import('./pages/Capture.jsx'));
 const ChangePassword = page(() => import('./pages/ChangePassword.jsx'));
+const Activate = page(() => import('./pages/Activate.jsx'));
 const Bulletins = page(() => import('./pages/Bulletins.jsx'));
 const ChildCase = page(() => import('./pages/ChildCase.jsx'));
 const Services = page(() => import('./pages/Services.jsx'));
@@ -102,6 +103,7 @@ const router = createBrowserRouter([
       { path: '/', element: <Landing /> },
       { path: '/login', element: <Login /> },
       { path: '/change-password', element: <ChangePassword /> },
+      { path: '/activate', element: <Activate /> },
       { path: '/register', element: <Register /> },
       { path: '/report', element: <Capture /> },
       { path: '/bulletins', element: <Bulletins /> },

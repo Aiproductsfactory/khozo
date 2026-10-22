@@ -28,6 +28,8 @@ export function AuthProvider({ children }) {
   const login = (email, password) => api.post('/auth/login', { email, password }).then(finishAuth);
   const startOtp = (phone) => api.post('/auth/otp/start', { phone });
   const register = (payload) => api.post('/auth/register', payload).then(finishAuth);
+  // An account made from a sheet: its one-time link sets the password and signs in.
+  const activate = (payload) => api.post('/auth/activate', payload).then(finishAuth);
   // Changing a password signs out every other session, and this one is
   // handed a fresh token to carry on with.
   const changePassword = (payload) => api.post('/auth/change-password', payload).then(({ token, user }) => {
@@ -41,7 +43,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthCtx.Provider value={{ user, loading, login, startOtp, register, changePassword, logout }}>
+    <AuthCtx.Provider value={{ user, loading, login, startOtp, register, activate, changePassword, logout }}>
       {children}
     </AuthCtx.Provider>
   );

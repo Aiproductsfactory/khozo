@@ -11,6 +11,7 @@ import { nanoid } from 'nanoid';
 
 import { readFields } from '../case-domain.js';
 import { sendSms, smsGatewayConfigured } from '../sms.js';
+import { checkActivation } from '../bulk-accounts.js';
 
 /**
  * Pending phone-verification challenges, keyed by phone number.
@@ -266,7 +267,12 @@ export default function registerAuthRoutes(router, deps) {
     if (read.error) return res.status(400).json({ error: read.error });
     const { email, password } = read.body;
     const user = findUserByEmail(email || '');
-    if (!user || !bcrypt.compareSync(password || '', user.passwordHash))
+    // An account made from a sheet has no password until its officer opens
+    // the activation link (POST /activate below).
+    if (user && !user.passwordHash && user.activation) {
+      return res.status(403).json({ error: 'This account is not active yet. Open the activation link you were sent to set your password, or ask your state desk for a new one.', code: 'activation_required' });
+    }
+    if (!user || !user.passwordHash || !bcrypt.compareSync(password || '', user.passwordHash))
       return res.status(401).json({ error: 'Invalid email or password' });
     // Signed first: a server that cannot sign changes nothing.
     const token = await tokenFor(res, user);
@@ -284,6 +290,75 @@ export default function registerAuthRoutes(router, deps) {
     res.json({ token, user: publicUser(current) });
   });
   
+  // --- Activation -----------------------------------------------------------
+  //
+  // An account made from a sheet (POST /api/dashboard/network/users/bulk) is
+  // activated by its officer: the one-time link they were sent names the
+  // account and carries a code, valid for a week (shared/bulk-accounts.js).
+  // Opening it sets their own password and signs them in. Limited per
+  // network address, so the codes cannot be guessed at speed.
+  const activateLimit = fixedWindowRateLimit({
+    name: 'auth_activate',
+    limit: 20,
+    envLimit: settings.activateLimit,
+    key: (req) => clientIp(req),
+    onLimit: auditPublicRateLimit,
+  });
+
+  function activationTarget(req) {
+    const read = readFields(req.body, { email: ['text', 160], code: ['text', 80] });
+    if (read.error) return { status: 400, error: read.error };
+    const user = findUserByEmail(String(read.body.email || '').trim().toLowerCase());
+    const state = checkActivation(user, read.body.code);
+    if (state === 'expired') return { status: 410, error: 'This activation link has expired. Ask your state desk to send a new one.', code: 'activation_expired' };
+    if (state !== 'ok') return { status: 404, error: 'This activation link is not valid, or the account is already active. Sign in instead.', code: 'activation_invalid' };
+    return { user };
+  }
+
+  /** Whether a link still works, and whose account it is, before the password form. */
+  router.post('/activate/check', activateLimit, (req, res) => {
+    const target = activationTarget(req);
+    if (target.error) return res.status(target.status).json({ error: target.error, code: target.code });
+    const u = target.user;
+    res.json({
+      name: u.name,
+      email: u.email,
+      role: u.role,
+      place: [u.jurisdiction?.station, u.jurisdiction?.district, u.jurisdiction?.state].filter(Boolean).join(', '),
+      expiresAt: u.activation.expiresAt,
+    });
+  });
+
+  router.post('/activate', activateLimit, async (req, res) => {
+    const target = activationTarget(req);
+    if (target.error) return res.status(target.status).json({ error: target.error, code: target.code });
+    const read = readFields(req.body, { password: 'secret' });
+    if (read.error) return res.status(400).json({ error: read.error });
+    const password = String(read.body.password || '');
+    if (password.length < 8) return res.status(400).json({ error: 'The password must be at least 8 characters' });
+    const user = updateUser(target.user.id, {
+      passwordHash: hashPassword(password),
+      activation: null,
+      activatedAt: Date.now(),
+      passwordChangedAt: Date.now(),
+      mustChangePassword: false,
+    });
+    addAudit({
+      actorId: user.id,
+      actorName: user.name,
+      actorRole: user.role,
+      action: 'auth.account_activated',
+      targetType: 'user',
+      targetId: user.id,
+      summary: 'Officer activated their account and set a password',
+      scope: { state: user.jurisdiction?.state || null, district: user.jurisdiction?.district || null },
+      metadata: { issuedById: target.user.activation?.issuedById || null },
+    });
+    const token = await tokenFor(res, user);
+    if (!token) return;
+    res.json({ token, user: publicUser(user) });
+  });
+
   router.get('/me', authRequired, (req, res) => {
     res.json({ user: publicUser(req.user) });
   });

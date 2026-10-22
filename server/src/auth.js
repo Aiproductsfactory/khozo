@@ -50,7 +50,7 @@ export function publicUser(u) {
   if (!u) return null;
   // A push token rings the officer's phone (shared/station-alerts.js): only
   // how many phones get alerts leaves the server.
-  const { passwordHash, pushTokens, ...rest } = u;
+  const { passwordHash, pushTokens, activation, ...rest } = u;
   return { ...rest, alertDevices: Array.isArray(pushTokens) ? pushTokens.length : 0 };
 }
 

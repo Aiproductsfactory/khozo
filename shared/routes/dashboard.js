@@ -40,6 +40,7 @@ import { dismissalApproval } from '../sighting-misuse.js';
 import { anonymiseCase, anonymiseSighting, runRetentionSweep } from '../retention.js';
 import { campaignSourceOf } from '../campaign-source.js';
 import { MAX_PUSH_DEVICES, STATION_ROLES, alertPhones, isPushToken, pushTokensOf, stationAlertWords, stationDeskOf } from '../station-alerts.js';
+import { BULK_MAX_ROWS, activationLink, isControlRoomWord, isEmail, isPhone, newActivation, parseLocation, roleFromSheet, sheetPhone } from '../bulk-accounts.js';
 
 export default function registerDashboardRoutes(router, deps) {
   const {
@@ -1534,6 +1535,9 @@ export default function registerDashboardRoutes(router, deps) {
         ? { lat: u.stationDesk.lat, lng: u.stationDesk.lng, posterCodes: u.stationDesk.posterCodes || [], on: u.stationDesk.on !== false }
         : null,
       alertDevices: pushTokensOf(u).length,
+      // Made from a sheet and not yet activated by its officer.
+      awaitingActivation: !u.passwordHash && Boolean(u.activation),
+      activationExpiresAt: !u.passwordHash && u.activation ? u.activation.expiresAt || null : null,
     };
   }
 
@@ -1666,6 +1670,167 @@ export default function registerDashboardRoutes(router, deps) {
       metadata: { role, email, mustChangePassword: true },
     });
     res.status(201).json({ user: publicUser(user), initialPassword });
+  });
+
+  /**
+   * Many accounts from a sheet (shared/bulk-accounts.js): police stations
+   * with their location, alert number and poster codes, control rooms, CWCs,
+   * NGOs, every desk the single form creates, under the same rules
+   * (canProvisionRole, provisionJurisdiction). Each new account gets a
+   * one-time activation link instead of a password. A row for an account
+   * that exists updates its contact and station details (never its name,
+   * role or area), and sends a fresh link if it is still not activated.
+   *
+   * `dryRun` checks every row and changes nothing: the console shows that
+   * first. Rows with a problem are reported and skipped; the rest go ahead.
+   */
+  router.post('/network/users/bulk', requireRole('super_admin', 'admin', 'state_nodal', 'sara', 'crime_bureau'), (req, res) => {
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
+    if (!rows || !rows.length) return res.status(400).json({ error: 'No rows to add' });
+    if (rows.length > BULK_MAX_ROWS) return res.status(400).json({ error: `At most ${BULK_MAX_ROWS} rows at a time` });
+    const dryRun = req.body?.dryRun === true;
+    const now = Date.now();
+    const seen = new Set();
+    const inScope = new Set(scopeNetworkUsers(req.user, listUsers()).map((u) => u.id));
+    const results = rows.map((raw, i) => {
+      const row = raw && typeof raw === 'object' ? raw : {};
+      const index = Number.isInteger(row.index) ? row.index : i;
+      const errors = [];
+      const warnings = [];
+      const name = cleanText(row.name, 120);
+      const email = cleanText(row.email, 160).toLowerCase();
+      const role = roleFromSheet(row.role);
+      if (!name) errors.push('Name is missing');
+      if (!isEmail(email)) errors.push('Email is missing or is not an email address');
+      else if (seen.has(email)) errors.push('This email is on another row of the sheet');
+      if (email) seen.add(email);
+      if (!role) errors.push(row.role ? `Role "${cleanText(row.role, 40)}" is not one Khozo knows` : 'Role is missing');
+      const phone = sheetPhone(row.phone);
+      if (phone && !isPhone(phone)) errors.push('Mobile must be 10 to 15 digits');
+      const alertPhone = sheetPhone(row.alertPhone);
+      if (alertPhone && !isPhone(alertPhone)) errors.push('Alert SMS number must be 10 to 15 digits');
+      const station = isControlRoomWord(row.role) ? '' : cleanText(row.station, 120);
+      const locationText = cleanText(row.location, 300);
+      const location = locationText ? parseLocation(locationText) : null;
+      if (locationText && !location) errors.push('Station location must be latitude, longitude, or a Google Maps link');
+      if (location && role && !STATION_ROLES.includes(role)) errors.push('Only a police station login has a station location');
+      if (location && role === 'police' && !station) errors.push('A station location needs the police station’s name');
+      const codes = String(row.posterCodes ?? '').split(/[,\n]+/).map((c) => c.trim()).filter(Boolean);
+      const ignoredCodes = codes.filter((c) => !campaignSourceOf(c));
+      if (ignoredCodes.length) warnings.push(`Not poster codes, left out: ${ignoredCodes.join(', ')}`);
+      const posterCodes = [...new Set(codes.map(campaignSourceOf).filter(Boolean))].slice(0, 20);
+      if (posterCodes.length && !location) errors.push('Poster codes need the station’s location');
+      const org = cleanText(row.org, 120);
+      const ngoRegistration = cleanText(row.ngoRegistration, 80);
+      const ngoDarpanId = cleanText(row.ngoDarpanId, 40);
+      // The state desk adding an NGO vouches for it with its registration.
+      if (role === 'ngo' && !ngoRegistration) errors.push('An NGO needs its registration number');
+      if (role === 'police' && !station && !isControlRoomWord(row.role)) warnings.push('No police station named: this login covers the whole district, like a control room');
+
+      const existing = isEmail(email) ? findUserByEmail(email) : null;
+      let action = 'create';
+      let jurisdiction = null;
+      if (existing) {
+        action = 'update';
+        if (!inScope.has(existing.id) || (existing.role === 'super_admin' && req.user.role !== 'super_admin')) {
+          errors.push('An account with this email exists outside your area');
+        } else if (role && existing.role !== role) {
+          errors.push(`An account with this email already exists as ${existing.role}`);
+        }
+      } else if (role && !errors.length) {
+        if (!canProvisionRole(req.user, role)) {
+          errors.push('You cannot create accounts with this role');
+        } else {
+          const placed = provisionJurisdiction(req.user, role, { state: cleanText(row.state, 80), district: cleanText(row.district, 80), station });
+          if (placed.error) errors.push(placed.error);
+          else jurisdiction = placed.jurisdiction;
+        }
+      }
+
+      // What this row changes on an existing account: only what the sheet gives.
+      const patch = {};
+      if (existing && !errors.length) {
+        if (phone && phone !== existing.phone) patch.phone = phone;
+        if (alertPhone && alertPhone !== existing.alertPhone) patch.alertPhone = alertPhone;
+        if (org && org !== existing.org) patch.org = org;
+        if (location) {
+          const before = existing.stationDesk || {};
+          const changed = before.lat !== location.lat || before.lng !== location.lng
+            || (before.posterCodes || []).join() !== posterCodes.join() || before.on === false;
+          if (changed) patch.stationDesk = { ...location, posterCodes, on: true, updatedAt: now, updatedById: req.user.id, updatedByName: req.user.name };
+        }
+        if (role === 'ngo' && (ngoRegistration !== existing.ngo?.registrationNo || (ngoDarpanId && ngoDarpanId !== existing.ngo?.darpanId))) {
+          patch.ngo = { registrationNo: ngoRegistration, darpanId: ngoDarpanId || existing.ngo?.darpanId || null, verifiedById: req.user.id, verifiedByName: req.user.name, verifiedAt: now };
+        }
+      }
+      const relink = Boolean(existing) && !existing.passwordHash;
+      if (existing && !errors.length && !Object.keys(patch).length && !relink) action = 'unchanged';
+      const result = {
+        index, name, email, role, action,
+        place: [station, jurisdiction?.district || existing?.jurisdiction?.district, jurisdiction?.state || existing?.jurisdiction?.state].filter(Boolean).join(', '),
+        changes: Object.keys(patch),
+        errors, warnings,
+      };
+      if (errors.length) return { ...result, action: 'error' };
+      if (dryRun || action === 'unchanged') return result;
+
+      let activation = null;
+      if (!existing) {
+        activation = newActivation(req.user, now);
+        const user = addUser({
+          id: `u_${nanoid(8)}`,
+          name,
+          email,
+          passwordHash: null,
+          role,
+          phone: phone || null,
+          org: org || null,
+          jurisdiction,
+          ...(alertPhone ? { alertPhone } : {}),
+          ...(location ? { stationDesk: { ...location, posterCodes, on: true, updatedAt: now, updatedById: req.user.id, updatedByName: req.user.name } } : {}),
+          ...(role === 'ngo' ? { ngo: { registrationNo: ngoRegistration, darpanId: ngoDarpanId || null, verifiedById: req.user.id, verifiedByName: req.user.name, verifiedAt: now } } : {}),
+          activation: activation.record,
+          provisionedBy: req.user.id,
+          provisionedInBulk: true,
+          mustChangePassword: false,
+          createdAt: now,
+        });
+        addAudit({
+          actorId: req.user.id,
+          actorName: req.user.name,
+          actorRole: req.user.role,
+          action: 'auth.privileged_user_provisioned',
+          targetType: 'user',
+          targetId: user.id,
+          summary: `Provisioned ${role} account for ${name} from a sheet`,
+          scope: { state: jurisdiction.state, district: jurisdiction.district },
+          metadata: { role, email, bulk: true, activationExpiresAt: activation.record.expiresAt, stationDesk: Boolean(location), ngoRegistration: role === 'ngo' ? ngoRegistration : undefined },
+        });
+      } else {
+        if (relink) activation = newActivation(req.user, now);
+        updateUser(existing.id, { ...patch, ...(activation ? { activation: activation.record } : {}) });
+        addAudit({
+          actorId: req.user.id,
+          actorName: req.user.name,
+          actorRole: req.user.role,
+          action: 'auth.user_updated_from_sheet',
+          targetType: 'user',
+          targetId: existing.id,
+          summary: `Updated ${existing.name}'s contact and station details from a sheet`,
+          scope: { state: existing.jurisdiction?.state || null, district: existing.jurisdiction?.district || null },
+          metadata: { changes: Object.keys(patch), newActivationLink: Boolean(activation) },
+        });
+      }
+      return activation
+        ? { ...result, activationLink: activationLink(email, activation.code), activationExpiresAt: activation.record.expiresAt }
+        : result;
+    });
+    const count = (action) => results.filter((r) => r.action === action).length;
+    res.json({
+      dryRun,
+      results,
+      summary: { create: count('create'), update: count('update'), unchanged: count('unchanged'), error: count('error') },
+    });
   });
   
   router.post('/network/alerts', requireRole(...NETWORK_ALERT_ROLES), (req, res) => {

@@ -5,22 +5,11 @@
 import { useState } from 'react';
 import { api } from '../api.js';
 import { useT } from '../i18n.jsx';
+import { parseLocation } from '../../../shared/location-text.js';
 
 /** POST /api/dashboard/network/users/:id/alerts: who may change an account's alerts. */
 export const ALERT_SETTINGS_ROLES = ['super_admin', 'admin', 'crime_bureau'];
 const STATION_ROLES = ['police', 'sjpu'];
-
-/**
- * Latitude and longitude from what an admin pastes: "23.0300, 72.6010", or a
- * Google Maps link ("…/@23.0300,72.6010,17z" or "…?q=23.0300,72.6010").
- */
-export function parseLocation(value) {
-  const m = /(-?\d{1,2}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)/.exec(String(value || ''));
-  if (!m) return null;
-  const lat = Number(m[1]);
-  const lng = Number(m[2]);
-  return Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng } : null;
-}
 
 export default function AlertSettings({ account, onSaved }) {
   const t = useT();

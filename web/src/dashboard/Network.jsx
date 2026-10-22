@@ -5,6 +5,7 @@ import { useAuth } from '../auth.jsx';
 import { msg, useT } from '../i18n.jsx';
 import DistrictPicker from '../DistrictPicker.jsx';
 import AlertSettings, { ALERT_SETTINGS_ROLES } from './AlertSettings.jsx';
+import BulkAccounts from './BulkAccounts.jsx';
 
 const ORDER = ['super_admin', 'admin', 'state_nodal', 'sara', 'crime_bureau', 'dcrb', 'dlsa', 'police', 'sjpu', 'ahtu', 'cwc', 'dcpu', 'rpf', 'cci', 'saa', 'jjb', 'ngo', 'parent'];
 const ROLE_OPTIONS = [
@@ -334,6 +335,9 @@ export default function Network() {
         </section>
       )}
 
+      {/* Many accounts at once, for the desks that may create them. */}
+      {roles.length > 0 && <BulkAccounts onDone={load} />}
+
       {grouped.map((g) => (
         <div key={g.role}>
           <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">{roleLabel(g.role)} / {g.members.length}</h3>
@@ -350,6 +354,13 @@ export default function Network() {
                 <p className="text-xs text-gray-500">
                   {[u.jurisdiction?.station, u.jurisdiction?.district, u.jurisdiction?.state].filter(Boolean).join(', ') || t('National')}
                 </p>
+                {u.awaitingActivation && (
+                  <p className="rounded-lg bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800">
+                    {u.activationExpiresAt && u.activationExpiresAt < Date.now()
+                      ? t('Not activated, and the link has expired. Upload the row again for a new link.')
+                      : t('Not activated yet: the officer has not opened their link.')}
+                  </p>
+                )}
                 {ALERT_SETTINGS_ROLES.includes(user.role) && (u.role !== 'super_admin' || user.role === 'super_admin') && (
                   <AlertSettings account={u} onSaved={(next) => next && setUsers((list) => list.map((x) => (x.id === next.id ? next : x)))} />
                 )}
