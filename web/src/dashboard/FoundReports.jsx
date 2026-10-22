@@ -55,13 +55,14 @@ const CWC_OUTCOMES = [
 ];
 
 /**
- * The two views are different jobs, so they are different pages.
+ * Two pages over the same sightings.
  *
  * *Matches* is a biometric decision: a face was compared to an open case and an
- * officer confirms or rejects it. *Sightings* is intake: a report that matched
- * nothing, needing welfare follow-up rather than identification. Mixed into one
- * list, the handful that need a police decision were buried among the many that
- * need a CWC one.
+ * officer confirms or rejects it, so it lists only sightings linked to a case.
+ * *Sightings* is everything the public sent. It once left out the linked ones,
+ * and an officer looking there for a sighting they knew had been sent could
+ * not find it. A linked sighting awaiting a decision sorts to the top of its
+ * queue, so it is not buried among the ones that need a CWC follow-up.
  */
 const VIEWS = {
   matches: {
@@ -81,16 +82,16 @@ const VIEWS = {
   sightings: {
     title: msg('Sightings'),
     blurb: msg(
-      'Reports from the public that matched no open case. They need welfare follow-up by Childline and the CWC, not a decision on who the person is.'
+      'Every sighting the public has sent. One that may match an open case is also under Matches, where an officer decides. The others need follow-up: by Childline and the CWC for a child, by the police for an adult.'
     ),
-    belongs: (f) => !f.matchedReportId,
+    belongs: () => true,
     filters: [
-      { id: 'needs_review', label: msg('Needs follow-up'), match: (f) => ['no_match', 'referred_cwc'].includes(f.status) },
-      { id: 'matched', label: msg('Actioned'), match: (f) => ['cwc_followup_complete', 'formalized_case'].includes(f.status) },
+      { id: 'needs_review', label: msg('Needs follow-up'), match: (f) => ['pending_review', 'no_match', 'referred_cwc'].includes(f.status) },
+      { id: 'matched', label: msg('Actioned'), match: (f) => ['matched', 'cwc_followup_complete', 'formalized_case'].includes(f.status) },
       { id: 'closed', label: msg('Closed'), match: (f) => ['rejected', 'dismissed'].includes(f.status) },
       { id: 'all', label: msg('All'), match: () => true },
     ],
-    empty: msg('No unmatched sightings are waiting.'),
+    empty: msg('No sightings have been sent yet.'),
   },
 };
 
