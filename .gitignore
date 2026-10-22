@@ -25,3 +25,9 @@ __pycache__/
 
 # Agent worktrees
 .claude/worktrees/
+
+# Decks, PDFs and films in docs/ are shared by hand, not kept in the public
+# repo. Two older .pptx decks were tracked before this rule and stay tracked.
+docs/*.pdf
+docs/*.pptx
+docs/*.mp4
