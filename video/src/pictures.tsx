@@ -2,9 +2,9 @@
 // show a child, a missing person or anyone who could be taken for one.
 import React from 'react';
 import { Easing, interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion';
-import { LATIN } from './fonts';
+import { LATIN, fontFor } from './fonts';
 import { HAND } from './Logo';
-import type { Colours } from './props';
+import type { Colours, LanguagePack } from './props';
 
 const clamp = { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' } as const;
 
@@ -43,7 +43,6 @@ export const Platform: React.FC<{ size: number; colours: Colours }> = ({ size, c
         <rect x="-12" y="58" width="9" height="20" fill="#0e1520" />
         <rect x="3" y="58" width="9" height="20" fill="#0e1520" />
       </g>
-      <text x="200" y="285" textAnchor="middle" fontFamily={LATIN} fontSize="13" fill="#9aa5b5">a child alone, late in the evening</text>
     </svg>
   );
 };
@@ -93,7 +92,7 @@ export const EmergencyPhone: React.FC<{ size: number; colours: Colours; emergenc
 };
 
 /** The report form on a phone: a photo (no face), a place, a Send button that is pressed. */
-export const ReportPhone: React.FC<{ size: number; colours: Colours; url: string; pressAt: number }> = ({ size, colours, url, pressAt }) => {
+export const ReportPhone: React.FC<{ size: number; colours: Colours; url: string; pressAt: number; pack: LanguagePack }> = ({ size, colours, url, pressAt, pack }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const w = size * 0.56;
@@ -104,7 +103,7 @@ export const ReportPhone: React.FC<{ size: number; colours: Colours; url: string
   const row = (label: string, filled: boolean) => (
     <div style={{ display: 'flex', alignItems: 'center', gap: w * 0.04, padding: `${w * 0.035}px ${w * 0.05}px`, borderRadius: w * 0.04, background: '#fff', border: `${w * 0.006}px solid #d8dfd2` }}>
       <div style={{ width: w * 0.06, height: w * 0.06, borderRadius: '50%', background: filled ? colours.brand : '#d8dfd2', flex: 'none' }} />
-      <div style={{ fontFamily: LATIN, fontSize: w * 0.052, color: colours.ink, fontWeight: 600 }}>{label}</div>
+      <div style={{ fontFamily: fontFor(pack.script), fontSize: w * 0.052, color: colours.ink, fontWeight: 600 }}>{label}</div>
     </div>
   );
   return (
@@ -124,9 +123,9 @@ export const ReportPhone: React.FC<{ size: number; colours: Colours; url: string
               <path d="M40 56V40a10 10 0 0 1 20 0v16z" fill="#5c6660" />
             </svg>
           </div>
-          {row('Photo added', true)}
-          {row('Near Platform 4', true)}
-          {row('Your name (optional)', false)}
+          {row(pack.ui.photoAdded, true)}
+          {row(pack.ui.place, true)}
+          {row(pack.ui.nameOptional, false)}
           <div style={{ marginTop: 'auto' }}>
             <div
               style={{
@@ -138,9 +137,10 @@ export const ReportPhone: React.FC<{ size: number; colours: Colours; url: string
                 textAlign: 'center',
                 fontWeight: 800,
                 fontSize: w * 0.06,
+                fontFamily: fontFor(pack.script),
               }}
             >
-              {sent ? 'Sent to the police ✓' : 'Send to the police'}
+              {sent ? pack.ui.sent : pack.ui.send}
             </div>
           </div>
         </div>
@@ -150,7 +150,7 @@ export const ReportPhone: React.FC<{ size: number; colours: Colours; url: string
 };
 
 /** A photo card travelling from the phone to a shield with a lock, and nowhere else. */
-export const Journey: React.FC<{ size: number; colours: Colours }> = ({ size, colours }) => {
+export const Journey: React.FC<{ size: number; colours: Colours; pack: LanguagePack }> = ({ size, colours, pack }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const t = interpolate(frame, [fps * 0.3, fps * 1.8], [0, 1], { ...clamp, easing: Easing.inOut(Easing.cubic) });
@@ -174,7 +174,7 @@ export const Journey: React.FC<{ size: number; colours: Colours }> = ({ size, co
           <rect x="-16" y="-8" width="32" height="26" rx="4" fill="#fff" />
           <path d="M-9 -8v-8a9 9 0 0 1 18 0v8" fill="none" stroke="#fff" strokeWidth="4" />
         </g>
-        <text y="80" textAnchor="middle" fontFamily={LATIN} fontSize="13" fontWeight="700" fill={colours.deep}>THE POLICE</text>
+        <text y="80" textAnchor="middle" fontFamily={fontFor(pack.script)} fontSize="14" fontWeight="700" fill={colours.deep}>{pack.ui.police}</text>
       </g>
       {/* the photo in flight */}
       <g transform={`translate(${x} ${y}) rotate(${t * 20})`} opacity={1 - arrive * 0.9}>
@@ -189,13 +189,12 @@ export const Journey: React.FC<{ size: number; colours: Colours }> = ({ size, co
           <line x1="-30" y1="18" x2="30" y2="-18" stroke={colours.warn} strokeWidth="4" strokeLinecap="round" />
         </g>
       ))}
-      <text x="190" y="195" textAnchor="middle" fontFamily={LATIN} fontSize="12" fill="#56616b">not to groups, not to anyone else</text>
     </svg>
   );
 };
 
 /** A chat bubble with a forward arrow, crossed out. */
-export const NoForward: React.FC<{ size: number; colours: Colours }> = ({ size, colours }) => {
+export const NoForward: React.FC<{ size: number; colours: Colours; pack: LanguagePack }> = ({ size, colours, pack }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const cross = interpolate(frame, [fps * 0.4, fps * 0.9], [0, 1], { ...clamp, easing: Easing.out(Easing.cubic) });
@@ -210,7 +209,7 @@ export const NoForward: React.FC<{ size: number; colours: Colours }> = ({ size, 
         <rect x="40" y="48" width="90" height="70" rx="6" fill="#b9c2b4" />
         <circle cx="85" cy="74" r="9" fill="#5c6660" />
         <path d="M70 112V96a15 15 0 0 1 30 0v16z" fill="#5c6660" />
-        <text x="140" y="70" fontFamily={LATIN} fontSize="13" fill="#56616b">Forwarded</text>
+        <text x="140" y="70" fontFamily={fontFor(pack.script)} fontSize="13" fill="#56616b">{pack.ui.forwarded}</text>
         {/* the forward arrow */}
         <path d="M150 110 l40 -22 v12 q30 -2 48 24 q-22 -14 -48 -8 v12 z" fill="#56616b" />
       </g>

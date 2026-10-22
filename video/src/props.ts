@@ -20,6 +20,17 @@ export type LanguagePack = {
   dontForward: string;
   /** Scene 6: the message people remember. */
   motto: string;
+  /** Words inside the pictures: the report form, the police, a forwarded chat. */
+  ui: {
+    photoAdded: string;
+    place: string;
+    nameOptional: string;
+    send: string;
+    sent: string;
+    police: string;
+    forwarded: string;
+    emergency: string;
+  };
 };
 
 export type Helpline = { label: string; number: string };
@@ -31,7 +42,7 @@ export type ExplainerProps = {
   url: string;
   /** The emergency number comes first, before the website. */
   emergency: string;
-  /** Other helplines, shown beside the emergency number. */
+  /** Other helplines, shown beside the emergency number, labelled in the primary language. */
   helplines: Helpline[];
   /** The language the lines are spoken in; the big caption. */
   primary: LanguagePack;
@@ -68,6 +79,7 @@ export const ENGLISH: LanguagePack = {
   onlyPolice: 'Only the police see it. Free. No login. Your name is optional.',
   dontForward: 'Never forward the photo.',
   motto: 'See it. Send it to the police. Don’t forward it.',
+  ui: { photoAdded: 'Photo added', place: 'Near Platform 4', nameOptional: 'Your name (optional)', send: 'Send to the police', sent: 'Sent to the police ✓', police: 'THE POLICE', forwarded: 'Forwarded', emergency: 'Emergency' },
 };
 
 export const GUJARATI: LanguagePack = {
@@ -79,6 +91,7 @@ export const GUJARATI: LanguagePack = {
   onlyPolice: 'ફક્ત પોલીસ જ જુએ છે. મફત. લૉગ ઇન વિના. નામ આપવું ફરજિયાત નથી.',
   dontForward: 'ફોટો ક્યારેય ફોરવર્ડ ન કરો.',
   motto: 'જુઓ. પોલીસને મોકલો. ફોરવર્ડ ન કરો.',
+  ui: { photoAdded: 'ફોટો ઉમેર્યો', place: 'પ્લેટફોર્મ 4 પાસે', nameOptional: 'આપનું નામ (વૈકલ્પિક)', send: 'પોલીસને મોકલો', sent: 'પોલીસને મોકલ્યું ✓', police: 'પોલીસ', forwarded: 'ફોરવર્ડ કરેલું', emergency: 'ઇમરજન્સી' },
 };
 
 export const HINDI: LanguagePack = {
@@ -90,6 +103,7 @@ export const HINDI: LanguagePack = {
   onlyPolice: 'सिर्फ़ पुलिस देखती है। मुफ़्त। बिना लॉग इन के। नाम देना ज़रूरी नहीं।',
   dontForward: 'फ़ोटो कभी फ़ॉरवर्ड न करें।',
   motto: 'देखें। पुलिस को भेजें। फ़ॉरवर्ड न करें।',
+  ui: { photoAdded: 'फ़ोटो जोड़ी गई', place: 'प्लेटफ़ॉर्म 4 के पास', nameOptional: 'आपका नाम (वैकल्पिक)', send: 'पुलिस को भेजें', sent: 'पुलिस को भेजा गया ✓', police: 'पुलिस', forwarded: 'फ़ॉरवर्ड किया गया', emergency: 'इमरजेंसी' },
 };
 
 export const LANGUAGES: Record<string, LanguagePack> = { en: ENGLISH, gu: GUJARATI, hi: HINDI };
@@ -100,8 +114,8 @@ export const AHMEDABAD: ExplainerProps = {
   url: 'khozo.org/report',
   emergency: '112',
   helplines: [
-    { label: 'Child', number: '1098' },
-    { label: 'Woman', number: '181' },
+    { label: 'બાળક', number: '1098' },
+    { label: 'મહિલા', number: '181' },
   ],
   primary: GUJARATI,
   secondary: ENGLISH,

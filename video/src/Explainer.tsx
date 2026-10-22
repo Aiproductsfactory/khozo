@@ -12,13 +12,13 @@ export const SCENES = { see: 4, danger: 4, send: 5, onlyPolice: 4, dontForward: 
 export const TOTAL_SECONDS = Object.values(SCENES).reduce((a, b) => a + b, 0);
 
 const Helplines: React.FC<{ props: ExplainerProps; colours: Colours; light?: boolean; size: number }> = ({ props, colours, light = false, size }) => (
-  <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: size * 0.5, fontFamily: LATIN, fontSize: size, color: light ? '#fff' : colours.ink }}>
+  <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: size * 0.5, fontFamily: fontFor(props.primary.script), fontSize: size, color: light ? '#fff' : colours.ink }}>
     <span>
-      <b style={{ fontWeight: 800 }}>{props.emergency}</b> <span style={{ opacity: 0.75 }}>Emergency</span>
+      <b style={{ fontWeight: 800, fontFamily: LATIN }}>{props.emergency}</b> <span style={{ opacity: 0.75 }}>{props.primary.ui.emergency}</span>
     </span>
     {props.helplines.map((h) => (
       <span key={h.number}>
-        <b style={{ fontWeight: 800 }}>{h.number}</b> <span style={{ opacity: 0.75 }}>{h.label}</span>
+        <b style={{ fontWeight: 800, fontFamily: LATIN }}>{h.number}</b> <span style={{ opacity: 0.75 }}>{h.label}</span>
       </span>
     ))}
   </div>
@@ -75,7 +75,7 @@ export const Explainer: React.FC<ExplainerProps> = (props) => {
   const upright = height > width;
   const pic = Math.round(upright ? width * 0.78 : height * 0.72);
   const cap = Math.round(width * (upright ? 0.064 : 0.036));
-  const line = (key: keyof Omit<LanguagePack, 'code' | 'script'>) => ({
+  const line = (key: keyof Omit<LanguagePack, 'code' | 'script' | 'ui'>) => ({
     primary: { text: fill(props.primary[key], props), pack: props.primary },
     secondary: props.secondary ? { text: fill(props.secondary[key], props), pack: props.secondary } : null,
   });
@@ -115,7 +115,7 @@ export const Explainer: React.FC<ExplainerProps> = (props) => {
         <Scene
           background={colours.paper}
           durationInFrames={send.durationInFrames}
-          picture={<ReportPhone size={pic * 0.95} colours={colours} url={props.url} pressAt={fps * 2.6} />}
+          picture={<ReportPhone size={pic * 0.95} colours={colours} url={props.url} pressAt={fps * 2.6} pack={props.primary} />}
           caption={<Caption {...line('send')} colours={colours} size={cap} delay={fps * 0.3} />}
         />
       </Sequence>
@@ -123,7 +123,7 @@ export const Explainer: React.FC<ExplainerProps> = (props) => {
         <Scene
           background={colours.soft}
           durationInFrames={onlyPolice.durationInFrames}
-          picture={<Journey size={pic * 1.1} colours={colours} />}
+          picture={<Journey size={pic * 1.1} colours={colours} pack={props.primary} />}
           caption={<Caption {...line('onlyPolice')} colours={colours} size={cap * 0.9} delay={fps * 0.3} />}
         />
       </Sequence>
@@ -131,7 +131,7 @@ export const Explainer: React.FC<ExplainerProps> = (props) => {
         <Scene
           background={colours.paper}
           durationInFrames={dontForward.durationInFrames}
-          picture={<NoForward size={pic * 0.9} colours={colours} />}
+          picture={<NoForward size={pic * 0.9} colours={colours} pack={props.primary} />}
           caption={<Caption {...line('dontForward')} colours={colours} size={cap * 1.1} delay={fps * 0.2} />}
         />
       </Sequence>
