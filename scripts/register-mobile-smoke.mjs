@@ -32,7 +32,7 @@ const DESK = { id: 'u_desk', role: 'police', name: 'PS Kalupur desk', email: 'ps
 const DESK2 = { id: 'u_desk2', role: 'police', name: 'PSO Kalupur', email: 'pso.kalupur@gujarat.test', passwordHash: hash('shared-pass'), phone: '9000000202', jurisdiction: { level: 'station', state: 'Gujarat', district: 'Ahmedabad', station: 'Kalupur' } };
 const DESK3 = { id: 'u_desk3', role: 'police', name: 'PI Kalupur', email: 'pi.kalupur@gujarat.test', passwordHash: hash('shared-pass'), phone: '9000000202', jurisdiction: { level: 'station', state: 'Gujarat', district: 'Ahmedabad', station: 'Kalupur' } };
 
-function harness() {
+function harness(settings = {}) {
   const db = { users: [DESK, DESK2, DESK3].map((u) => structuredClone(u)), audit: [] };
   const routes = [];
   const router = {
@@ -53,7 +53,7 @@ function harness() {
     authRequired: pass, publicUser,
     signToken: async (u) => `token-${u.id}`,
     auditPublicRateLimit: () => {}, clientIp: () => 'test', fixedWindowRateLimit: () => pass,
-    settings: {},
+    settings,
   });
   const call = async (method, path, body = {}) => {
     const route = routes.find((r) => r.method === method && r.path === path);
@@ -161,6 +161,35 @@ async function signUp(h, body) {
   const citizen = await signUp(h, { name: 'Citizen on desk number', phone: '9000000909', password: 'citizen-pass', role: 'parent' });
   const byNumber = await h.call('POST', '/login', { email: '9000000909', password: 'citizen-pass' });
   check('a citizen on that number is tried first and signs in', citizen.status === 201 && byNumber.status === 200 && byNumber.payload?.user?.role === 'parent', `HTTP ${citizen.status}/${byNumber.status}`);
+}
+
+// A live server with no SMS service: no code can arrive, so sign-up goes
+// ahead without one and the number is recorded as not verified. Connecting a
+// gateway brings the code back.
+{
+  const live = harness({ nodeEnv: 'production' });
+  const options = await live.call('GET', '/signup-options');
+  check('with no SMS service on a live server, the form is told no code is needed', options.payload?.otp === false, JSON.stringify(options.payload));
+  const sent = await live.call('POST', '/otp/start', { phone: '9825022222' });
+  check('and no code is pretended to be sent', sent.status === 503 && !sent.payload?.demoOtp, `HTTP ${sent.status}`);
+  const res = await live.call('POST', '/register', { name: 'Savitaben', phone: '+91 98250 22222', password: 'gaam-ma-rahu', role: 'parent' });
+  const user = live.db.users.find((u) => u.name === 'Savitaben');
+  check('a parent signs up with a mobile number and no code', res.status === 201 && Boolean(res.payload?.token), `HTTP ${res.status} ${res.payload?.error || ''}`);
+  check('the number is kept, and marked not verified', user?.phone === '9825022222' && user.phoneVerified === false && user.phoneVerifiedAt === null);
+  check('the record says so', live.db.audit.some((a) => a.action === 'auth.public_user_registered' && a.metadata?.phoneVerified === false && /not verified/.test(a.summary)));
+  const again = await live.call('POST', '/register', { name: 'Someone else', phone: '098250 22222', password: 'another-pass', role: 'parent' });
+  check('still one account per number', again.status === 409 && again.payload?.code === 'phone_taken', `HTTP ${again.status}`);
+  const signIn = await live.call('POST', '/login', { email: '98250 22222', password: 'gaam-ma-rahu' });
+  check('they sign in with the number', signIn.status === 200 && signIn.payload?.user?.name === 'Savitaben');
+  const official = await live.call('POST', '/register', { name: 'Fake PI', phone: '9825033333', password: 'pass-pass', role: 'police' });
+  check('an official role still cannot sign itself up', official.status === 403);
+
+  const gateway = harness({ nodeEnv: 'production', smsGatewayUrl: 'https://sms.test/send', smsApiKey: 'key' });
+  const withSms = await gateway.call('GET', '/signup-options');
+  const noCode = await gateway.call('POST', '/register', { name: 'No code', phone: '9825044444', password: 'gaam-ma-rahu', role: 'parent' });
+  check('once an SMS service is set, the code is needed again', withSms.payload?.otp === true && noCode.status === 400 && !gateway.db.users.some((u) => u.name === 'No code'), `HTTP ${noCode.status}`);
+  const dev = harness({});
+  check('in development the code is still asked for, and shown on screen', (await dev.call('GET', '/signup-options')).payload?.otp === true);
 }
 
 const failed = checks.filter((ok) => !ok).length;

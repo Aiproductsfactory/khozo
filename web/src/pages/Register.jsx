@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { api } from '../api.js';
 import { useAuth } from '../auth.jsx';
 import { Logo } from '../components.jsx';
 import { LanguageSwitcher, msg, useT } from '../i18n.jsx';
@@ -18,6 +19,14 @@ export default function Register() {
   const [role, setRole] = useState('parent');
   const [form, setForm] = useState({ name: '', email: '', password: '', phone: '', otp: '', org: '', state: '', district: '', station: '' });
   const [otpState, setOtpState] = useState(null);
+  // Whether this server can send an SMS code. Until an SMS service is
+  // connected it cannot, and the account is made without one, its number
+  // marked not verified (shared/routes/auth.js otpRequired). Asked as before
+  // if the answer does not come.
+  const [otpNeeded, setOtpNeeded] = useState(true);
+  useEffect(() => {
+    api.get('/auth/signup-options').then((d) => setOtpNeeded(d?.otp !== false)).catch(() => {});
+  }, []);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -42,7 +51,7 @@ export default function Register() {
     setErr('');
     setBusy(true);
     try {
-      await register({ ...form, role });
+      await register({ ...form, otp: otpNeeded ? form.otp : '', role });
       nav('/app');
     } catch (e) {
       setErr(e.message);
@@ -85,6 +94,28 @@ export default function Register() {
                 </button>
               ))}
             </div>
+            {/* Most people never need an account: reporting a sighting and
+                following a case both work without one. */}
+            <div className="mt-6 rounded-2xl bg-white p-4 text-sm ring-1 ring-black/5">
+              <p className="font-semibold text-ink">{t('You do not need an account to:')}</p>
+              <ul className="mt-2 space-y-2">
+                <li>
+                  <Link to="/report" className="font-semibold text-khozo-dark underline">{t('Send a photo')}</Link>
+                  <span className="block text-gray-500">{t('Seen someone who seems lost? Free, no login.')}</span>
+                </li>
+                <li>
+                  <Link to="/track-sighting" className="font-semibold text-khozo-dark underline">{t('Track a report I made')}</Link>
+                  <span className="block text-gray-500">{t('Use the receipt number you were given.')}</span>
+                </li>
+                <li>
+                  <Link to="/track-case" className="font-semibold text-khozo-dark underline">{t('Track my case')}</Link>
+                  <span className="block text-gray-500">{t('Use the Case ID given when the case was registered.')}</span>
+                </li>
+              </ul>
+              <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-amber-900">
+                {t('If your child is missing, go to the nearest police station now, or call 112. The police register the case and give you a Case ID to follow it here.')}
+              </p>
+            </div>
           </div>
 
           <form onSubmit={submit} className="card space-y-4 p-4 sm:p-6">
@@ -98,11 +129,15 @@ export default function Register() {
               <div>
                 <label className="label" htmlFor="reg-phone">{t('Mobile no.')} *</label>
                 <input id="reg-phone" className="field" type="tel" inputMode="tel" autoComplete="tel" value={form.phone} onChange={set('phone')} required />
+                {!otpNeeded && (
+                  <p className="mt-1 text-xs text-gray-500">{t('Give your own number. We cannot send an SMS code yet, so it is not checked now; the police will call you on it.')}</p>
+                )}
               </div>
               <div>
                 <label className="label" htmlFor="reg-email">{t('Email (optional)')}</label>
                 <input id="reg-email" className="field" type="email" inputMode="email" autoComplete="email" autoCapitalize="off" spellCheck={false} value={form.email} onChange={set('email')} />
               </div>
+              {otpNeeded && (
               <div>
                 <label className="label">OTP *</label>
                 <div className="flex gap-2">
@@ -117,6 +152,7 @@ export default function Register() {
                   </p>
                 )}
               </div>
+              )}
               <div className="sm:col-span-2">
                 <label className="label">{t('Password')} *</label>
                 <input className="field" type="password" autoComplete="new-password" value={form.password} onChange={set('password')} required />

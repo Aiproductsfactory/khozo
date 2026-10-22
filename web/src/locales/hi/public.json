@@ -218,5 +218,8 @@
   "Opens like an app and keeps working on a weak signal.": "यह ऐप की तरह खुलता है और कमज़ोर नेटवर्क में भी चलता रहता है।",
   "Install": "इंस्टॉल करें",
   "Not now": "अभी नहीं",
-  "Install Khozo: tap Share, then Add to Home Screen.": "Khozo इंस्टॉल करने के लिए: Share दबाएँ, फिर “Add to Home Screen” चुनें।"
+  "Install Khozo: tap Share, then Add to Home Screen.": "Khozo इंस्टॉल करने के लिए: Share दबाएँ, फिर “Add to Home Screen” चुनें।",
+  "Give your own number. We cannot send an SMS code yet, so it is not checked now; the police will call you on it.": "अपना ही नंबर दें। हम अभी SMS कोड नहीं भेज सकते, इसलिए अभी इसकी जाँच नहीं होती; पुलिस आपको इसी नंबर पर फ़ोन करेगी।",
+  "You do not need an account to:": "इनके लिए खाते की ज़रूरत नहीं:",
+  "If your child is missing, go to the nearest police station now, or call 112. The police register the case and give you a Case ID to follow it here.": "अगर आपका बच्चा लापता है, तो अभी नज़दीकी पुलिस थाने जाएँ, या 112 पर फ़ोन करें। पुलिस मामला दर्ज करके आपको केस ID देगी, जिससे आप यहाँ उसकी स्थिति देख सकें।"
 }

@@ -202,6 +202,23 @@ export default function registerAuthRoutes(router, deps) {
     });
   });
   
+  /**
+   * Whether sign-up asks for an SMS code. It does whenever an SMS gateway is
+   * configured, and in development, where the code is shown on screen. On a
+   * live server with no gateway (khozo.org until one is connected, DPIA G6)
+   * the code could never arrive and nobody could sign up at all, so there the
+   * account is made without it and its number is recorded as not verified.
+   * Connecting a gateway brings the code back with no change here.
+   */
+  function otpRequired() {
+    return smsGatewayConfigured(settings) || settings.nodeEnv !== 'production';
+  }
+
+  /** What the sign-up form must ask for. */
+  router.get('/signup-options', (req, res) => {
+    res.json({ otp: otpRequired() });
+  });
+
   router.post('/register', registerLimit, async (req, res) => {
     const read = readFields(req.body, REGISTER_FIELDS);
     if (read.error) return res.status(400).json({ error: read.error });
@@ -226,26 +243,33 @@ export default function registerAuthRoutes(router, deps) {
     if (email && findUserByEmail(email)) return res.status(409).json({ error: 'An account with this email already exists' });
     const cleanPhone = otpKey(phone);
     if (!/^\d{7,15}$/.test(cleanPhone)) return res.status(400).json({ error: 'Mobile number is required for OTP verification' });
-    const challenge = otpStore.get(cleanPhone);
-    if (!challenge || challenge.expiresAt < Date.now()) return res.status(400).json({ error: 'OTP verification is required before registration' });
-    challenge.attempts += 1;
-    if (challenge.attempts > 5 || String(otp || '').trim() !== challenge.code) {
-      otpStore.set(cleanPhone, challenge);
-      addAudit({
-        actorName: email || `mobile ...${cleanPhone.slice(-4)}`,
-        actorRole: 'public',
-        action: 'auth.otp_failed',
-        targetType: 'otp',
-        summary: 'Public registration OTP verification failed',
-        metadata: { phoneSuffix: cleanPhone.slice(-4), attempts: challenge.attempts },
-      });
-      return res.status(400).json({ error: 'OTP verification failed' });
+    // Without an SMS gateway on a live server, the number is taken as given
+    // and recorded as not verified (otpRequired above).
+    const verified = otpRequired();
+    if (verified) {
+      const challenge = otpStore.get(cleanPhone);
+      if (!challenge || challenge.expiresAt < Date.now()) return res.status(400).json({ error: 'OTP verification is required before registration' });
+      challenge.attempts += 1;
+      if (challenge.attempts > 5 || String(otp || '').trim() !== challenge.code) {
+        otpStore.set(cleanPhone, challenge);
+        addAudit({
+          actorName: email || `mobile ...${cleanPhone.slice(-4)}`,
+          actorRole: 'public',
+          action: 'auth.otp_failed',
+          targetType: 'otp',
+          summary: 'Public registration OTP verification failed',
+          metadata: { phoneSuffix: cleanPhone.slice(-4), attempts: challenge.attempts },
+        });
+        return res.status(400).json({ error: 'OTP verification failed' });
+      }
+      otpStore.delete(cleanPhone);
     }
-    otpStore.delete(cleanPhone);
 
     // One citizen account per mobile number: it is how an account without an
     // email signs in. Checked only after the OTP, so that nobody can learn
-    // whether a number has an account without holding that phone. An official
+    // whether a number has an account without holding that phone (with no
+    // gateway there is no OTP, and this can be learnt; so can much else
+    // about a number nobody has checked). An official
     // desk sharing the number does not block it (the password tells the two
     // apart at sign-in).
     if (usersByPhone(cleanPhone).some((u) => PUBLIC_ROLES.includes(u.role))) {
@@ -274,8 +298,10 @@ export default function registerAuthRoutes(router, deps) {
       passwordHash: hashPassword(password),
       role,
       phone: cleanPhone,
-      phoneVerified: true,
-      phoneVerifiedAt: Date.now(),
+      // Officers verifying this person's report see whether the number was
+      // checked by SMS; one that was not, they confirm by calling it.
+      phoneVerified: verified,
+      phoneVerifiedAt: verified ? Date.now() : null,
       org: org || null,
       jurisdiction: { level: levelByRole[role], state: state || null, district: district || null, station: station || null },
       createdAt: Date.now(),
@@ -287,9 +313,9 @@ export default function registerAuthRoutes(router, deps) {
       action: 'auth.public_user_registered',
       targetType: 'user',
       targetId: user.id,
-      summary: `Public ${role} account registered`,
+      summary: verified ? `Public ${role} account registered` : `Public ${role} account registered; mobile not verified (no SMS service)`,
       scope: { state, district },
-      metadata: { phoneVerified: true, phoneSuffix: cleanPhone.slice(-4), withEmail: Boolean(email) },
+      metadata: { phoneVerified: verified, phoneSuffix: cleanPhone.slice(-4), withEmail: Boolean(email) },
     });
     const token = await tokenFor(res, user);
     if (!token) return;
