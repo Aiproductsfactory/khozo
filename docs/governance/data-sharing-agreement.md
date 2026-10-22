@@ -189,10 +189,33 @@ face templates, scores or officers' decisions, to train, fine-tune, test, benchm
 any model or product.
 
 10.2 Before signature the Operator gives written evidence that: AWS's AI-services opt-out
-policy is applied to the account used for Rekognition; and Aarakshak keeps no image, template
-or result after answering, and trains on nothing it receives. [DPIA G27.]
+policy is applied to the account used for Rekognition; and Aarakshak keeps no image or result
+after answering a comparison, keeps no face template except under clause 10.3, and trains on
+nothing it receives. [DPIA G27.]
 
-10.3 Test and demonstration data never includes Department Data. *The repository already
+10.3 **Searching every open case at once (the face index).** Only with the Department's
+written agreement, the Operator may use Aarakshak's gallery to compare a sighting with every
+open case at once, instead of with the nearest [25]. Aarakshak then holds, for each open case
+with a usable photograph:
+
+  (a) a face template and the case's Khozo id, and nothing else that identifies the person (no
+  name, place, family detail or case number);
+  (b) in India, at [Aarakshak's data centre and provider — confirm in writing];
+  (c) only to search sightings for missing persons, never to train, test, benchmark or improve
+  any model or product (clause 10.1);
+  (d) until the case is found, closed or anonymised, when Khozo asks for its removal
+  automatically and records Aarakshak's deletion receipt; Aarakshak removes it within
+  [24 hours]; and every template is removed when this MoU ends;
+  (e) under security measures and breach notification no weaker than clause [12], with any
+  incident reported to the Operator within [6] hours.
+
+The case's own record and photographs stay in Khozo for the period in Schedule 4, which for a
+found or closed case runs 10 years from the day it ended, so the case can be searched again if
+the same person goes missing. *Built: `shared/face-index.js`; removal on closure in
+`removeCaseFromIndex`; switched on only when `AARAKSHAK_GALLERY_URL` and
+`AARAKSHAK_GALLERY_KEY` are set.*
+
+10.4 Test and demonstration data never includes Department Data. *The repository already
 forbids real case data (`scripts/import-gujarat-cases.mjs` header; `SECURITY.md`).*
 
 ## 11. Retention and deletion
