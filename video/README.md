@@ -27,6 +27,8 @@ npm run studio          # preview and scrub in the browser
 
 The first run downloads a headless browser (about 240 MB). Rendering fetches the Noto Sans, Noto Sans Gujarati and Noto Sans Devanagari faces from Google Fonts, so the machine needs the internet; it does not need those fonts installed.
 
+**If the render hangs before any frame is drawn** (on Windows, with the CPU at 100% and `node.exe` processes that cannot be ended), an antivirus is stalling Node while it reads the bundler's files. On the Aegis machine it was Quick Heal: after a restart, render with the project folder excluded from real-time scanning. A hung process stays until the computer restarts.
+
 The film has no sound. Record the voice in the primary language reading the six lines in `src/props.ts`, and add it in any editor, or with Remotion's `<Audio>` if you want it rendered in.
 
 ## Adapt it for another police force, state or country
