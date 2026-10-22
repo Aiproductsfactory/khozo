@@ -98,7 +98,13 @@ const ALL_TABLES = Object.keys(HYDRATED);
  * the Worker's CPU, and on the Free plan's 10 ms limit most of the requests
  * that limit cut off (20 Oct 2026: 457 of 776 in a day).
  */
-const PARTIAL = [{ method: 'GET', path: '/api/dashboard/notifications', tables: ['users'] }];
+const PARTIAL = [
+  { method: 'GET', path: '/api/dashboard/notifications', tables: ['users'] },
+  // The officer app registering its phone for alerts, and the test alert.
+  { method: 'POST', path: '/api/dashboard/push-token', tables: ['users'] },
+  { method: 'POST', path: '/api/dashboard/push-token/remove', tables: ['users'] },
+  { method: 'POST', path: '/api/dashboard/push-test', tables: ['users'] },
+];
 
 /** Which tables a request needs hydrated: all of them unless listed above. */
 export function tablesForRequest(method, pathname) {

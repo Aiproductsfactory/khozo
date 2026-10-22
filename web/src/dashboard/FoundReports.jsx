@@ -13,6 +13,7 @@ import { ActionMessage, ActionToast, useAction } from './useAction.jsx';
 import { ConfirmMatchDialog, EngineScoreLine, EngineScores, MatchEvidence, currentCandidate, matchLinesOf, photoCheckFlag, similarityBand, telHref } from './Reunite.jsx';
 import PhotoViewer from './PhotoViewer.jsx';
 import { AskLocalPolice, LOCAL_POLICE_ROLES, LocalPoliceRequests } from './LocalPolice.jsx';
+import { StationAlertStatus, StationAlerts } from './StationAlerts.jsx';
 import { MAIN_PHOTO, photoUrlOf, viewPhotosOf } from '../../../shared/photo-set.js';
 
 /**
@@ -620,6 +621,8 @@ export default function FoundReports({ view = 'matches' }) {
 
       {/* Other police asking this desk to go to a place in its area. */}
       {view === 'matches' && LOCAL_POLICE_ROLES.includes(user.role) && <LocalPoliceRequests highlightId={highlightId} />}
+      {/* Sightings sent to this station, or to this control room (StationAlerts.jsx). */}
+      {view === 'sightings' && LOCAL_POLICE_ROLES.includes(user.role) && <StationAlerts highlightId={highlightId} />}
 
       <div className="flex flex-wrap items-center gap-2">
         {config.filters.map((tab) => (
@@ -1023,6 +1026,9 @@ export default function FoundReports({ view = 'matches' }) {
                 search is spent nearest-first from nowhere. Placing it routes it
                 to that district's desks and searches again from there.
               */}
+              {/* Which station it was sent to, and whether anyone answered. */}
+              <StationAlertStatus f={f} />
+
               {needsPlacing && (
                 <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50/60 p-3">
                   {placing ? (

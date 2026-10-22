@@ -45,8 +45,10 @@ export function tokenIsCurrent(payload, user) {
 
 export function publicUser(u) {
   if (!u) return null;
-  const { passwordHash, ...rest } = u;
-  return rest;
+  // A push token rings the officer's phone (shared/station-alerts.js): only
+  // how many phones get alerts leaves the server.
+  const { passwordHash, pushTokens, ...rest } = u;
+  return { ...rest, alertDevices: Array.isArray(pushTokens) ? pushTokens.length : 0 };
 }
 
 /** Builds the auth middleware bound to this request's env and store replica. */

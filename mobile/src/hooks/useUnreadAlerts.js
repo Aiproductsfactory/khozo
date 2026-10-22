@@ -3,9 +3,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { officerApi } from '../services/api';
 import { useAuth } from '../services/auth';
-import { configureAlerts, ensureAlertPermission, presentAlert } from '../services/alerts';
+import { PUSHED_KINDS, configureAlerts, ensureAlertPermission, presentAlert } from '../services/alerts';
 
 const POLL_MS = 20000;
+// With push set up, the alerts that must ring arrive by push the moment they
+// are raised, and every poll costs the server CPU it has little of.
+const POLL_MS_WITH_PUSH = 60000;
 const LAST_SEEN_KEY = 'khozo.alerts.lastSeenTs';
 
 /**
@@ -21,7 +24,8 @@ const LAST_SEEN_KEY = 'khozo.alerts.lastSeenTs';
  *     not re-announce what the officer has already been told.
  */
 export function useUnreadAlerts() {
-  const { token, canReviewSightings } = useAuth();
+  const { token, canReviewSightings, push } = useAuth();
+  const pushed = push?.status === 'registered';
   const [unread, setUnread] = useState(0);
   const lastSeenTs = useRef(0);
   const baselineSet = useRef(false);
@@ -60,8 +64,10 @@ export function useUnreadAlerts() {
           return;
         }
 
+        // A station alert this phone was already pushed is not raised twice.
         const fresh = rows
           .filter((row) => (Number(row.ts) || 0) > lastSeenTs.current && !row.readAt)
+          .filter((row) => !(pushed && PUSHED_KINDS.has(row.kind)))
           .sort((a, b) => a.ts - b.ts);
 
         for (const row of fresh) {
@@ -71,6 +77,7 @@ export function useUnreadAlerts() {
             body: row.body,
             scope: row.scope || {},
             priority: row.priority,
+            kind: row.kind,
           });
         }
 
@@ -85,12 +92,12 @@ export function useUnreadAlerts() {
     };
 
     start().then(poll);
-    const timer = setInterval(poll, POLL_MS);
+    const timer = setInterval(poll, pushed ? POLL_MS_WITH_PUSH : POLL_MS);
     return () => {
       alive = false;
       clearInterval(timer);
     };
-  }, [token, canReviewSightings]);
+  }, [token, canReviewSightings, pushed]);
 
   return unread;
 }

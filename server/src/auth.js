@@ -48,8 +48,10 @@ function tokenIsCurrent(payload, user) {
 
 export function publicUser(u) {
   if (!u) return null;
-  const { passwordHash, ...rest } = u;
-  return rest;
+  // A push token rings the officer's phone (shared/station-alerts.js): only
+  // how many phones get alerts leaves the server.
+  const { passwordHash, pushTokens, ...rest } = u;
+  return { ...rest, alertDevices: Array.isArray(pushTokens) ? pushTokens.length : 0 };
 }
 
 // Express middleware: requires a valid Bearer token, attaches req.user.

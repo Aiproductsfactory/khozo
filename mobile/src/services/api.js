@@ -201,4 +201,19 @@ export const officerApi = {
   notifications: (token) => request('/dashboard/notifications', { token }),
   markNotificationsRead: (token, ids) =>
     request('/dashboard/notifications/read', { method: 'POST', token, body: ids ? { ids } : {} }),
+
+  /** Registers this phone for push alerts; `{ ok, devices }`. */
+  registerPushToken: (token, pushToken, { platform, deviceName } = {}) =>
+    request('/dashboard/push-token', { method: 'POST', token, body: { token: pushToken, platform, deviceName } }),
+  // Short timeout: it runs while the officer waits to sign out.
+  removePushToken: (token, pushToken) =>
+    request('/dashboard/push-token/remove', { method: 'POST', token, body: { token: pushToken }, timeout: 5000 }),
+  /** A test push to every phone of this account and an SMS to its alert number. */
+  pushTest: (token) => request('/dashboard/push-test', { method: 'POST', token }),
+
+  /** Sightings sent to this officer's station (or, escalated, to their control room). */
+  stationAlerts: (token) => request('/reports/found/station-alerts', { token }).then((r) => r?.alerts || []),
+  /** `outcome`: 'on_it' | 'found' | 'not_found' | 'update' (an update needs a note). */
+  stationAlertReply: (token, id, outcome, note) =>
+    request(`/reports/found/${encodeURIComponent(id)}/station-alert/reply`, { method: 'POST', token, body: { outcome, note } }).then((r) => r?.alert || null),
 };

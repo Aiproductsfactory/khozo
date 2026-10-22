@@ -38,6 +38,8 @@ import { outcomeMeasures } from '../outcomes.js';
 import { photoNeedCounts } from '../photo-need.js';
 import { dismissalApproval } from '../sighting-misuse.js';
 import { anonymiseCase, anonymiseSighting, runRetentionSweep } from '../retention.js';
+import { campaignSourceOf } from '../campaign-source.js';
+import { MAX_PUSH_DEVICES, STATION_ROLES, alertPhones, isPushToken, pushTokensOf, stationAlertWords, stationDeskOf } from '../station-alerts.js';
 
 export default function registerDashboardRoutes(router, deps) {
   const {
@@ -51,6 +53,10 @@ export default function registerDashboardRoutes(router, deps) {
     authRequired, passwordChangeRequired, publicUser, requireRole,
     auditPublicRateLimit, clientIp, fixedWindowRateLimit,
     matchEngineInfo,
+    // Optional so a harness need not stub them: push-token and alert-setting
+    // routes write the account (shared/station-alerts.js).
+    updateUser = null,
+    fetchImpl = fetch,
     settings = {},
   } = deps;
 
@@ -1092,6 +1098,74 @@ export default function registerDashboardRoutes(router, deps) {
     res.json({ marked: marked.length, unread: rows.filter((n) => !n.readAt).length });
   });
 
+  /** The signed-in account as stored, with its push tokens. */
+  function storedSelf(req) {
+    return listUsers().find((u) => u.id === req.user.id) || null;
+  }
+
+  /**
+   * The officer app registers this phone for push alerts
+   * (shared/station-alerts.js). A token rings a phone, so it is kept on the
+   * account and shown to nobody. A phone signed in to another account since
+   * answers only to the newest one.
+   */
+  router.post('/push-token', (req, res) => {
+    const token = String(req.body?.token || '').trim();
+    if (!isPushToken(token)) return res.status(400).json({ error: 'Not a push token from the Khozo app' });
+    const self = storedSelf(req);
+    if (!self || !updateUser) return res.status(503).json({ error: 'Push alerts cannot be set up here' });
+    for (const other of listUsers()) {
+      if (other.id !== self.id && pushTokensOf(other).some((t) => t.token === token)) {
+        updateUser(other.id, { pushTokens: pushTokensOf(other).filter((t) => t.token !== token) });
+      }
+    }
+    const platform = ['android', 'ios'].includes(req.body?.platform) ? req.body.platform : null;
+    const deviceName = cleanText(req.body?.deviceName, 60) || null;
+    const tokens = [
+      { token, platform, deviceName, at: Date.now() },
+      ...pushTokensOf(self).filter((t) => t.token !== token),
+    ].slice(0, MAX_PUSH_DEVICES);
+    updateUser(self.id, { pushTokens: tokens });
+    res.json({ ok: true, devices: tokens.length });
+  });
+
+  /** Signing out of the app stops its alerts. */
+  router.post('/push-token/remove', (req, res) => {
+    const token = String(req.body?.token || '').trim();
+    const self = storedSelf(req);
+    if (!self || !updateUser) return res.json({ ok: true, devices: 0 });
+    const tokens = pushTokensOf(self).filter((t) => t.token !== token);
+    updateUser(self.id, { pushTokens: tokens });
+    res.json({ ok: true, devices: tokens.length });
+  });
+
+  /**
+   * Sends this account a test alert: a push to each of its phones and an SMS
+   * to its alert number, so an officer knows before the first real one that
+   * both reach them. Limited, since every SMS costs money.
+   */
+  const pushTestLimit = fixedWindowRateLimit({
+    name: 'push_test',
+    limit: 5,
+    windowMs: 60 * 60 * 1000,
+    key: (req) => req.user?.id,
+  });
+  router.post('/push-test', pushTestLimit, async (req, res) => {
+    const self = storedSelf(req);
+    if (!self) return res.status(404).json({ error: 'Account not found' });
+    const { results, dead } = await alertPhones([self], stationAlertWords({}, { kind: 'test' }), {
+      data: { scope: { test: true } },
+      settings,
+      fetchImpl,
+      phoneOf: (u) => cleanText(u.alertPhone, 20) || stationDeskOf(u)?.alertPhone || null,
+    });
+    if (dead.length && updateUser) {
+      const gone = new Set(dead.map((d) => d.token));
+      updateUser(self.id, { pushTokens: pushTokensOf(self).filter((t) => !gone.has(t.token)) });
+    }
+    res.json({ ...results[0], devices: pushTokensOf(self).length });
+  });
+
   /**
    * Asks each face provider, from inside the runtime that actually calls them.
    *
@@ -1446,11 +1520,95 @@ export default function registerDashboardRoutes(router, deps) {
   
   // Super Admin / Admin: roster of stakeholders in the network (drill-down).
   router.get('/network', requireRole('super_admin', 'admin', 'state_nodal', 'sara', 'crime_bureau'), (req, res) => {
-    const users = scopeNetworkUsers(req.user, listUsers()).map((u) => ({
+    const users = scopeNetworkUsers(req.user, listUsers()).map(networkUserView);
+    res.json({ users, coverage: networkCoverage(req.user) });
+  });
+
+  /** An account as the roster shows it: never its push tokens, only how many phones get its alerts. */
+  function networkUserView(u) {
+    return {
       id: u.id, name: u.name, email: u.email, role: u.role, org: u.org, phone: u.phone,
       jurisdiction: u.jurisdiction,
-    }));
-    res.json({ users, coverage: networkCoverage(req.user) });
+      alertPhone: u.alertPhone || null,
+      stationDesk: u.stationDesk && typeof u.stationDesk === 'object'
+        ? { lat: u.stationDesk.lat, lng: u.stationDesk.lng, posterCodes: u.stationDesk.posterCodes || [], on: u.stationDesk.on !== false }
+        : null,
+      alertDevices: pushTokensOf(u).length,
+    };
+  }
+
+  /**
+   * Where an account's alerts go (shared/station-alerts.js). `alertPhone` is
+   * the number its SMS go to: a station's CUG mobile, which stays with the
+   * post across transfers. `stationDesk` makes a police station login the
+   * desk for sightings near it: where the station is (`lat`, `lng`), the
+   * poster codes it put up, and `on`. `null` clears either.
+   */
+  router.post('/network/users/:id/alerts', requireRole('super_admin', 'admin', 'crime_bureau'), (req, res) => {
+    const target = scopeNetworkUsers(req.user, listUsers()).find((u) => u.id === req.params.id);
+    if (!target) return res.status(404).json({ error: 'No such account in your area' });
+    if (target.role === 'super_admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ error: 'Only the super admin can change this account' });
+    }
+    if (!updateUser) return res.status(503).json({ error: 'Accounts cannot be changed here' });
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const patch = {};
+    let ignoredCodes = [];
+    if ('alertPhone' in body) {
+      const number = String(body.alertPhone ?? '').replace(/[\s-]/g, '');
+      if (number && !/^\+?\d{10,15}$/.test(number)) {
+        return res.status(400).json({ error: 'The alert number must be 10 to 15 digits' });
+      }
+      patch.alertPhone = number || null;
+    }
+    if ('stationDesk' in body) {
+      const desk = body.stationDesk;
+      if (desk === null) {
+        patch.stationDesk = null;
+      } else {
+        if (!STATION_ROLES.includes(target.role)) {
+          return res.status(400).json({ error: 'Only a police station login can be a station desk' });
+        }
+        const lat = Number(desk?.lat);
+        const lng = Number(desk?.lng);
+        if (desk?.lat === '' || desk?.lng === '' || !Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+          return res.status(400).json({ error: 'Give the station’s location as latitude and longitude' });
+        }
+        // Codes as printed on the posters (?src=kalupur), one per comma. One
+        // that is not a code is named back rather than quietly changed.
+        const codes = (Array.isArray(desk.posterCodes) ? desk.posterCodes : String(desk.posterCodes || '').split(/[,\n]+/))
+          .map((c) => String(c).trim())
+          .filter(Boolean);
+        ignoredCodes = codes.filter((c) => !campaignSourceOf(c));
+        patch.stationDesk = {
+          lat: Math.round(lat * 1e6) / 1e6,
+          lng: Math.round(lng * 1e6) / 1e6,
+          posterCodes: [...new Set(codes.map(campaignSourceOf).filter(Boolean))].slice(0, 20),
+          on: desk.on !== false,
+          updatedAt: Date.now(),
+          updatedById: req.user.id,
+          updatedByName: req.user.name,
+        };
+      }
+    }
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nothing to change' });
+    updateUser(target.id, patch);
+    const updated = listUsers().find((u) => u.id === target.id) || { ...target, ...patch };
+    addAudit({
+      actorId: req.user.id,
+      actorName: req.user.name,
+      actorRole: req.user.role,
+      action: 'auth.alert_settings_changed',
+      targetType: 'user',
+      targetId: target.id,
+      summary: `Changed where ${target.name}'s alerts go`,
+      scope: { state: target.jurisdiction?.state || null, district: target.jurisdiction?.district || null },
+      metadata: {
+        alertPhone: 'alertPhone' in patch ? (patch.alertPhone ? `…${patch.alertPhone.slice(-4)}` : null) : undefined,
+        stationDesk: 'stationDesk' in patch ? (patch.stationDesk ? { posterCodes: patch.stationDesk.posterCodes, on: patch.stationDesk.on } : null) : undefined,
+      },
+    });
+    res.json({ user: networkUserView(updated), ignoredCodes });
   });
   
   const NETWORK_USER_FIELDS = {

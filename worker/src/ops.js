@@ -16,6 +16,7 @@ import { matchEngineInfo } from './match.js';
 import { createRequestStore } from './store-sync.js';
 import { createFaceIndex } from '../../shared/face-index.js';
 import { runRetentionSweep } from '../../shared/retention.js';
+import { escalateStationAlert, escalationDue } from '../../shared/station-alerts.js';
 
 // Secrets arrive as typed; a stray byte-order mark once broke a key for hours.
 const cleanSecret = (value) => String(value || '').replace(/^﻿/, '').trim();
@@ -331,9 +332,63 @@ export async function runRetention(env, ctx, { now = Date.now(), io = db, create
   return { ok: true, enforce, summary: s, done: result.done, purged, detail: `${due} due, enforce ${enforce ? 'on' : 'off'}` };
 }
 
+/**
+ * Station alerts nobody has answered (shared/station-alerts.js). After 15
+ * minutes without "On it", or at once when there was no station desk to tell,
+ * the district control room, the state desk and the command centre are told,
+ * on their phones too. Every quarter hour, so between 15 and 30 minutes after
+ * the alert.
+ *
+ * Only accounts and sightings are loaded. Each escalation is claimed on the
+ * row as it is in the database before anyone is told (claimFoundReport): a
+ * station that answers while the job runs is not overwritten, and two runs
+ * cannot both escalate the same sighting.
+ */
+export async function runStationEscalations(env, ctx, { now = Date.now(), createStore = createRequestStore, fetchImpl = fetch } = {}) {
+  const { store, flush } = await createStore(env, ctx, undefined, { tables: ['users', 'found_reports'] });
+  const due = store.listFoundReports().filter((f) => escalationDue(f, now));
+  let escalated = 0;
+  let told = 0;
+  for (const f of due) {
+    const claimed = await store.claimFoundReport(
+      f.id,
+      (row) => ({ stationAlert: { ...row.stationAlert, escalation: { at: now, claimed: true, userIds: [] } } }),
+      (row) => escalationDue(row, now),
+    );
+    if (!claimed) continue;
+    const result = await escalateStationAlert(f, {
+      users: store.listUsers(),
+      now,
+      addNotification: store.addNotification,
+      settings: {
+        smsGatewayUrl: env.KHOZO_SMS_GATEWAY_URL,
+        smsApiKey: env.KHOZO_SMS_API_KEY,
+        expoAccessToken: env.EXPO_ACCESS_TOKEN,
+      },
+      fetchImpl,
+    });
+    await store.claimFoundReport(
+      f.id,
+      (row) => ({ stationAlert: { ...row.stationAlert, escalation: result.escalation } }),
+      (row) => row.stationAlert?.escalation?.at === now,
+    );
+    for (const userId of new Set(result.dead.map((d) => d.userId))) {
+      const user = store.listUsers().find((u) => u.id === userId);
+      const gone = new Set(result.dead.filter((d) => d.userId === userId).map((d) => d.token));
+      if (user) store.updateUser(userId, { pushTokens: (user.pushTokens || []).filter((t) => !gone.has(t?.token)) });
+    }
+    escalated += 1;
+    told += result.told;
+  }
+  if (due.length) await flush();
+  return { ok: true, escalated, told, detail: `${escalated} escalated, ${told} desks told` };
+}
+
 /** Cloudflare cron entry point; see "triggers" in wrangler.jsonc. */
 export async function scheduled(event, env, ctx) {
   const results = (await runHealthChecks(env, ctx)).checks;
+  // Never left out by a failing health check: an unanswered sighting matters more.
+  results.stationAlerts = await runStationEscalations(env, ctx).catch((err) => ({ ok: false, detail: String(err?.message || err) }));
   if (event?.cron === '30 20 * * *') {
     results.backup = await runBackup(env, ctx).catch((err) => ({ ok: false, detail: String(err?.message || err) }));
     results.retention = await runRetention(env, ctx).catch((err) => ({ ok: false, detail: String(err?.message || err) }));

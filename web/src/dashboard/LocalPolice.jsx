@@ -26,8 +26,8 @@ const OUTCOMES = [
 ];
 const outcomeLabel = (id) => OUTCOMES.find((o) => o.id === id)?.label || msg('Update');
 
-const CARE_ADULT = msg('If you find the person, ask whether they are safe and need help. They decide whether their family is told where they are.');
-const CARE_CHILD = msg('If you find the child, keep them safe and take them to the Child Welfare Committee.');
+export const CARE_ADULT = msg('If you find the person, ask whether they are safe and need help. They decide whether their family is told where they are.');
+export const CARE_CHILD = msg('If you find the child, keep them safe and take them to the Child Welfare Committee.');
 
 function Replies({ replies }) {
   const t = useT();

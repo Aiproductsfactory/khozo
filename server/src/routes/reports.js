@@ -16,7 +16,7 @@ import { EXTRA_PHOTO_FIELD, MAX_EXTRA_FILES, MULTIPART_MAX_BYTES, PHOTOS_TOO_LAR
 import {
   listReports, addReport, findReport, updateReport,
   listFoundReports, addFoundReport, findFoundReport, updateFoundReport,
-  listUsers, addActivity, addAudit, addNotification,
+  listUsers, addActivity, addAudit, addNotification, updateUser,
   savePhoto, readPhoto, deletePhoto, photoMimeType, rewriteActivity,
 } from '../store.js';
 import { authRequired, optionalAuth, passwordChangeRequired, requireRole } from '../auth.js';
@@ -67,6 +67,8 @@ export default registerReportRoutes(Router(), {
   listReports, addReport, findReport, updateReport,
   listFoundReports, addFoundReport, findFoundReport, updateFoundReport,
   listUsers, addActivity, addAudit, addNotification,
+  // Drops a push token a phone no longer answers to (shared/station-alerts.js).
+  updateUser,
   savePhoto, readPhoto, photoMimeType,
   authRequired, optionalAuth, passwordChangeRequired, requireRole,
   auditPublicRateLimit, clientIp, fixedWindowRateLimit,
@@ -94,6 +96,7 @@ export default registerReportRoutes(Router(), {
     // (shared/sms.js); without one, Khozo says so instead of claiming a send.
     smsGatewayUrl: process.env.KHOZO_SMS_GATEWAY_URL,
     smsApiKey: process.env.KHOZO_SMS_API_KEY,
+    expoAccessToken: process.env.EXPO_ACCESS_TOKEN,
     // Set explicitly, or derived from the JWT secret; never a constant from
     // this repository (shared/privacy.js).
     exportSigning: privacySecrets(process.env).exportSigning,

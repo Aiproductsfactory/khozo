@@ -34,6 +34,14 @@ to *show*; every action is authorised server-side.
   restricted to police and command roles, matching the server.
 - **Cases** — scoped case list and detail, including the guardian contact and recent
   workflow events.
+- **Sent to your station** (police roles) — a sighting reported near the officer's
+  station, or through its poster code, rings the phone with an alarm on its own
+  channel, even on silent. It opens with the place, the photo, **Open in Maps** and
+  **On it**; then *Found the person*, *Not there* or an update. If no station says
+  "On it" within 15 minutes, the control room and the command centre are told
+  (`shared/station-alerts.js`). The station sees the sighting, never the case.
+- **Alerts on this phone** (Account) — whether alerts will ring here, a test alert
+  (push and SMS), and the battery settings many Android phones need changed first.
 
 ## Offline behaviour
 
@@ -67,17 +75,33 @@ npm install
 npm run android          # build + install a debug build on a connected device
 ```
 
-Assets (icon, splash, notification icon) are generated, not committed as opaque
-binaries — regenerate with:
+Assets (icon, splash, notification icon, and the station alert's alarm sound) are
+generated, not committed as opaque binaries — regenerate with:
 
 ```bash
 node scripts/generate-assets.mjs
+node scripts/generate-alarm-sound.mjs   # assets/sounds/khozo_alarm.wav
 ```
+
+### Push alerts
+
+A station alert reaches a phone whose app is closed only by push. That needs:
+
+1. an Expo project (free): its id goes into the build as `KHOZO_EAS_PROJECT_ID`;
+2. a Firebase project (free) with an Android app `org.khozo.field`, whose FCM
+   service-account key is uploaded to the Expo project (`eas credentials`).
+
+Without them the app still works, and its alerts ring only while it is open; the
+Account screen says so. The server needs no key (`EXPO_ACCESS_TOKEN` only if the
+Expo project turns on enhanced push security). Android fixes a channel's sound when
+the channel is first created, so a phone that had an older build keeps the old
+sound for that channel; the alarm has its own channel (`khozo-urgent`) for that
+reason.
 
 ### Building an installable APK
 
 ```bash
-npx expo prebuild --platform android
+KHOZO_EAS_PROJECT_ID=<expo project id> npx expo prebuild --platform android
 cd android
 ./gradlew assembleRelease      # gradlew.bat on Windows
 adb install -r app/build/outputs/apk/release/app-release.apk

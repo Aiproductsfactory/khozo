@@ -76,7 +76,9 @@ export default function AlertsScreen() {
 
   const open = useCallback(
     (item) => {
-      if (item.scope?.foundReportId) {
+      if (item.scope?.stationAlert && item.scope?.foundReportId) {
+        navigation.navigate('StationAlertDetail', { id: item.scope.foundReportId });
+      } else if (item.scope?.foundReportId) {
         navigation.navigate('ReviewDetail', { id: item.scope.foundReportId });
       }
     },

@@ -10,7 +10,7 @@ import {
   listAudit, verifyAuditChain, updateFoundReport, updateReport,
   addActivity, addAudit, addUser, findUserByEmail,
   listNotifications, markNotificationsRead, addNotification,
-  findReport, findFoundReport,
+  findReport, findFoundReport, updateUser,
   readPhoto, deletePhoto, rewriteActivity,
 } from '../store.js';
 import { isPostgres } from '../db.js';
@@ -28,6 +28,8 @@ export default registerDashboardRoutes(Router(), {
   // The re-match batch (shared/routes/matching-admin.js) runs the forward
   // search, links, and alerts a newly linked case's officers.
   findReport, findFoundReport, addNotification,
+  // Push tokens and where an account's alerts go (shared/station-alerts.js).
+  updateUser,
   rankMatches, rankSightingMatches, detectPerson,
   faceIndex: createFaceIndex(process.env),
   isPostgres,
@@ -39,6 +41,7 @@ export default registerDashboardRoutes(Router(), {
     directoryLimit: process.env.KHOZO_DIRECTORY_LIMIT,
     smsGatewayUrl: process.env.KHOZO_SMS_GATEWAY_URL,
     smsApiKey: process.env.KHOZO_SMS_API_KEY,
+    expoAccessToken: process.env.EXPO_ACCESS_TOKEN,
     // Set explicitly, or derived from the JWT secret; never a constant from
     // this repository (shared/privacy.js).
     exportSigning: privacySecrets(process.env).exportSigning,

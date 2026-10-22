@@ -149,6 +149,9 @@ function buildDeps(env, store, ctx) {
       grievanceStatusLimit: env.KHOZO_GRIEVANCE_STATUS_LIMIT,
       smsGatewayUrl: env.KHOZO_SMS_GATEWAY_URL,
       smsApiKey: env.KHOZO_SMS_API_KEY,
+      // Expo's push service needs no key; with "enhanced push security" on
+      // in the Expo project it needs this one (shared/station-alerts.js).
+      expoAccessToken: env.EXPO_ACCESS_TOKEN,
       // The export-signing key, the Aadhaar fingerprint key and the
       // rate-limit audit salt: each set explicitly, or derived from the JWT
       // secret, never a constant from this repository (shared/privacy.js).

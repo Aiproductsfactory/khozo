@@ -72,8 +72,9 @@ export default function NotificationBell({ onConnectionChange }) {
     // unmatched sighting's alert there lands the officer on an empty page while
     // the record sits on Sightings. Alerts raised before this shipped carry no
     // `matched` flag; those keep the old destination.
+    // A station alert opens on Sightings, where "Sent to your station" lists it.
     if (item.scope?.foundReportId) {
-      const page = item.scope.matched === false ? '/app/sightings' : '/app/matches';
+      const page = item.scope.matched === false || item.scope.stationAlert ? '/app/sightings' : '/app/matches';
       nav(`${page}?id=${encodeURIComponent(item.scope.foundReportId)}`);
     }
     else if (item.scope?.reportId) nav(`/app/cases?id=${encodeURIComponent(item.scope.reportId)}`);

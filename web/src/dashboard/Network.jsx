@@ -4,6 +4,7 @@ import { Avatar, roleLabel } from '../lib.jsx';
 import { useAuth } from '../auth.jsx';
 import { msg, useT } from '../i18n.jsx';
 import DistrictPicker from '../DistrictPicker.jsx';
+import AlertSettings, { ALERT_SETTINGS_ROLES } from './AlertSettings.jsx';
 
 const ORDER = ['super_admin', 'admin', 'state_nodal', 'sara', 'crime_bureau', 'dcrb', 'dlsa', 'police', 'sjpu', 'ahtu', 'cwc', 'dcpu', 'rpf', 'cci', 'saa', 'jjb', 'ngo', 'parent'];
 const ROLE_OPTIONS = [
@@ -349,6 +350,9 @@ export default function Network() {
                 <p className="text-xs text-gray-500">
                   {[u.jurisdiction?.station, u.jurisdiction?.district, u.jurisdiction?.state].filter(Boolean).join(', ') || t('National')}
                 </p>
+                {ALERT_SETTINGS_ROLES.includes(user.role) && (u.role !== 'super_admin' || user.role === 'super_admin') && (
+                  <AlertSettings account={u} onSaved={(next) => next && setUsers((list) => list.map((x) => (x.id === next.id ? next : x)))} />
+                )}
                 <div className="mt-auto flex gap-2">
                   <a href={`mailto:${u.email || ''}`} className="btn-ghost flex-1 py-1.5 text-xs">{t('Email')}</a>
                   <a href={waLink(u.phone)} target="_blank" rel="noreferrer" className="btn-ghost flex-1 py-1.5 text-xs">WhatsApp</a>

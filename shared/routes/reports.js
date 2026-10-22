@@ -29,6 +29,7 @@ import {
   extraPhotoKey, extraPhotoUrl, extraPhotosOf, extraPhotosView, isBadFacePhoto, isExtraPhotoId, leadPhotoOf, photoCountOf,
 } from '../photo-set.js';
 import { sendSms, smsGatewayConfigured } from '../sms.js';
+import { STATION_OUTCOMES, alertPhones, canSeeStationAlert, stationAlertSentTo, escalateStationAlert, stationAlertOpen, stationAlertWords, stationDeskOf, stationDesksFor, stationName } from '../station-alerts.js';
 // The case vocabulary, validation and public-redaction rules are shared with the
 // Cloudflare Worker build so the two runtimes cannot drift apart. See
 // shared/case-domain.js.
@@ -175,6 +176,9 @@ export default function registerReportRoutes(router, deps) {
     listReports, addReport, findReport, updateReport,
     listFoundReports, addFoundReport, findFoundReport, updateFoundReport,
     listUsers, addActivity, addAudit, addNotification,
+    // Optional so a harness need not stub it: drops a push token a device no
+    // longer answers to (raiseStationAlert).
+    updateUser = null,
     savePhoto, readPhoto, photoMimeType,
     authRequired, optionalAuth, passwordChangeRequired, requireRole,
     auditPublicRateLimit, clientIp, fixedWindowRateLimit,
@@ -698,6 +702,91 @@ export default function registerReportRoutes(router, deps) {
     return officers;
   }
 
+  /** Drops push tokens Expo says no longer reach a device. */
+  function dropDeadTokens(dead) {
+    if (!updateUser || !dead.length) return;
+    for (const userId of new Set(dead.map((d) => d.userId))) {
+      const user = listUsers().find((u) => u.id === userId);
+      if (!user) continue;
+      const gone = new Set(dead.filter((d) => d.userId === userId).map((d) => d.token));
+      updateUser(userId, { pushTokens: (user.pushTokens || []).filter((t) => !gone.has(t?.token)) });
+    }
+  }
+
+  /**
+   * Tells the police station that owns a sighting, on its phones: the nearest
+   * station desk, and the station whose poster code was scanned
+   * (shared/station-alerts.js). With no station desk to tell, the control room
+   * is told at once. Never fails the report: an SMS or push outage is recorded
+   * on the sighting, and the inbox alert is written regardless.
+   */
+  async function raiseStationAlert(sighting) {
+    try {
+      const users = listUsers();
+      const picks = stationDesksFor(sighting, users);
+      // Station alerts start state by state, as stations are given their
+      // locations. Where no station desk is set up yet, the alert every desk
+      // gets (alertSighting) stands alone: escalating every such sighting as
+      // "no station near" would only repeat it at a louder pitch.
+      if (!picks.length) {
+        const seen = reportedLocationOf(sighting);
+        const setUp = Boolean(seen.state || seen.stateCode)
+          && users.some((u) => stationDeskOf(u) && sameStatePlace(u.jurisdiction || {}, seen));
+        if (!setUp) return null;
+      }
+      const now = Date.now();
+      const posterCode = campaignSourceOf(sighting.campaignSource);
+      const scope = { foundReportId: sighting.id, stationAlert: true };
+      const groups = ['nearest', 'poster'].map((reason) => picks.filter((p) => p.reason === reason)).filter((g) => g.length);
+      const sent = await Promise.all(groups.map((group) => {
+        const words = stationAlertWords(sighting, { kind: group[0].reason, posterCode });
+        for (const pick of group) {
+          addNotification({
+            userId: pick.user.id,
+            kind: 'station_alert',
+            title: words.title,
+            body: words.body,
+            priority: 'high',
+            scope,
+            inJurisdiction: true,
+          });
+        }
+        return alertPhones(group.map((p) => p.user), words, { data: { scope }, settings, fetchImpl });
+      }));
+      const phones = sent.flatMap((s) => s.results);
+      dropDeadTokens(sent.flatMap((s) => s.dead));
+      const stationAlert = {
+        sentAt: now,
+        desks: picks.map((p) => {
+          const result = phones.find((r) => r.userId === p.user.id) || {};
+          return {
+            userId: p.user.id,
+            name: p.user.name || null,
+            station: stationName(p.user),
+            reason: p.reason,
+            distanceKm: p.distanceKm,
+            push: result.push || null,
+            sms: result.sms || null,
+          };
+        }),
+        posterCode: posterCode || null,
+        ack: null,
+        replies: [],
+        escalation: null,
+      };
+      updateFoundReport(sighting.id, { stationAlert });
+      if (!picks.length) {
+        const escalated = await escalateStationAlert({ ...sighting, stationAlert }, { users, now, addNotification, settings, fetchImpl });
+        updateFoundReport(sighting.id, escalated.patch);
+        dropDeadTokens(escalated.dead);
+      }
+      return findFoundReport(sighting.id)?.stationAlert || stationAlert;
+    } catch (err) {
+      console.error('[station-alert]', sighting?.id, err?.message || err);
+      return null;
+    }
+  }
+
   // Keyed on the network address alone. It once included the phone number
   // typed into the form, which is optional free text: a different number on
   // each request made the limit no limit at all.
@@ -867,8 +956,9 @@ export default function registerReportRoutes(router, deps) {
         return res.status(403).json({ error: 'Photo is outside your jurisdiction' });
       }
       // The police asked to help where a sighting was made see its photo
-      // (POST /found/:id/local-police).
-      if (found && scopeFoundReports(req.user, [found], listReports()).length !== 1 && !canSeeLocalPoliceRequest(req.user, found)) {
+      // (POST /found/:id/local-police), and so does the station it was sent
+      // to (shared/station-alerts.js).
+      if (found && scopeFoundReports(req.user, [found], listReports()).length !== 1 && !canSeeLocalPoliceRequest(req.user, found) && !canSeeStationAlert(req.user, found)) {
         return res.status(403).json({ error: 'Photo is outside your jurisdiction' });
       }
     }
@@ -1617,6 +1707,10 @@ export default function registerReportRoutes(router, deps) {
         broadcast: fr.screening.raisesAlert,
       }).map((u) => u.id)
     );
+    // The station that can get there first, on its phones. Only for a report
+    // that raises an alert at all: a photo with no person in it must not ring
+    // a station's alarm at 2 am.
+    if (fr.screening.raisesAlert) await raiseStationAlert(fr);
     if (!fr.screening.raisesAlert) {
       // Screened out, not discarded. One person still looks at it, because the
       // screen can be wrong and the cost of it being wrong is a real sighting
@@ -2611,6 +2705,27 @@ export default function registerReportRoutes(router, deps) {
   function localPoliceView(f) {
     const lp = f.localPolice || {};
     return {
+      ...sightingOnlyView(f),
+      localPolice: {
+        requestedAt: lp.requestedAt,
+        requestedByName: lp.requestedByName,
+        requestedFrom: lp.requestedFrom,
+        contactPhone: lp.contactPhone || null,
+        note: lp.note || null,
+        adult: Boolean(lp.adult),
+        place: lp.place,
+        replies: Array.isArray(lp.replies) ? lp.replies : [],
+      },
+    };
+  }
+
+  /**
+   * A sighting as police outside its case see it: who, where, when, the
+   * photo and the reporter's note, never the case it may match or how
+   * closely.
+   */
+  function sightingOnlyView(f) {
+    return {
       id: f.id,
       createdAt: f.createdAt,
       personCategory: personCategoryOf(f),
@@ -2627,16 +2742,6 @@ export default function registerReportRoutes(router, deps) {
       reporterPhone: f.confidentialReporter ? null : f.reporterPhone || null,
       photoUrl: f.photoFile ? `/api/reports/photo/${f.id}` : null,
       extraPhotos: extraPhotosView(f),
-      localPolice: {
-        requestedAt: lp.requestedAt,
-        requestedByName: lp.requestedByName,
-        requestedFrom: lp.requestedFrom,
-        contactPhone: lp.contactPhone || null,
-        note: lp.note || null,
-        adult: Boolean(lp.adult),
-        place: lp.place,
-        replies: Array.isArray(lp.replies) ? lp.replies : [],
-      },
     };
   }
 
@@ -2802,6 +2907,133 @@ export default function registerReportRoutes(router, deps) {
       metadata: { outcome },
     });
     res.json({ request: localPoliceView(updated) });
+  });
+
+  // --- The station a sighting was sent to ------------------------------------
+  //
+  // Every sighting that raises an alert is sent to the nearest station desk
+  // and the station whose poster code was scanned (raiseStationAlert,
+  // shared/station-alerts.js); if nobody answers, to the control room. Those
+  // desks see the sighting, never the case it may match, and answer: "On it",
+  // found, not there, or an update.
+
+  /** What a station sees of a sighting it was sent. */
+  function stationAlertView(f, user) {
+    const alert = f.stationAlert || {};
+    const desks = Array.isArray(alert.desks) ? alert.desks : [];
+    const mine = desks.find((d) => d.userId === user.id) || null;
+    const matched = f.matchedReportId ? findReport(f.matchedReportId) : null;
+    return {
+      ...sightingOnlyView(f),
+      status: stationAlertOpen(f) ? 'open' : 'closed',
+      stationAlert: {
+        sentAt: alert.sentAt || null,
+        reason: mine?.reason || (alert.escalation?.userIds?.includes(user.id) ? 'escalated' : null),
+        distanceKm: mine?.distanceKm ?? null,
+        station: mine?.station || null,
+        posterCode: alert.posterCode || null,
+        stations: desks.map((d) => ({ station: d.station, reason: d.reason, distanceKm: d.distanceKm ?? null })),
+        ack: alert.ack || null,
+        replies: Array.isArray(alert.replies) ? alert.replies : [],
+        escalatedAt: alert.escalation?.at || null,
+        // How to treat the person if found: an adult decides whether their
+        // family is told, whatever age they went missing at.
+        adult: isAdultCategory(personCategoryOf(f)) || Boolean(matched && isAdultCase(matched)),
+      },
+    };
+  }
+
+  /** Sightings sent to this desk as its station, or as the control room, newest first. */
+  router.get('/found/station-alerts', protectedRoute, requireRole(...POLICE_ROLES), (req, res) => {
+    const since = Date.now() - 30 * DAY;
+    const alerts = listFoundReports()
+      .filter((f) => stationAlertSentTo(req.user, f) && Number(f.stationAlert.sentAt || 0) >= since)
+      .sort((a, b) => (b.stationAlert.sentAt || 0) - (a.stationAlert.sentAt || 0))
+      .slice(0, 50)
+      .map((f) => stationAlertView(f, req.user));
+    res.json({ alerts });
+  });
+
+  /**
+   * A station answers: "On it", found, not there, or an update. The first
+   * answer stops the escalation. Everyone else told about the sighting hears
+   * it, and so do the officers of a case it may match.
+   */
+  router.post('/found/:id/station-alert/reply', protectedRoute, requireRole(...POLICE_ROLES), (req, res) => {
+    const f = findFoundReport(req.params.id);
+    if (!f) return res.status(404).json({ error: 'Found report not found' });
+    if (!canSeeStationAlert(req.user, f)) {
+      return res.status(403).json({ error: 'This sighting was not sent to your station' });
+    }
+    const read = readFields(req.body, { outcome: ['text', 20], note: ['text', 500] });
+    if (read.error) return res.status(400).json({ error: read.error });
+    const outcome = read.body.outcome;
+    if (!STATION_OUTCOMES[outcome]) {
+      return res.status(400).json({ error: 'Outcome must be on_it, found, not_found or update' });
+    }
+    const note = cleanText(read.body.note, 500) || null;
+    if (outcome === 'update' && !note) return res.status(400).json({ error: 'Write the update' });
+    if (outcome === 'on_it' && !stationAlertOpen(f)) return res.status(409).json({ error: 'This sighting is closed' });
+    const responder = listUsers().find((u) => u.id === req.user.id) || req.user;
+    const desk = responder.jurisdiction?.station ? stationName(responder) : placeLabel(responder.jurisdiction || {});
+    const reply = {
+      at: Date.now(),
+      byId: req.user.id,
+      byName: req.user.name,
+      byRole: req.user.role,
+      byPhone: responder.alertPhone || responder.phone || null,
+      desk,
+      outcome,
+      note,
+    };
+    const alert = f.stationAlert;
+    updateFoundReport(f.id, {
+      stationAlert: { ...alert, replies: [...(alert.replies || []), reply], ack: alert.ack || reply },
+    });
+    const updated = findFoundReport(f.id);
+    const said = `${STATION_OUTCOMES[outcome]}${note ? `: ${note}` : '.'} (${req.user.name}, ${desk}${reply.byPhone ? `, ${reply.byPhone}` : ''})`;
+    const toldIds = new Set([
+      ...(alert.desks || []).map((d) => d.userId),
+      ...(alert.escalation?.userIds || []),
+    ]);
+    toldIds.delete(req.user.id);
+    const told = listUsers().filter((u) => toldIds.has(u.id));
+    if (told.length) {
+      notifyAuthorities({
+        kind: 'station_alert_reply',
+        title: outcome === 'found' ? `${desk} found the person` : `${desk}: ${STATION_OUTCOMES[outcome]}`,
+        body: `${said}. Sighting near ${placeText(updated.foundLocation, reportedLocationOf(updated))}.`,
+        priority: outcome === 'found' ? 'high' : 'normal',
+        recipients: told,
+        scope: { foundReportId: f.id, stationAlert: true },
+      });
+    }
+    const matched = f.matchedReportId ? findReport(f.matchedReportId) : null;
+    if (matched && outcome !== 'on_it') {
+      const officers = caseOfficers(matched).filter((u) => u.id !== req.user.id && !toldIds.has(u.id));
+      if (officers.length) {
+        notifyAuthorities({
+          kind: 'station_alert_reply',
+          title: outcome === 'found' ? `Police at ${desk} found the person` : `Reply from police at ${desk}`,
+          body: `${said}. Sighting at ${placeText(updated.foundLocation, reportedLocationOf(updated))}.`,
+          priority: outcome === 'found' ? 'high' : 'normal',
+          recipients: officers,
+          scope: { state: matched.state, district: matched.district, foundReportId: f.id, matched: true },
+        });
+      }
+    }
+    addAudit({
+      actorId: req.user.id,
+      actorName: req.user.name,
+      actorRole: req.user.role,
+      action: 'sighting.station_replied',
+      targetType: 'foundReport',
+      targetId: f.id,
+      summary: `${desk} answered sighting ${f.id}: ${STATION_OUTCOMES[outcome]}`,
+      scope: { state: f.state || null, district: f.district || null, matchedReportId: f.matchedReportId || null, foundReportId: f.id },
+      metadata: { outcome, first: !alert.ack, minutesAfterAlert: alert.sentAt ? Math.round((reply.at - alert.sentAt) / 60000) : null },
+    });
+    res.json({ alert: stationAlertView(updated, req.user) });
   });
 
   /**

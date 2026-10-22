@@ -10,6 +10,7 @@ import { officerApi } from '../services/api';
 import { useAuth } from '../services/auth';
 import { useTheme } from '../theme';
 import { matchBand, relativeTime, sightingPlace, statusMeta } from '../utils/format';
+import { StationAlertsSection } from './StationAlertsScreen';
 
 const FILTERS = [
   { label: 'Needs action', value: 'open', clearable: false },
@@ -143,6 +144,8 @@ export default function ReviewQueueScreen() {
             flexGrow: 1,
           }}
           showsVerticalScrollIndicator={false}
+          // A sighting sent to this officer's station comes before the queue.
+          ListHeaderComponent={<StationAlertsSection />}
           refreshControl={
             <RefreshControl refreshing={queue.refreshing} onRefresh={queue.refresh} tintColor={theme.colors.primary} colors={[theme.colors.primary]} />
           }

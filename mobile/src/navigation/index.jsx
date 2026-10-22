@@ -27,6 +27,8 @@ import AlertsScreen from '../screens/AlertsScreen';
 import ReviewDetailScreen from '../screens/ReviewDetailScreen';
 import CasesScreen from '../screens/CasesScreen';
 import CaseDetailScreen from '../screens/CaseDetailScreen';
+import StationAlertsScreen from '../screens/StationAlertsScreen';
+import StationAlertDetailScreen from '../screens/StationAlertDetailScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -138,7 +140,10 @@ export function RootNavigator() {
     () =>
       onAlertOpened((scope) => {
         if (!navigationRef.isReady()) return;
-        if (scope?.foundReportId) navigationRef.navigate('ReviewDetail', { id: scope.foundReportId });
+        // A sighting sent to the officer's station opens where they answer it:
+        // the station cannot open it in the review queue, which is the case's.
+        if (scope?.stationAlert && scope?.foundReportId) navigationRef.navigate('StationAlertDetail', { id: scope.foundReportId });
+        else if (scope?.foundReportId) navigationRef.navigate('ReviewDetail', { id: scope.foundReportId });
         else if (scope?.reportId) navigationRef.navigate('CaseDetail', { id: scope.reportId });
       }),
     [],
@@ -187,6 +192,8 @@ export function RootNavigator() {
         <Stack.Screen name="Outbox" component={OutboxScreen} options={{ title: 'Unsent reports' }} />
         <Stack.Screen name="ReviewDetail" component={ReviewDetailScreen} options={{ title: 'Sighting review' }} />
         <Stack.Screen name="CaseDetail" component={CaseDetailScreen} options={{ title: 'Case' }} />
+        <Stack.Screen name="StationAlerts" component={StationAlertsScreen} options={{ title: 'Sent to your station' }} />
+        <Stack.Screen name="StationAlertDetail" component={StationAlertDetailScreen} options={{ title: 'Sighting near your station' }} />
       </Stack.Navigator>
     </NavigationContainer>
   );
