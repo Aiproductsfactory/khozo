@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import { compareFacesRekognition, rekognitionConfigured } from './rekognition.js';
 import { selectMatchCandidates, selectSightingCandidates } from '../../shared/match-pool.js';
 import { engineSettings } from '../../shared/match-config.js';
-import { ENGINES, comparePhotos, extraPairBudgetOf, loadComparable, rankResult, screenPhoto } from '../../shared/match-pipeline.js';
+import { ENGINES, compareFramesWithCase as compareFrames, comparePhotos, extraPairBudgetOf, loadComparable, rankResult, screenPhoto } from '../../shared/match-pipeline.js';
 import { detectImageMime, imageExtension } from '../../shared/photo-format.js';
 
 // The rules - who proposes, who confirms, what happens when an engine does not
@@ -453,4 +453,27 @@ export async function rankSightingMatches(env, casePhotoBuf, hints = {}, source 
     candidates: ranked.candidates.map(({ report, ...rest }) => ({ ...rest, sighting: report })),
     engine: ranked.engine,
   };
+}
+
+/**
+ * Compares faces cut from a video with one case's photo, each on its own
+ * (shared/match-pipeline.js compareFramesWithCase): POST
+ * /reports/:id/video-search. `frames` is `[{ id, buffer }]`, at most five a
+ * request, so a request stays well inside the Worker's outbound-call limit:
+ * five Aarakshak calls and at most five Rekognition calls.
+ */
+export async function compareFramesWithCase(env, casePhotoBuf, frames, { reviewThreshold } = {}) {
+  const cfg = config(env);
+  const providers = providersFor(env, cfg);
+  const engines = { aarakshak: providers.aarakshak.ready, rekognition: providers.rekognition.ready };
+  if (!casePhotoBuf?.length || !frames?.length || (!engines.aarakshak && !engines.rekognition)) return { results: [], engines };
+  const results = await compareFrames({
+    casePhotoBuf,
+    frames,
+    providers,
+    reviewThreshold: Number(reviewThreshold),
+    confirmThreshold: cfg.confirmThreshold,
+    concurrency: cfg.concurrency,
+  });
+  return { results, engines };
 }

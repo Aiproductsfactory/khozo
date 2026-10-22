@@ -20,7 +20,7 @@ import {
   savePhoto, readPhoto, deletePhoto, photoMimeType, rewriteActivity,
 } from '../store.js';
 import { authRequired, optionalAuth, passwordChangeRequired, requireRole } from '../auth.js';
-import { rankMatches, rankSightingMatches, detectPerson, matchEngineInfo } from '../match.js';
+import { compareFramesWithCase, rankMatches, rankSightingMatches, detectPerson, matchEngineInfo } from '../match.js';
 import { auditPublicRateLimit, clientIp, fixedWindowRateLimit } from '../rateLimit.js';
 
 const multipart = multer({
@@ -74,6 +74,8 @@ export default registerReportRoutes(Router(), {
   auditPublicRateLimit, clientIp, fixedWindowRateLimit,
   rankMatches,
   rankSightingMatches,
+  // Faces from a video, each compared with one case (POST /reports/:id/video-search).
+  compareFramesWithCase,
   detectPerson,
   matchEngineInfo,
   // The one-to-many index: none unless AARAKSHAK_GALLERY_URL and
@@ -92,6 +94,7 @@ export default registerReportRoutes(Router(), {
     caseStatusLimit: process.env.KHOZO_CASE_STATUS_LIMIT,
     sightingStatusLimit: process.env.KHOZO_SIGHTING_STATUS_LIMIT,
     bulletinLimit: process.env.KHOZO_BULLETIN_LIMIT,
+    videoSearchLimit: process.env.KHOZO_VIDEO_SEARCH_LIMIT,
     // The family alert goes through the same gateway as the registration OTP
     // (shared/sms.js); without one, Khozo says so instead of claiming a send.
     smsGatewayUrl: process.env.KHOZO_SMS_GATEWAY_URL,

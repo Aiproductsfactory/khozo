@@ -36,6 +36,7 @@ import { MAX_MATCH_CANDIDATES, thresholdsOf } from './match-config.js';
 import { enginesDisagreeOn } from './match-verdict.js';
 import { isWeakFace } from './face-screen.js';
 import { MAIN_PHOTO, isBadFacePhoto, leadPhotoOf, photoCountOf, photosOf } from './photo-set.js';
+import { FRAME_VERDICTS } from './video-search.js';
 
 export const ENGINES = {
   aarakshak: {
@@ -658,4 +659,64 @@ export async function screenPhoto(photoBuf, { aarakshak, rekognition }) {
     reason: 'No face-detection provider answered; the photo has not been screened.',
     checkedAt,
   };
+}
+
+/**
+ * What the engines said about one face from a video compared with one case
+ * (compareFramesWithCase), by the rules above:
+ *
+ *   likely      Aarakshak puts it at or above the review line and Rekognition
+ *               agrees: two engines say it may be the same person
+ *   possible    one engine says so: Aarakshak, with Rekognition not set up or
+ *               not answering (the "not checked" lane), or Rekognition alone
+ *               at its confirmation bar where Aarakshak had no answer
+ *   not_agreed  Aarakshak said so and Rekognition looked and did not agree:
+ *               withheld, exactly as a sighting's candidate would be
+ *   unlikely    the engines that answered put it below their line
+ *   no_face     no engine found a face in the picture to compare
+ *   no_answer   no engine answered: worth sending again
+ */
+export { FRAME_VERDICTS };
+
+export function frameVerdict(aarakshak, rekognition, { reviewThreshold, confirmThreshold }) {
+  const a = answer(aarakshak);
+  const r = answer(rekognition);
+  const aScore = a.status === 'answered' ? rounded(a.score) : null;
+  const rScore = r.status === 'answered' ? rounded(r.score) : null;
+  const out = (verdict) => ({ verdict, aarakshakScore: aScore, rekognitionScore: rScore, ...engineRecord(a, r) });
+  if (aScore != null) {
+    if (aScore < reviewThreshold) return out('unlikely');
+    if (rScore != null) return out(rScore >= confirmThreshold ? 'likely' : 'not_agreed');
+    return out('possible');
+  }
+  if (rScore != null) return out(rScore >= confirmThreshold ? 'possible' : 'unlikely');
+  if (a.status === 'no_face' || r.status === 'no_face') return out('no_face');
+  return out('no_answer');
+}
+
+/**
+ * Compares faces taken from a video, each on its own, with one case's photo:
+ * "is this person anywhere in this footage?" (POST /reports/:id/video-search).
+ *
+ * `frames` is `[{ id, buffer }]`, small pictures of one face each, cut from
+ * the video on the officer's own computer (web/src/video/). Each face plays
+ * the sighting, so it is the source of every comparison (orient), as a
+ * sighting photo is. Aarakshak compares every face; Rekognition is asked only
+ * about a face Aarakshak puts at or above the review line, or one Aarakshak
+ * had no answer for, so a crowd of strangers costs one call each.
+ *
+ * Resolves to `[{ id, verdict, aarakshakScore, rekognitionScore, engines,
+ * enginesAnswered }]` in the order given. Nothing is kept.
+ */
+export async function compareFramesWithCase({ casePhotoBuf, frames, providers, reviewThreshold, confirmThreshold = 0.8, concurrency = 5 }) {
+  const { aarakshak, rekognition } = providers;
+  return mapLimit(frames, concurrency, async (frame) => {
+    const pair = orient('forward', frame.buffer, casePhotoBuf);
+    const a = aarakshak.ready ? answer(await aarakshak.compare(...pair)) : { status: 'not_configured' };
+    const askSecond = rekognition.ready && (a.status !== 'answered' || rounded(a.score) >= reviewThreshold);
+    const r = askSecond
+      ? answer(await rekognition.compare(...pair))
+      : { status: rekognition.ready ? 'not_asked' : 'not_configured' };
+    return { id: frame.id, ...frameVerdict(a, r, { reviewThreshold, confirmThreshold }) };
+  });
 }

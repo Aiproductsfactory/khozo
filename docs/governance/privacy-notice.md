@@ -47,6 +47,12 @@ A match score is only a hint. **An officer checks in person before anything is d
 and before any family is told.** [Reviewer note: Khozo requires a written verification
 record; the SOP requires it to be in person. See dpia.md G5.]
 
+**Videos.** If you have a video instead of a photo, Khozo finds the faces in it on your
+own phone or computer, and you choose the pictures to send. The video itself is never sent.
+The police may also search a camera recording for one missing person. The recording stays
+on the police computer. Each face found in it is compared with that person's photo only,
+and is not kept, and every search is recorded.
+
 ## Legal basis
 
 [Legal to complete.] The Department carries out its duties under law, including the

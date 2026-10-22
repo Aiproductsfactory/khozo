@@ -36,7 +36,7 @@ import {
 
 import * as store from '../server/src/store.js';
 import { isPostgres } from '../server/src/db.js';
-import { detectPerson, matchEngineInfo, probeMatchProviders, rankMatches, rankSightingMatches } from '../server/src/match.js';
+import { compareFramesWithCase, detectPerson, matchEngineInfo, probeMatchProviders, rankMatches, rankSightingMatches } from '../server/src/match.js';
 import { createFaceIndex } from '../shared/face-index.js';
 import { humanCheckConfig } from '../shared/human-check.js';
 import { privacySecrets } from '../shared/privacy.js';
@@ -102,6 +102,7 @@ function buildDeps(env) {
 
     rankMatches,
     rankSightingMatches,
+    compareFramesWithCase,
     detectPerson,
     matchEngineInfo,
     probeMatchProviders,
@@ -117,6 +118,7 @@ function buildDeps(env) {
       caseStatusLimit: env.KHOZO_CASE_STATUS_LIMIT,
       sightingStatusLimit: env.KHOZO_SIGHTING_STATUS_LIMIT,
       bulletinLimit: env.KHOZO_BULLETIN_LIMIT,
+      videoSearchLimit: env.KHOZO_VIDEO_SEARCH_LIMIT,
       registerLimit: env.KHOZO_REGISTER_LIMIT,
       loginLimit: env.KHOZO_LOGIN_LIMIT,
       otpLimit: env.KHOZO_OTP_LIMIT,

@@ -111,6 +111,12 @@ export default defineConfig({
       },
     },
   },
+  // The face finder's runtime (web/src/video/detector.js) finds its .wasm file
+  // next to its own script. The dev server's dependency bundling would move
+  // the script and break that; the production build copies both as they are.
+  optimizeDeps: {
+    exclude: ['onnxruntime-web'],
+  },
   server: {
     port: 5173,
     proxy: {

@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { Suspense, lazy, useEffect, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
 import DistrictPicker from '../DistrictPicker.jsx';
@@ -25,6 +25,10 @@ import { HUMAN_CHECK_FIELD } from '../../../shared/human-check.js';
 import HumanCheck from '../HumanCheck.jsx';
 import { CONCERN_REASON_LABELS } from '../sightingConcern.js';
 import { MAX_SIGHTING_PHOTOS } from '../../../shared/photo-set.js';
+
+// Pictures from a video (web/src/video/): loaded only when Advanced options is
+// opened, so the form itself stays as light as it was.
+const VideoFacePicker = lazy(() => import('../video/VideoFacePicker.jsx'));
 
 // The poster code in the address when the form was opened by scanning one
 // (khozo.org/report?src=kalupur), or null. It goes with the report so the MIS
@@ -135,10 +139,12 @@ function LocationStatus({ located, hasPhoto, onClear }) {
       {label}
     </button>
   );
-  if (status === 'photo') {
+  if (status === 'photo' || status === 'video') {
     return (
       <p className="mt-1.5 text-xs text-khozo-dark">
-        {t('Location taken from the photo’s own GPS. Add a landmark if you can.')} {remove(t('Remove'))}
+        {status === 'video'
+          ? t('Location taken from the video’s own GPS. Add a landmark if you can.')
+          : t('Location taken from the photo’s own GPS. Add a landmark if you can.')} {remove(t('Remove'))}
       </p>
     );
   }
@@ -201,7 +207,12 @@ export default function Capture() {
     gender: '',
     ageApprox: '',
     photoConsent: false,
+    // The moments in a video the pictures were taken from ("0:12, 0:47"),
+    // when the reporter chose a video under Advanced options.
+    videoFrames: '',
   });
+  // Advanced options: pictures from a video instead of a photo.
+  const [videoOpen, setVideoOpen] = useState(false);
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
   // 0..1 while the report is being sent; null otherwise.
@@ -274,11 +285,11 @@ export default function Capture() {
    * The photo's own GPS is preferred: a gallery picture may have been taken
    * somewhere other than where the reporter is now.
    */
-  const locate = async (photo) => {
+  const locate = async (photo, fromVideo = null) => {
     const run = ++locateRun.current;
     setLocated({ status: 'locating' });
-    let coords = photo ? await readPhotoGps(photo) : null;
-    let status = 'photo';
+    let coords = fromVideo || (photo ? await readPhotoGps(photo) : null);
+    let status = fromVideo ? 'video' : 'photo';
     if (!coords) {
       status = 'device';
       try {
@@ -333,6 +344,8 @@ export default function Capture() {
     setPreview(URL.createObjectURL(picked));
     setPhotoSource(source);
     setAdvice(null);
+    // A photo now leads, not pictures from a video.
+    setForm((f) => (f.videoFrames ? { ...f, videoFrames: '' } : f));
     setStep(2);
     locate(picked);
     setPreparing(true);
@@ -342,6 +355,36 @@ export default function Capture() {
     setPreparing(false);
     const found = await checkPhoto(ready);
     if (run === photoRun.current) setAdvice(found);
+  };
+
+  /*
+   * Pictures chosen from a video (VideoFacePicker): the first is the photo,
+   * the others the extra photos, exactly as if they had been taken. They are
+   * already small JPEGs, so they are not shrunk again, and the dark-or-blurred
+   * advice is not given: "take it again" means nothing for a video. The place
+   * is the video's own, when the phone wrote one into it.
+   */
+  const takeVideoPictures = (files, { times = [], location = null } = {}) => {
+    const [first, ...rest] = files;
+    if (!first) return;
+    photoRun.current += 1;
+    extras.forEach((p) => URL.revokeObjectURL(p.preview));
+    setFile(first);
+    setOriginalSize(first.size || 0);
+    setPreview(URL.createObjectURL(first));
+    setPhotoSource('video');
+    setAdvice(null);
+    setPreparing(false);
+    setExtras(rest.slice(0, MAX_SIGHTING_PHOTOS - 1).map((extra) => ({
+      key: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      file: extra,
+      preview: URL.createObjectURL(extra),
+      preparing: false,
+    })));
+    setForm((f) => ({ ...f, videoFrames: times.join(', ') }));
+    setVideoOpen(false);
+    setStep(2);
+    locate(null, location);
   };
 
   // Another photo of the same person. Its place is read only from the first.
@@ -574,6 +617,39 @@ export default function Capture() {
               </button>
             </div>
             {/*
+              A video instead of a photo, folded away: most reporters have a
+              photo, and the buttons above stay the quick way in. The video is
+              read on the phone and never sent; only the pictures the reporter
+              picks are (web/src/video/).
+            */}
+            <details
+              className="group mt-4 rounded-xl ring-1 ring-black/10 open:bg-gray-50/60"
+              open={videoOpen}
+              onToggle={(e) => setVideoOpen(e.currentTarget.open)}
+            >
+              <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
+                <span>
+                  <span className="block font-semibold text-ink">{t('Advanced options')}</span>
+                  <span className="mt-0.5 block text-sm text-gray-500">{t('Send pictures from a video instead of a photo')}</span>
+                </span>
+                <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5 shrink-0 text-gray-400 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </summary>
+              {videoOpen && (
+                <div className="border-t border-black/5 px-4 pb-4 pt-3">
+                  <Suspense fallback={<p className="text-sm text-gray-500">{t('Loading…')}</p>}>
+                    <VideoFacePicker
+                      max={MAX_SIGHTING_PHOTOS}
+                      purpose="sighting"
+                      onUse={takeVideoPictures}
+                      onCancel={() => setVideoOpen(false)}
+                    />
+                  </Suspense>
+                </div>
+              )}
+            </details>
+            {/*
               Someone who scanned a poster's code usually has nothing to report
               yet: the poster asks them to keep the form for when they do. Below
               the buttons, so a reporter looking at a child now is not slowed.
@@ -624,6 +700,11 @@ export default function Capture() {
                 <button type="button" className="font-semibold text-khozo hover:underline" onClick={() => fileRef.current?.click()}>
                   {t('Change photo')}
                 </button>
+              </p>
+            )}
+            {file && photoSource === 'video' && form.videoFrames && (
+              <p className="border-b border-black/5 px-4 py-2 text-xs text-gray-600 sm:px-6">
+                {t('Pictures from your video, at {times}. The video itself is not sent.', { times: form.videoFrames })}
               </p>
             )}
             {file && advice && PHOTO_ADVICE[advice] && (
@@ -915,7 +996,7 @@ export default function Capture() {
 
             <div className="grid gap-3 sm:flex sm:justify-center">
               <Link to={`/track-sighting?receipt=${encodeURIComponent(result.foundReport.id)}`} className="btn-primary sm:order-1">{t('Track status')}</Link>
-              <button className="btn-ghost sm:order-2" onClick={() => { setStep(1); setResult(null); setFile(null); setPreview(null); setOriginalSize(0); setAdvice(null); extras.forEach((p) => URL.revokeObjectURL(p.preview)); setExtras([]); clearLocation(); }}>{t('Report another')}</button>
+              <button className="btn-ghost sm:order-2" onClick={() => { setStep(1); setResult(null); setFile(null); setPreview(null); setOriginalSize(0); setAdvice(null); extras.forEach((p) => URL.revokeObjectURL(p.preview)); setExtras([]); setVideoOpen(false); setForm((f) => ({ ...f, videoFrames: '' })); clearLocation(); }}>{t('Report another')}</button>
               <Link to="/" className="btn-ghost sm:order-3">{t('Done')}</Link>
             </div>
 

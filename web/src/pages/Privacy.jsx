@@ -68,6 +68,8 @@ const SECTIONS = [
     items: [
       msg('Aarakshak, an Indian face-recognition service, compares a sighting photo with the photos of open cases, and a new case photo with recent sightings. During the trial, Amazon Web Services (Mumbai region) gives a second check.'),
       msg('A match is only a suggestion. An officer checks the person face to face before anything is decided, and before any family is told.'),
+      msg('If you have a video instead of a photo, Khozo finds the faces in it on your own phone, and you choose the pictures to send. The video itself is never sent.'),
+      msg('The police may search a camera recording for one missing person. The recording stays on the police computer. Each face in it is compared with that person’s photo only and is not kept, and every search is recorded.'),
       msg('Khozo is used only to find missing persons: never for advertising, selling data, watching people or training computer models.'),
     ],
   },

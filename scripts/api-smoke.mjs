@@ -2013,6 +2013,124 @@ let fakeAarakshak;
  * its canonical name and LGD code, and a family's report alerting the desks
  * that verify it. The resolvers themselves are checked in scripts/geo-smoke.mjs.
  */
+/**
+ * Video (shared/video-search.js).
+ *
+ *   POST /reports/:id/video-search  faces cut from a video on the officer's
+ *                                   computer, each compared with one case:
+ *                                   police only, the reverse search's cases,
+ *                                   a camera place and a search reference
+ *                                   required, five faces at most, the face
+ *                                   from the video always the source, nothing
+ *                                   stored, every request audited
+ *   POST /reports/found             a sighting made from pictures chosen from
+ *                                   a video keeps the moments they came from
+ */
+async function videoChecks({ superAdmin, sjpu, cwc, parent, fake }) {
+  const mumbai = { state: 'Maharashtra', district: 'Mumbai' };
+  const caseForm = (fields, photo) => {
+    const form = new FormData();
+    addDeclaration(form, 'Smoke Video Declarant');
+    form.set('allowDuplicate', 'true');
+    for (const [key, value] of Object.entries({ ...mumbai, gender: 'Male', age: '9', ...fields })) form.set(key, value);
+    form.set('photoConsent', 'true');
+    if (photo) form.set('photo', photo);
+    return form;
+  };
+  const sha = 'b'.repeat(64);
+  const searchForm = (photos, fields = {}) => {
+    const form = new FormData();
+    photos.forEach((photo, i) => form.append(i === 0 ? 'photo' : 'extraPhotos', photo));
+    const values = {
+      searchId: 'vs_smoke12345', videoName: 'kalupur-gate-1.mp4', videoBytes: '73400320', videoSeconds: '600',
+      videoSha256: sha, cameraPlace: 'Kalupur railway station, gate 1', recordedFrom: '2026-10-20T14:30',
+      batch: '1', batches: '1', facesFound: String(photos.length), facesTooSmall: '4',
+      times: photos.map((_, i) => String(10 + i * 7.5)).join(','),
+      ...fields,
+    };
+    for (const [key, value] of Object.entries(values)) if (value != null) form.set(key, value);
+    return form;
+  };
+  const filesUnder = (dir) => (fs.existsSync(dir)
+    ? fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? filesUnder(path.join(dir, e.name)) : [path.join(dir, e.name)]))
+    : []);
+
+  const target = await request('POST', '/reports', {
+    token: sjpu.token,
+    form: caseForm({ childName: 'Video Search Smoke', parentPhone: '9876500801' }, facePhotoFile('VIDEO_TARGET', 'case')),
+  });
+  const id = target.report.id;
+  const route = `/reports/${id}/video-search`;
+  const faces = () => [
+    facePhotoFile('VIDEO_TARGET', 'sighting'),
+    facePhotoFile('VIDEO_STRANGER', 'sighting'),
+    tinyPngFile(),
+  ];
+
+  // Who may search, and for which cases.
+  await expectStatus(403, () => request('POST', route, { token: parent.token, form: searchForm(faces()) }), 'a family searches a video');
+  await expectStatus(403, () => request('POST', route, { token: cwc.token, form: searchForm(faces()) }), 'a CWC desk searches a video (not a police role)');
+  await expectStatus(404, () => request('POST', '/reports/r_not_a_case/video-search', { token: sjpu.token, form: searchForm(faces()) }), 'search a video for an unknown case');
+  const noPhoto = await request('POST', '/reports', { token: sjpu.token, form: caseForm({ childName: 'Video No Photo', parentPhone: '9876500802' }, null) });
+  await expectStatus(409, () => request('POST', `/reports/${noPhoto.report.id}/video-search`, { token: sjpu.token, form: searchForm(faces()) }), 'search a video for a case with no photo');
+  const familyCase = await request('POST', '/reports', { token: parent.token, form: caseForm({ childName: 'Video Unverified', parentPhone: '9876500803' }, facePhotoFile('VIDEO_FAMILY', 'case')) });
+  await expectStatus(409, () => request('POST', `/reports/${familyCase.report.id}/video-search`, { token: sjpu.token, form: searchForm(faces()) }), 'search a video for an unverified family report');
+
+  // What a search must say.
+  await expectStatus(400, () => request('POST', route, { token: sjpu.token, form: searchForm(faces(), { cameraPlace: '' }) }), 'a search that does not say where the camera is');
+  await expectStatus(400, () => request('POST', route, { token: sjpu.token, form: searchForm(faces(), { searchId: 'not-a-search' }) }), 'a search with no reference');
+  const six = Array.from({ length: 6 }, (_, i) => facePhotoFile(`VIDEO_MANY_${i}`, 'sighting'));
+  await expectStatus(400, () => request('POST', route, { token: sjpu.token, form: searchForm(six) }), 'six faces in one request');
+  await expectStatus(400, () => request('POST', route, { token: sjpu.token, form: searchForm([textFile()]) }), 'a file that is not a picture');
+
+  // The search itself.
+  const uploadsBefore = filesUnder(dataDir).filter((f) => !f.endsWith('.json')).length;
+  const pairsBefore = fake.pairs.length;
+  const found = await request('POST', route, { token: sjpu.token, form: searchForm(faces()) });
+  const verdicts = found.results.map((r) => `${r.index}:${r.verdict}`).join();
+  // Rekognition is not configured in this suite, so the person is "possible" (one engine).
+  assert(verdicts === '0:possible,1:unlikely,2:no_face', `each face should get its verdict in the order sent, got ${verdicts}`);
+  assert(found.counts.possible === 1 && found.counts.unlikely === 1 && found.counts.no_face === 1, `the verdicts should be counted: ${JSON.stringify(found.counts)}`);
+  assert(found.engines?.aarakshak === true && found.engines?.rekognition === false, 'the answer should say which engines compared');
+  const newPairs = fake.pairs.slice(pairsBefore);
+  assert(newPairs.length === 2 && newPairs.every(([source, targetRole]) => source === 'sighting' && targetRole === 'case'), `the face from the video should be the source of every comparison: ${JSON.stringify(newPairs)}`);
+  assert(filesUnder(dataDir).filter((f) => !f.endsWith('.json')).length === uploadsBefore, 'no picture from a video search should be stored');
+  const audit = (await request('GET', '/dashboard/audit', { token: superAdmin.token })).audit.find((row) => row.action === 'case.video_searched' && row.targetId === id);
+  assert(audit, 'a video search should be audited');
+  assert(audit.metadata?.cameraPlace === 'Kalupur railway station, gate 1' && audit.metadata?.videoSha256 === sha && audit.metadata?.videoBytes === 73400320 && audit.metadata?.searchId === 'vs_smoke12345',
+    `the audit should record the camera, the video and its fingerprint: ${JSON.stringify(audit.metadata)}`);
+  assert(audit.metadata?.faces?.length === 3 && audit.metadata.faces[0].t === 10 && audit.metadata.faces[0].verdict === 'possible', `the audit should record each face's moment and verdict: ${JSON.stringify(audit.metadata?.faces)}`);
+  const caseAfter = (await request('GET', `/reports/${id}`, { token: superAdmin.token })).report;
+  assert(!caseAfter.extraPhotos?.length && caseAfter.status === target.report.status, 'a video search should not change the case');
+
+  // An engine outage: the faces are "not checked", to send again.
+  fake.down = true;
+  const down = await request('POST', route, { token: sjpu.token, form: searchForm([facePhotoFile('VIDEO_TARGET', 'sighting')]) });
+  fake.down = false;
+  assert(down.results[0]?.verdict === 'no_answer', `a face the engines did not answer for should be "not checked": ${JSON.stringify(down.results)}`);
+
+  // A sighting from pictures chosen from a video keeps the moments.
+  const sightingForm = (videoFrames) => {
+    const form = new FormData();
+    form.set('foundLocation', 'Near Dadar station, video smoke');
+    form.set('state', mumbai.state);
+    form.set('district', mumbai.district);
+    form.set('reporterPhone', '9000002901');
+    form.set('photoConsent', 'true');
+    form.set('photo', facePhotoFile('VIDEO_SIGHTING', 'sighting'));
+    if (videoFrames != null) form.set('videoFrames', videoFrames);
+    return form;
+  };
+  const fromVideo = await request('POST', '/reports/found', { form: sightingForm('0:12, 0:47') });
+  const junk = await request('POST', '/reports/found', { form: sightingForm('soon, later') });
+  const all = (await request('GET', '/reports/found/all', { token: superAdmin.token })).foundReports;
+  const stored = all.find((row) => row.id === fromVideo.foundReport.id);
+  assert(stored?.fromVideo?.times?.join() === '0:12,0:47', `a sighting from a video should keep its moments: ${JSON.stringify(stored?.fromVideo)}`);
+  assert(all.find((row) => row.id === junk.foundReport.id)?.fromVideo === null, 'moments that are not times should not be kept');
+  assert(!('fromVideo' in fromVideo.foundReport), 'the reporter’s receipt should not change for a video');
+  console.log('Video checks passed');
+}
+
 async function jurisdictionApiChecks({ superAdmin, parent, police, cwc }) {
   const states = await fetch(`${base}/geo/states`);
   const stateBody = await states.json();
@@ -4180,6 +4298,7 @@ async function run() {
   await twoWayMatchingChecks({ superAdmin, sjpu, cwc, dlsa, ngo: await login('ngo@khozo.org'), parent, fake: fakeAarakshak });
   await candidateAndPhotoChecks({ superAdmin, admin, sjpu, cwc, parent, fake: fakeAarakshak });
   await multiPhotoChecks({ superAdmin, sjpu, cwc, parent });
+  await videoChecks({ superAdmin, sjpu, cwc, parent, fake: fakeAarakshak });
   await strictInputChecks({ superAdmin, sjpu });
   await privacyGapChecks({ superAdmin, sjpu, cci: await login('cci@khozo.org') });
   await traffickingChecks({ superAdmin, sjpu, ahtu, cci: await login('cci@khozo.org'), parent });

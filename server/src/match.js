@@ -11,7 +11,7 @@
 import { listReports, listFoundReports, readPhoto as readStoredPhoto } from './store.js';
 import { selectMatchCandidates, selectSightingCandidates } from '../../shared/match-pool.js';
 import { engineSettings } from '../../shared/match-config.js';
-import { ENGINES, comparePhotos, extraPairBudgetOf, loadComparable, rankResult, screenPhoto } from '../../shared/match-pipeline.js';
+import { ENGINES, compareFramesWithCase as compareFrames, comparePhotos, extraPairBudgetOf, loadComparable, rankResult, screenPhoto } from '../../shared/match-pipeline.js';
 import { detectImageMime, imageExtension, rekognitionReadable } from '../../shared/photo-format.js';
 import { RekognitionClient, CompareFacesCommand } from '@aws-sdk/client-rekognition';
 
@@ -413,4 +413,25 @@ export async function rankSightingMatches(casePhotoBuf, hints = {}, source = {})
     candidates: ranked.candidates.map(({ report, ...rest }) => ({ ...rest, sighting: report })),
     engine: ranked.engine,
   };
+}
+
+/**
+ * Compares faces cut from a video with one case's photo, each on its own:
+ * POST /reports/:id/video-search. See worker/src/match.js for the Worker
+ * build and shared/match-pipeline.js compareFramesWithCase for the rules.
+ */
+export async function compareFramesWithCase(casePhotoBuf, frames, { reviewThreshold } = {}) {
+  const cfg = config();
+  const providers = providersFor(cfg);
+  const engines = { aarakshak: providers.aarakshak.ready, rekognition: providers.rekognition.ready };
+  if (!casePhotoBuf?.length || !frames?.length || (!engines.aarakshak && !engines.rekognition)) return { results: [], engines };
+  const results = await compareFrames({
+    casePhotoBuf,
+    frames,
+    providers,
+    reviewThreshold: Number(reviewThreshold),
+    confirmThreshold: cfg.confirmThreshold,
+    concurrency: cfg.concurrency,
+  });
+  return { results, engines };
 }

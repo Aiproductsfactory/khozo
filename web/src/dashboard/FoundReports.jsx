@@ -860,6 +860,12 @@ export default function FoundReports({ view = 'matches' }) {
                   </p>
                   {coordsOf(f) && <MapsLink lat={f.lat} lng={f.lng} />}
                   {txt(f.note) && <p className="text-sm italic text-slate-600">“{d(f.note)}”</p>}
+                  {/* The reporter sent pictures chosen from a video on their phone, not photos (shared/video-search.js). */}
+                  {Array.isArray(f.fromVideo?.times) && f.fromVideo.times.length > 0 && !f.anonymizedAt && (
+                    <p className="text-xs text-slate-600">
+                      {t('The pictures were taken from a video on the reporter’s phone, at {times}. The video itself was not sent.', { times: f.fromVideo.times.map((x) => txt(x)).join(', ') })}
+                    </p>
+                  )}
                   {/* For an adult, why the reporter thought they need help (shared/sighting-misuse.js). */}
                   {sightingAdult && !f.anonymizedAt && (
                     <p className="text-xs text-slate-600">

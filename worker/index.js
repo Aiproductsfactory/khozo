@@ -24,7 +24,7 @@ import {
 } from './src/http/express-compat.js';
 import { createRequestStore, tablesForRequest } from './src/store-sync.js';
 import { checkDatabase, scheduled as runScheduledChecks } from './src/ops.js';
-import { detectPerson, matchEngineInfo, probeMatchProviders, rankMatches, rankSightingMatches } from './src/match.js';
+import { compareFramesWithCase, detectPerson, matchEngineInfo, probeMatchProviders, rankMatches, rankSightingMatches } from './src/match.js';
 import { createFaceIndex } from '../shared/face-index.js';
 import { humanCheckConfig } from '../shared/human-check.js';
 import { privacySecrets } from '../shared/privacy.js';
@@ -122,6 +122,8 @@ function buildDeps(env, store, ctx) {
     matchEngineInfo: () => matchEngineInfo(env),
     probeMatchProviders: (photoBuf) => probeMatchProviders(env, photoBuf),
     detectPerson: (photoBuf) => detectPerson(env, photoBuf),
+    // Faces from a video, each compared with one case (POST /reports/:id/video-search).
+    compareFramesWithCase: (casePhotoBuf, frames, options) => compareFramesWithCase(env, casePhotoBuf, frames, options),
     // The one-to-many index: none unless AARAKSHAK_GALLERY_URL and
     // AARAKSHAK_GALLERY_KEY are set (shared/face-index.js).
     faceIndex: createFaceIndex(env),
@@ -141,6 +143,7 @@ function buildDeps(env, store, ctx) {
       caseStatusLimit: env.KHOZO_CASE_STATUS_LIMIT,
       sightingStatusLimit: env.KHOZO_SIGHTING_STATUS_LIMIT,
       bulletinLimit: env.KHOZO_BULLETIN_LIMIT,
+      videoSearchLimit: env.KHOZO_VIDEO_SEARCH_LIMIT,
       directoryLimit: env.KHOZO_DIRECTORY_LIMIT,
       registerLimit: env.KHOZO_REGISTER_LIMIT,
       loginLimit: env.KHOZO_LOGIN_LIMIT,

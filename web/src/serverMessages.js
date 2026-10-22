@@ -41,6 +41,19 @@ export const SERVER_MESSAGES = [
   msg('Closed cases are not compared with sightings'),
   msg('A citizen or NGO report must be checked before it is compared with sightings'),
 
+  // A refused video search (POST /api/reports/:id/video-search), shown in the console.
+  msg('Cases whose details were removed cannot be searched for'),
+  msg('This person has been found'),
+  msg('This case is closed'),
+  msg('A found-child case is not searched for in videos'),
+  msg('A citizen or NGO report must be checked before it is searched for'),
+  msg('This case has no photo to compare with'),
+  msg('Searching a video is not available here'),
+  msg('This search has no reference. Start the search again.'),
+  msg('Send at least one face picture'),
+  msg('The case photo could not be read'),
+  msg('No face engine is set up, so the faces could not be compared'),
+
   // Why a re-match compared no faces (the engine's `note` in the
   // /api/reports/:id/rematch answer, shown in the console).
   msg('No face-matching service answered, so no faces were compared and no possible match is shown.'),

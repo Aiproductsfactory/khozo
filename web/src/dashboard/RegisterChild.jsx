@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { Suspense, lazy, useState, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { useAuth } from '../auth.jsx';
@@ -9,6 +9,9 @@ import { MAX_CASE_PHOTOS } from '../../../shared/photo-set.js';
 import DistrictPicker from '../DistrictPicker.jsx';
 import { DASHBOARD_ROUTE_ROLES } from './routes.js';
 import NavIcon from './NavIcon.jsx';
+
+// Photos from a family's video (web/src/video/), loaded only when asked for.
+const VideoFacePicker = lazy(() => import('../video/VideoFacePicker.jsx'));
 
 // What each "Who is missing?" choice is called in the page title.
 const REGISTER_TITLES = {
@@ -217,6 +220,15 @@ export default function RegisterChild() {
   });
   // The main photo is shown on the case and compared first with every sighting.
   const makeMain = (key) => setPhotos((prev) => [...prev.filter((p) => p.key === key), ...prev.filter((p) => p.key !== key)]);
+
+  // Advanced options: pictures of the person chosen from a video the family
+  // has. They are small JPEGs already, so they are added as they are.
+  const [videoOpen, setVideoOpen] = useState(false);
+  const addVideoPictures = (files) => {
+    const added = files.map((f) => ({ key: `${Date.now()}-${Math.random().toString(36).slice(2)}`, file: f, preview: URL.createObjectURL(f), preparing: false }));
+    setPhotos((prev) => [...prev, ...added].slice(0, MAX_CASE_PHOTOS));
+    setVideoOpen(false);
+  };
 
   const submit = async (e) => {
     e.preventDefault();
@@ -485,6 +497,35 @@ export default function RegisterChild() {
             <p className="mt-1 text-xs text-gray-400">
               {t('A clear, front-facing face photo works best. Up to {n} photos: different ages and angles help.', { n: MAX_CASE_PHOTOS })}
             </p>
+            {photos.length < MAX_CASE_PHOTOS && (
+              <details
+                className="group mt-3 rounded-xl ring-1 ring-black/10 open:bg-gray-50/60"
+                open={videoOpen}
+                onToggle={(e) => setVideoOpen(e.currentTarget.open)}
+              >
+                <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 [&::-webkit-details-marker]:hidden">
+                  <span>
+                    <span className="block text-sm font-semibold text-ink">{t('Advanced options')}</span>
+                    <span className="block text-xs text-gray-500">{t('Take photos from a video of the person')}</span>
+                  </span>
+                  <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5 shrink-0 text-gray-400 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="m6 9 6 6 6-6" />
+                  </svg>
+                </summary>
+                {videoOpen && (
+                  <div className="border-t border-black/5 px-3 pb-3 pt-3">
+                    <Suspense fallback={<p className="text-sm text-gray-500">{t('Loading…')}</p>}>
+                      <VideoFacePicker
+                        max={MAX_CASE_PHOTOS - photos.length}
+                        purpose="case"
+                        onUse={addVideoPictures}
+                        onCancel={() => setVideoOpen(false)}
+                      />
+                    </Suspense>
+                  </div>
+                )}
+              </details>
+            )}
           </div>
         </div>
         <label className="flex gap-3 rounded-xl bg-gray-50 p-3 text-sm text-gray-700">

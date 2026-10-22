@@ -105,6 +105,20 @@ but includes name, age, gender and district. An officer downloads it and sends i
 Name, phone, email, district, subject and description (`grievances.js` `POST /`), seen by
 desks in that state or district. No retention period is set.
 
+### Flow H — Video (`shared/video-search.js`, `web/src/video/`)
+
+A video is never uploaded, in either use. It is opened by the browser on the device that
+has it. Faces are found there by a small detector that only finds faces (YuNet, run by
+onnxruntime-web); it cannot recognise anyone.
+
+| Step | Data | Goes to | Stored | Who can see it |
+|---|---|---|---|---|
+| Pictures from a video (public form, case registration, adding a case photo) | The faces found, as small pictures, and the moment each was seen; the person picks up to 3 (a sighting) or 5 (a case) | The person's own browser | Not stored until sent | The person |
+| Send | The chosen pictures, as the photos, and for a sighting the moments ("0:12, 0:47", `videoFrames`) | `reports.js` `POST /found` or `POST /` | As any photo of that record; the sighting keeps `fromVideo.times` | As Flow A or C |
+| CCTV search: read | The whole video, on the officer's computer; its SHA-256 fingerprint, computed there | The officer's browser | Not stored | The officer |
+| CCTV search: compare | Up to 300 face pictures, the clearest of each person seen, 5 a request, with the camera's place, the file's name, size, length and fingerprint | `reports.js` `POST /:id/video-search` (police roles, a case they can open, the cases the reverse search runs for); each picture to Aarakshak, and to Rekognition only when Aarakshak puts it at or above the review line or cannot read it (`shared/match-pipeline.js` `compareFramesWithCase`) | **No picture and no face template is kept.** The audit row keeps the officer, case, camera place, file details and fingerprint, each picture's moment, verdict and scores | Audit readers |
+| Result | A verdict a picture: likely, possible, not a match, no face, not checked | The officer | A case note only if the officer adds one | Desks that can open the case |
+
 ## 4. Necessity and proportionality
 
 | Question | Answer |
@@ -135,6 +149,7 @@ L = likelihood, S = severity (Low, Medium, High), before the controls.
 | R12 | **Wide visibility** of unplaced sightings and of every alert. | H | L | Alerts carry place and time only; opening the record needs jurisdiction. | Medium. A sighting with no place, photo included, is open to every review desk in the country (`scope.js:135-141`), and no officer can assign it a place (G22). |
 | R13 | **Audit log tampering or loss.** | L | M | UPDATE and DELETE blocked by a trigger (`001_schema.sql:194-203`); the hash chain detects edited and deleted rows and counts concurrent branches (`shared/audit-chain.js`); a gap can only be acknowledged in the log itself. | Low to medium. TRUNCATE, or a database owner dropping the trigger, is not blocked. Gaps since 1 Aug 2026 have been acknowledged (`shared/audit-chain.js` header). |
 | R14 | **Outage** during a live search. | M | H | Writes are flushed before the response is sent (`worker/index.js`). | Medium. [Confirm the Cloudflare plan; CPU-limit errors (HTTP 503) have been seen.] |
+| R15 | **Bystanders in CCTV.** Searching a camera recording compares the faces of everyone in it, none of whom is missing, and could be turned to finding someone who is not missing. | M | H | The video stays on the officer's computer; each face is compared with one case's photo only, never searched across cases or kept (`shared/routes/reports.js` `POST /:id/video-search`); police roles only, for open, verified cases; the camera's place is required; every request is audited with the file's fingerprint (`case.video_searched`); at most 300 faces a search, 5 a request, 200 requests a quarter-hour an officer. | Medium. The same gap as R3: nothing stops an officer registering a person who is not missing and then searching footage for them. The monthly audit review must read `case.video_searched` rows against open cases. Faces are sent to Aarakshak and Rekognition under the existing agreements; [confirm both agreements cover faces of people who are not in any case]. |
 
 ## 6. Controls that exist today
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api.js';
 import { useAuth } from '../auth.jsx';
@@ -21,6 +21,11 @@ import { RISK_BADGES, riskReasonLabel } from './riskLabels.js';
 import { CASE_CREATE_ROLES } from './routes.js';
 import NavIcon from './NavIcon.jsx';
 import PhotoViewer from './PhotoViewer.jsx';
+
+// Video, loaded only when an officer opens it (web/src/video/): searching a
+// CCTV export for this person, and photos taken from a family's video.
+const VideoCaseSearch = lazy(() => import('../video/VideoCaseSearch.jsx'));
+const VideoFacePicker = lazy(() => import('../video/VideoFacePicker.jsx'));
 
 /** "Trafficking risk: high" on a case row, when the case was raised. */
 function RiskBadge({ risk, className = '' }) {
@@ -527,6 +532,10 @@ export default function Cases() {
   const [photoReplace, setPhotoReplace] = useState({ caseId: '', file: null, consent: false });
   // Photos the family brought, to add beside the others (POST /:id/photos).
   const [photoAdd, setPhotoAdd] = useState({ caseId: '', files: [], consent: false });
+  // Which case's video panels are open: the CCTV search, and photos from a
+  // family's video. Each is closed again when another case is opened.
+  const [videoSearchOpen, setVideoSearchOpen] = useState(null);
+  const [videoPhotosOpen, setVideoPhotosOpen] = useState(null);
   const [photoResult, setPhotoResult] = useState(null);
   const canAct = FORMAL_ACTION_ROLES.includes(user.role);
 
@@ -1668,6 +1677,37 @@ export default function Cases() {
                         <span>{t('Consent to use these photos has been recorded')}</span>
                       </label>
                     )}
+                    {photoAdd.caseId === selected.id && photoAdd.fromVideo && photoAdd.files.length > 0 && (
+                      <p className="mt-2 text-xs text-gray-600">{t('{n} picture(s) chosen from a video.', { n: photoAdd.files.length })}</p>
+                    )}
+                    <details
+                      className="group mt-2 rounded-lg ring-1 ring-black/10 open:bg-white"
+                      open={videoPhotosOpen === selected.id}
+                      onToggle={(e) => setVideoPhotosOpen(e.currentTarget.open ? selected.id : null)}
+                    >
+                      <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-xs font-semibold text-gray-700 [&::-webkit-details-marker]:hidden">
+                        <span>{t('Advanced options: take photos from a video')}</span>
+                        <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4 shrink-0 text-gray-400 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="m6 9 6 6 6-6" />
+                        </svg>
+                      </summary>
+                      {videoPhotosOpen === selected.id && (
+                        <div className="border-t border-black/5 p-3">
+                          <Suspense fallback={<p className="text-sm text-gray-500">{t('Loading…')}</p>}>
+                            <VideoFacePicker
+                              key={selected.id}
+                              max={MAX_CASE_PHOTOS - viewPhotosOf(selected).length}
+                              purpose="case"
+                              onUse={(files) => {
+                                setPhotoAdd((prev) => ({ caseId: selected.id, files, fromVideo: true, consent: prev.caseId === selected.id && prev.consent }));
+                                setVideoPhotosOpen(null);
+                              }}
+                              onCancel={() => setVideoPhotosOpen(null)}
+                            />
+                          </Suspense>
+                        </div>
+                      )}
+                    </details>
                     <button
                       type="button"
                       className="btn-ghost mt-2 w-full"
@@ -1893,6 +1933,35 @@ export default function Cases() {
                     </div>
                 )}
               </div>
+            )}
+
+            {/* Searching a CCTV export for this person (web/src/video/VideoCaseSearch.jsx):
+                the same cases and roles as the search above (POST /reports/:id/video-search). */}
+            {canRematch && selected.photoFile && selected.caseOrigin !== 'found_child_intake'
+              && !['found', 'closed', 'intake_pending'].includes(selected.status)
+              && selected.intakeStatus !== 'pending_verification' && !selected.anonymizedAt && (
+              <details
+                className="group mt-6 rounded-xl border border-black/5 open:bg-gray-50/40"
+                open={videoSearchOpen === selected.id}
+                onToggle={(e) => setVideoSearchOpen(e.currentTarget.open ? selected.id : null)}
+              >
+                <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 p-4 [&::-webkit-details-marker]:hidden">
+                  <span>
+                    <span className="block text-sm font-medium">{t('Search a CCTV video for this person')}</span>
+                    <span className="mt-0.5 block text-xs text-gray-600">{t('Find the faces in a video on this computer and compare each with this case’s photo.')}</span>
+                  </span>
+                  <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5 shrink-0 text-gray-400 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="m6 9 6 6 6-6" />
+                  </svg>
+                </summary>
+                {videoSearchOpen === selected.id && (
+                  <div className="border-t border-black/5 p-4">
+                    <Suspense fallback={<p className="text-sm text-gray-500">{t('Loading…')}</p>}>
+                      <VideoCaseSearch key={selected.id} report={selected} />
+                    </Suspense>
+                  </div>
+                )}
+              </details>
             )}
 
             {canManageBulletin && (

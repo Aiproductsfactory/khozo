@@ -273,6 +273,26 @@ try {
     [...calls.aarakshak, ...calls.rekognition].every((roles) => roles[0] === 'sighting' && roles[1] === 'case'),
     JSON.stringify([...calls.aarakshak, ...calls.rekognition].slice(0, 6)));
 
+  // Faces from a video, each compared with one case (POST /reports/:id/video-search).
+  calls.aarakshak.length = 0;
+  calls.rekognition.length = 0;
+  const frames = ['A', 'B', 'Q', 'N', 'E'].map((person, id) => ({ id, buffer: photo(person, 'sighting') }));
+  const frameRuns = {};
+  for (const runtime of ['worker', 'server']) {
+    const casePhoto = photo('A', 'case');
+    // eslint-disable-next-line no-await-in-loop
+    frameRuns[runtime] = runtime === 'worker'
+      ? await worker.compareFramesWithCase({}, casePhoto, frames, { reviewThreshold: 0.35 })
+      : await server.compareFramesWithCase(casePhoto, frames, { reviewThreshold: 0.35 });
+  }
+  const frameView = (run) => ({ engines: run.engines, results: run.results.map(({ id, verdict, aarakshakScore, rekognitionScore, engines }) => ({ id, verdict, aarakshakScore, rekognitionScore, engines })) });
+  check('faces from a video: the Worker and the Node build agree', isDeepStrictEqual(frameView(frameRuns.worker), frameView(frameRuns.server)),
+    `\n      worker ${JSON.stringify(frameView(frameRuns.worker))}\n      server ${JSON.stringify(frameView(frameRuns.server))}`);
+  check('faces from a video: the person is likely, a stranger unlikely',
+    frameRuns.worker.results[0]?.verdict === 'likely' && frameRuns.worker.results[1]?.verdict === 'unlikely', JSON.stringify(frameRuns.worker.results.map((r) => r.verdict)));
+  check('faces from a video: the face from the video is always the source',
+    [...calls.aarakshak, ...calls.rekognition].every((roles) => roles[0] === 'sighting' && roles[1] === 'case'));
+
   const screens = [];
   for (const [label, buf, expect] of [
     ['a group photo', photo('G', 'case'), (r) => r.verdict === 'person' && r.faces === 2],

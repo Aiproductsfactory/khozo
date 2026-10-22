@@ -170,6 +170,7 @@ import {
 import { assessTraffickingRisk } from '../trafficking.js';
 import { NO_FAMILY_CONTACT_ROLES, aadhaarFields, deskCaseView } from '../privacy.js';
 import { stripImageMetadata } from '../photo-strip.js';
+import { FRAME_VERDICTS, VIDEO_SEARCH_BATCH, VIDEO_SEARCH_FIELDS, videoFrameTimesOf, videoSearchRecord } from '../video-search.js';
 
 export default function registerReportRoutes(router, deps) {
   const {
@@ -187,6 +188,10 @@ export default function registerReportRoutes(router, deps) {
     // sightings. Optional only so that a harness exercising other routes need
     // not stub it; both runtimes supply it.
     rankSightingMatches = null,
+    // Faces cut from a video, each compared with one case's photo
+    // (POST /:id/video-search). Optional for the same reason; both runtimes
+    // supply it.
+    compareFramesWithCase = null,
     // Links a stored sighting to a case only if it is still what the search
     // saw: `(id, makePatch, isEligible) => Promise<linked record | null>`. The
     // Worker supplies it, because its store is a per-request copy read seconds
@@ -300,6 +305,9 @@ export default function registerReportRoutes(router, deps) {
     photoConsent: 'flag',
     // The poster code the form was opened from (shared/campaign-source.js).
     campaignSource: ['text', 80],
+    // The moments in a video the photos were taken from ("0:12, 0:47"), when
+    // the reporter chose a video instead of a photo (shared/video-search.js).
+    videoFrames: ['text', 120],
     // Why the reporter thought a woman or adult needs help (shared/sighting-misuse.js).
     concernReason: ['text', 40],
   };
@@ -1665,6 +1673,10 @@ export default function registerReportRoutes(router, deps) {
       // Why the reporter thought this person needs help; the form asks it for
       // a woman or an adult (shared/sighting-misuse.js).
       concernReason: concernReasonOf(b.concernReason),
+      // The photos are pictures the reporter chose from a video on their phone,
+      // taken at these moments in it (shared/video-search.js). The video was
+      // never sent.
+      fromVideo: req.file && videoFrameTimesOf(b.videoFrames) ? { times: videoFrameTimesOf(b.videoFrames) } : null,
       // The bot check's result: null when it is off or the sender is signed in
       // (shared/human-check.js).
       humanCheck: req.humanCheck ?? null,
@@ -3763,6 +3775,106 @@ export default function registerReportRoutes(router, deps) {
       },
     });
     res.json({ sightingMatches: reverse.sightingMatches, engine: reverse.engine });
+  });
+
+  /**
+   * Searches a video for the person in this case (shared/video-search.js,
+   * web/src/video/VideoCaseSearch.jsx).
+   *
+   * The video is read on the officer's own computer and is never uploaded.
+   * Each request carries up to VIDEO_SEARCH_BATCH small pictures of one face
+   * each, cut from it there: `photo` and `extraPhotos`, as any upload. Each is
+   * compared with this case's lead photo by the face engines, in memory, and
+   * nothing is kept: neither the pictures nor any face template. The answer is
+   * a verdict a picture (shared/match-pipeline.js frameVerdict), in the order
+   * sent.
+   *
+   * Police only, for a case the officer can open, and only the cases the
+   * reverse search runs for (POST /:id/rematch). Every request is audited
+   * with the video's name, size, length and fingerprint, the camera's place
+   * and what was found: comparing strangers' faces from a camera is exactly
+   * the function creep the DPIA names (R3), and this record is its control.
+   */
+  const videoSearchLimit = fixedWindowRateLimit({
+    name: 'video_search',
+    limit: 200,
+    envLimit: settings.videoSearchLimit,
+    key: (req) => `user:${req.user?.id || clientIp(req)}`,
+  });
+
+  router.post('/:id/video-search', protectedRoute, requireRole(...POLICE_ROLES), videoSearchLimit, upload.single('photo'), async (req, res) => {
+    const r = findReport(req.params.id);
+    if (!r) return res.status(404).json({ error: 'Report not found' });
+    if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
+    if (r.anonymizedAt) return res.status(409).json({ error: 'Cases whose details were removed cannot be searched for' });
+    if (r.status === 'found') return res.status(409).json({ error: 'This person has been found' });
+    if (r.status === 'closed') return res.status(409).json({ error: 'This case is closed' });
+    if (isFoundChildIntake(r)) return res.status(409).json({ error: 'A found-child case is not searched for in videos' });
+    if (isPendingCitizenIntake(r)) {
+      return res.status(409).json({ error: 'A citizen or NGO report must be checked before it is searched for' });
+    }
+    const lead = leadPhotoOf(r);
+    if (!lead?.file) return res.status(409).json({ error: 'This case has no photo to compare with' });
+    if (typeof compareFramesWithCase !== 'function') {
+      return res.status(501).json({ error: 'Searching a video is not available here' });
+    }
+
+    const read = readFields(req.body || {}, VIDEO_SEARCH_FIELDS);
+    if (read.error) return res.status(400).json({ error: read.error });
+    const record = videoSearchRecord(read.body);
+    if (record.error) return res.status(400).json({ error: record.error });
+
+    const files = [req.file, ...(Array.isArray(req.extraFiles) ? req.extraFiles : [])].filter((f) => f?.buffer?.length);
+    if (!files.length) return res.status(400).json({ error: 'Send at least one face picture' });
+    if (files.length > VIDEO_SEARCH_BATCH) {
+      return res.status(400).json({ error: `Send at most ${VIDEO_SEARCH_BATCH} face pictures at a time` });
+    }
+    for (const file of files) {
+      const error = validateImageFile(file, 'Face picture');
+      if (error) return res.status(error === PHOTO_TOO_LARGE ? 413 : 400).json({ error });
+    }
+
+    const casePhoto = await Promise.resolve(readPhoto(lead.file)).catch(() => null);
+    if (!casePhoto?.length) return res.status(409).json({ error: 'The case photo could not be read' });
+
+    const { results, engines } = await compareFramesWithCase(
+      casePhoto,
+      files.map((file, i) => ({ id: i, buffer: file.buffer })),
+      { reviewThreshold: MATCH_REVIEW_THRESHOLD },
+    );
+    if (!engines?.aarakshak && !engines?.rekognition) {
+      return res.status(503).json({ error: 'No face engine is set up, so the faces could not be compared' });
+    }
+
+    const counts = Object.fromEntries(FRAME_VERDICTS.map((v) => [v, 0]));
+    for (const result of results) counts[result.verdict] = (counts[result.verdict] || 0) + 1;
+    addAudit({
+      actorId: req.user.id,
+      actorName: req.user.name,
+      actorRole: req.user.role,
+      action: 'case.video_searched',
+      targetType: 'report',
+      targetId: r.id,
+      summary: `Searched a video for case ${r.id}: ${results.length} face(s) compared, ${counts.likely} likely, ${counts.possible} possible`,
+      scope: { state: r.state, district: r.district, reportId: r.id },
+      metadata: {
+        ...record,
+        comparedWith: lead.id,
+        counts,
+        // What each picture scored, by its time in the video; no picture is kept.
+        faces: results.map((result, i) => ({
+          t: record.times[i] ?? null,
+          verdict: result.verdict,
+          aarakshak: result.aarakshakScore ?? null,
+          rekognition: result.rekognitionScore ?? null,
+        })),
+      },
+    });
+    res.json({
+      results: results.map((result) => ({ index: result.id, verdict: result.verdict, enginesAnswered: result.enginesAnswered || [] })),
+      counts,
+      engines,
+    });
   });
 
   /**
