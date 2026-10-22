@@ -50,7 +50,8 @@
     "smoke:misuse": "node scripts/misuse-smoke.mjs",
     "smoke:out-of-area": "node scripts/out-of-area-smoke.mjs",
     "smoke:station-alerts": "node scripts/station-alerts-smoke.mjs",
-    "smoke:bulk-accounts": "node scripts/bulk-accounts-smoke.mjs"
+    "smoke:bulk-accounts": "node scripts/bulk-accounts-smoke.mjs",
+    "check:live": "node scripts/check-live.mjs"
   },
   "devDependencies": {
     "concurrently": "^10.0.3",

@@ -3,6 +3,10 @@
 Covers where the backend should run, what still has to change before it can, and
 how to get the Android app onto Google Play.
 
+For day-to-day work (deploying, checking a deploy, rolling back, changing the
+database password, switching on the bot check, and who should own each account)
+see [OPERATIONS.md](OPERATIONS.md).
+
 ---
 
 ## 1. Hosting
