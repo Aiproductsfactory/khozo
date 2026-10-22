@@ -161,5 +161,11 @@
   "Desks are listed, not people. To reach one, call the helplines below or contact the local administration.": "येथे व्यक्ती नव्हे, कक्ष दिले आहेत. संपर्कासाठी खालील हेल्पलाइनवर कॉल करा किंवा स्थानिक प्रशासनाशी संपर्क साधा.",
   "Add Khozo to your home screen from this website. It opens like an app, works on a weak signal, and a report made with no signal is sent when the signal returns. Nothing to download from an app store.": "याच वेबसाइटवरून Khozo तुमच्या होम स्क्रीनवर जोडा. ते ॲपसारखे उघडते, कमकुवत नेटवर्कमध्येही चालते, आणि नेटवर्क नसताना पाठवलेली माहिती नेटवर्क परत येताच पोहोचते. कोणत्याही ॲप स्टोअरमधून काहीही डाउनलोड करण्याची गरज नाही.",
   "In Chrome on Android: open the ⋮ menu and choose “Install app” or “Add to Home screen”. On iPhone: tap Share, then “Add to Home Screen”.": "Android वर Chrome मध्ये: ⋮ मेनू उघडा आणि “Install app” किंवा “Add to Home screen” निवडा. iPhone वर: Share दाबा, मग “Add to Home Screen”.",
-  "Officers sign in to the same app on any phone.": "अधिकारी कोणत्याही फोनवर याच ॲपमध्ये लॉग इन करतात."
+  "Officers sign in to the same app on any phone.": "अधिकारी कोणत्याही फोनवर याच ॲपमध्ये लॉग इन करतात.",
+  "Only authorised officials see it from here": "येथून पुढे ते फक्त अधिकृत अधिकारीच पाहतात",
+  "Your photo stays private": "तुमचा फोटो खाजगी राहतो",
+  "It is never shared on WhatsApp or put in a public gallery.": "तो कधीही WhatsApp वर शेअर केला जात नाही किंवा सार्वजनिक गॅलरीत टाकला जात नाही.",
+  "Nobody but authorised officials sees it.": "अधिकृत अधिकाऱ्यांशिवाय तो कोणीही पाहत नाही.",
+  "You are not told who the person is, to keep them safe.": "त्या व्यक्तीच्या सुरक्षिततेसाठी, ती कोण आहे हे तुम्हाला सांगितले जात नाही.",
+  "It is not kept for ever: it is deleted after 180 days.": "तो कायमचा ठेवला जात नाही: 180 दिवसांनंतर तो हटवला जातो."
 }

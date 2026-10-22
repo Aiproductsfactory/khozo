@@ -194,28 +194,88 @@ function Paths() {
  * (shared/match-pool.js); nothing is decided by a score; a traced woman or
  * adult is asked before their family is told. The sender is never shown the
  * result (pages/Capture.jsx gives everyone the same receipt).
+ *
+ * Drawn as the picture the feasibility report and the explainer film use: the
+ * sender's step, then a shaded band for everything only authorised officials
+ * see (police, and for a child the CWC and DCPU desks: shared/scope.js), then
+ * what never happens to the photo. That boundary is what makes a stranger
+ * willing to send one.
  */
 const STEPS = [
   {
+    icon: 'send',
     title: msg('You send a photo and the place'),
     body: msg('Your phone adds the location, so the desk for that area is told. You get a receipt number to track it.'),
   },
   {
+    icon: 'compare',
     title: msg('It is compared in private'),
     body: msg('An Indian face-matching service compares the face with open cases, the same district first, and suggests possible matches.'),
   },
   {
+    icon: 'verify',
     title: msg('An officer checks, in person'),
     body: msg('A score is never a decision. No family is contacted until an officer confirms.'),
   },
   {
+    icon: 'home',
     title: msg('Home, safely'),
     body: msg('A child who is found is produced before the Child Welfare Committee. A woman or adult who is traced is asked first; their family is told only with their consent.'),
   },
 ];
 
+const PRIVATE = [
+  msg('It is never shared on WhatsApp or put in a public gallery.'),
+  msg('Nobody but authorised officials sees it.'),
+  msg('You are not told who the person is, to keep them safe.'),
+  msg('It is not kept for ever: it is deleted after 180 days.'),
+];
+
+const stepStroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' };
+const STEP_ICONS = {
+  send: (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-6 w-6" {...stepStroke}>
+      <rect x="7" y="2.5" width="10" height="19" rx="2" /><path d="M12 16V8m-3 3 3-3 3 3" />
+    </svg>
+  ),
+  compare: (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-6 w-6" {...stepStroke}>
+      <circle cx="7" cy="8.5" r="3" /><path d="M2.5 19a4.5 4.5 0 0 1 9 0" /><circle cx="17" cy="8.5" r="3" /><path d="M12.5 19a4.5 4.5 0 0 1 9 0" />
+    </svg>
+  ),
+  verify: (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-6 w-6" {...stepStroke}>
+      <path d="M12 2.5 19.5 5.5v5.2c0 4.7-3.2 8.7-7.5 10.8-4.3-2.1-7.5-6.1-7.5-10.8V5.5z" /><path d="m8.5 12 2.4 2.4 4.6-4.8" />
+    </svg>
+  ),
+  home: (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-6 w-6" {...stepStroke}>
+      <path d="M3 11 12 3.5 21 11" /><path d="M5.5 9.5V20.5h13V9.5" /><path d="M10 20.5v-6h4v6" />
+    </svg>
+  ),
+};
+
+function Step({ step, n, onTint = false }) {
+  const t = useT();
+  return (
+    <li className="grid grid-cols-[2.75rem_minmax(0,1fr)] gap-x-4 md:block">
+      <span className="relative flex h-11 w-11 items-center justify-center rounded-xl bg-khozo text-white shadow-sm">
+        {STEP_ICONS[step.icon]}
+        <span className={`absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold ring-2 ${onTint ? 'bg-white text-khozo-dark ring-khozo-light' : 'bg-white text-khozo-dark ring-white'}`}>
+          {n}
+        </span>
+      </span>
+      <div className="md:mt-4">
+        <h3 className="pt-1 font-bold leading-snug text-ink md:pt-0">{t(step.title)}</h3>
+        <p className="mt-1.5 leading-relaxed text-gray-600">{t(step.body)}</p>
+      </div>
+    </li>
+  );
+}
+
 function Journey() {
   const t = useT();
+  const [first, ...rest] = STEPS;
   return (
     <section id="how" aria-labelledby="how-title" className="scroll-mt-16 bg-white">
       <div className="mx-auto max-w-6xl px-5 py-16 sm:py-20">
@@ -223,29 +283,41 @@ function Journey() {
           <Kicker>{t('How Khozo works')}</Kicker>
           <h2 id="how-title" className="mt-2 text-2xl font-bold tracking-tight text-ink sm:text-3xl">{t('What happens after you send a photo')}</h2>
         </div>
-        <ol className="relative mt-10 grid gap-8 md:grid-cols-4 md:gap-6">
-          {/* The rail joining the steps: down the left on a phone, across on a wide screen. */}
-          <span aria-hidden="true" className="absolute bottom-4 left-[1.125rem] top-4 w-px bg-khozo/25 md:bottom-auto md:left-4 md:right-4 md:top-[1.125rem] md:h-px md:w-auto" />
-          {STEPS.map((s, i) => (
-            <li key={s.title} className="relative grid grid-cols-[2.25rem_minmax(0,1fr)] gap-x-4 md:block">
-              <span className="relative z-10 flex h-9 w-9 items-center justify-center rounded-full bg-white font-mono text-sm font-bold text-khozo-dark ring-1 ring-khozo/40">
-                {i + 1}
-              </span>
-              <div className="md:mt-5">
-                <h3 className="pt-1.5 font-bold leading-snug text-ink md:pt-0">{t(s.title)}</h3>
-                <p className="mt-1.5 leading-relaxed text-gray-600">{t(s.body)}</p>
-              </div>
-            </li>
-          ))}
-        </ol>
-        {/* The platform rule, stated as what it is: a feature. */}
-        <p className="mt-12 flex items-start gap-3 rounded-2xl bg-khozo-light/60 p-4 leading-relaxed text-ink ring-1 ring-khozo/20 sm:p-5">
-          <Icon.shield className="mt-0.5 h-5 w-5 shrink-0 text-khozo-dark" />
-          <span>
-            <strong>{t('No public gallery of children.')}</strong>{' '}
-            {t('Faces are compared by face-matching services, and only authorised officers see who matched.')}
+
+        {/* Your step, then the band of what only authorised officials see. */}
+        <div className="mt-10 grid gap-4 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,3fr)] md:items-start md:gap-5">
+          <ol className="md:pt-[3.75rem]">
+            <Step step={first} n={1} />
+          </ol>
+          <span aria-hidden="true" className="flex justify-start pl-3 text-khozo/60 md:justify-center md:pl-0 md:pt-[4.3rem]">
+            <svg viewBox="0 0 24 24" className="h-6 w-6 rotate-90 md:rotate-0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12h15m-5-5 5 5-5 5" /></svg>
           </span>
-        </p>
+          <div className="rounded-2xl bg-khozo-light/70 p-5 ring-1 ring-khozo/20 sm:p-6">
+            <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-khozo-dark">
+              <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="5" y="11" width="14" height="9.5" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>
+              {t('Only authorised officials see it from here')}
+            </p>
+            <ol start={2} className="mt-5 grid gap-7 md:grid-cols-3 md:gap-6">
+              {rest.map((s, i) => <Step key={s.title} step={s} n={i + 2} onTint />)}
+            </ol>
+          </div>
+        </div>
+
+        {/* What never happens to the photo: the reason to trust the button. */}
+        <div className="mt-10 rounded-2xl p-5 ring-1 ring-black/[0.07] sm:p-6">
+          <h3 className="flex items-center gap-2 font-bold text-ink">
+            <Icon.shield className="h-5 w-5 text-khozo-dark" />
+            {t('Your photo stays private')}
+          </h3>
+          <ul className="mt-4 grid gap-3 sm:grid-cols-2">
+            {PRIVATE.map((line) => (
+              <li key={line} className="flex gap-2.5 leading-relaxed text-gray-700">
+                <Icon.check className="mt-1 h-4 w-4 shrink-0 text-khozo" />
+                <span>{t(line)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
       </div>
     </section>
   );
