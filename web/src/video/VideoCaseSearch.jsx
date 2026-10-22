@@ -166,14 +166,10 @@ export default function VideoCaseSearch({ report }) {
     const batches = [];
     for (let i = 0; i < tracks.length; i += VIDEO_SEARCH_BATCH) batches.push(tracks.slice(i, i + VIDEO_SEARCH_BATCH));
     setProgress({ done: 0, total: tracks.length });
-    let done = 0;
-    for (const [index, batch] of batches.entries()) {
-      if (controller.signal.aborted) {
-        setStoppedEarly(true);
-        break;
-      }
+
+    const formFor = (faces, index) => {
       const fd = new FormData();
-      batch.forEach((track, i) => fd.append(i === 0 ? 'photo' : 'extraPhotos', trackFile(track, 'face')));
+      faces.forEach((track, i) => fd.append(i === 0 ? 'photo' : 'extraPhotos', trackFile(track, 'face')));
       fd.append('searchId', searchId);
       fd.append('videoName', (file.name || '').slice(0, 200));
       fd.append('videoBytes', String(file.size || 0));
@@ -185,36 +181,71 @@ export default function VideoCaseSearch({ report }) {
       fd.append('batches', String(batches.length));
       fd.append('facesFound', String(scan.tracks.length));
       fd.append('facesTooSmall', String(scan.tooSmall || 0));
-      fd.append('times', batch.map((track) => track.time.toFixed(1)).join(','));
+      fd.append('times', faces.map((track) => track.time.toFixed(1)).join(','));
+      return fd;
+    };
+    // Sends some faces and gives each one's verdict by track. Every face
+    // unanswered means the engines were busy or briefly down: wait, and send
+    // them once more.
+    const ask = async (faces, index) => {
+      let data = await api.postForm(`/reports/${report.id}/video-search`, formFor(faces, index));
+      if ((data.results || []).length && data.results.every((row) => row.verdict === 'no_answer') && !controller.signal.aborted) {
+        setBusyEngines(true);
+        await new Promise((resolve) => setTimeout(resolve, ENGINE_BUSY_WAIT_MS));
+        setBusyEngines(false);
+        if (!controller.signal.aborted) data = await api.postForm(`/reports/${report.id}/video-search`, formFor(faces, index));
+      }
+      const answered = {};
+      for (const row of data.results || []) {
+        const track = faces[row.index];
+        if (track) answered[track.id] = row.verdict;
+      }
+      return answered;
+    };
+    // The server itself failed on the request, with no answer in words: on
+    // the smallest hosting plan a request doing too much is cut off.
+    const isFault = (err) => [500, 502, 503, 504].includes(err?.status) && !err?.data?.error;
+
+    let done = 0;
+    for (const [index, batch] of batches.entries()) {
+      if (controller.signal.aborted) {
+        setStoppedEarly(true);
+        break;
+      }
+      const answered = {};
+      let stop = null;
       try {
         // eslint-disable-next-line no-await-in-loop
-        let data = await api.postForm(`/reports/${report.id}/video-search`, fd);
-        // Every face unanswered: the engines are busy or briefly down. Wait,
-        // and send this batch once more before moving on.
-        if ((data.results || []).length && data.results.every((row) => row.verdict === 'no_answer') && !controller.signal.aborted) {
-          setBusyEngines(true);
-          // eslint-disable-next-line no-await-in-loop
-          await new Promise((resolve) => setTimeout(resolve, ENGINE_BUSY_WAIT_MS));
-          setBusyEngines(false);
-          // eslint-disable-next-line no-await-in-loop
-          if (!controller.signal.aborted) data = await api.postForm(`/reports/${report.id}/video-search`, fd);
-        }
-        const answered = {};
-        for (const row of data.results || []) {
-          const track = batch[row.index];
-          if (track) answered[track.id] = row.verdict;
-        }
-        setVerdicts((prev) => ({ ...prev, ...answered }));
+        Object.assign(answered, await ask(batch, index));
       } catch (err) {
-        // A refusal about the case or the search stops it; a fault leaves
-        // these faces "not checked", to send again.
-        if ([400, 403, 404, 409, 501, 503].includes(err.status)) {
-          setError(err.message);
+        if (isFault(err) && batch.length > 1) {
+          // Several faces at once were too much for the server: one at a time.
+          for (const track of batch) {
+            if (controller.signal.aborted) break;
+            try {
+              // eslint-disable-next-line no-await-in-loop
+              Object.assign(answered, await ask([track], index));
+            } catch (single) {
+              if (!isFault(single)) {
+                stop = single;
+                break;
+              }
+            }
+          }
+        } else {
+          stop = err;
+        }
+      }
+      // A face with no verdict is "not checked", to send again.
+      setVerdicts((prev) => ({ ...prev, ...Object.fromEntries(batch.map((track) => [track.id, answered[track.id] || 'no_answer'])) }));
+      if (stop) {
+        // A refusal about the case or the search ends it; a fault does not.
+        if ([400, 403, 404, 409, 501, 503].includes(stop.status) && !isFault(stop)) {
+          setError(stop.message);
           setStoppedEarly(true);
           break;
         }
-        setVerdicts((prev) => ({ ...prev, ...Object.fromEntries(batch.map((track) => [track.id, 'no_answer'])) }));
-        if (err.status === 429) {
+        if (stop.status === 429) {
           setError(msg('Too many faces were sent in a short time. Wait a few minutes, then check the rest again.'));
           setStoppedEarly(true);
           break;

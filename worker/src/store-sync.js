@@ -90,6 +90,16 @@ const HYDRATED = {
 const ALL_TABLES = Object.keys(HYDRATED);
 
 /**
+ * `auditTail` in a request's tables: only the newest audit rows, enough to
+ * append to the chain without reading all of it. The chain's head is the
+ * newest row nothing follows (shared/audit-chain.js auditHead), and a row
+ * that follows another is always newer, so the newest rows hold it. Listing
+ * the log or checking the chain from them is refused.
+ */
+const AUDIT_TAIL = 'auditTail';
+const AUDIT_TAIL_SQL = 'select data from public.audit order by ts desc limit 64';
+
+/**
  * Requests that are answered from part of the replica.
  *
  * The alert inbox is polled every twenty seconds by every open console and by
@@ -110,11 +120,17 @@ const PARTIAL = [
   // only to send one image - 2.9 s a photo against 1.3 s for the inbox poll
   // (22 Oct 2026), and some photos not there after half a minute.
   { method: 'GET', prefix: '/api/reports/photo/', tables: ['users', 'reports', 'foundReports'] },
+  // Searching a video for one person (POST /api/reports/:id/video-search):
+  // up to sixty requests a search, each needing only the officer, the case
+  // and the end of the audit chain to append its record to.
+  { method: 'POST', pattern: /^\/api\/reports\/[^/]+\/video-search$/, tables: ['users', 'reports', AUDIT_TAIL] },
 ];
 
 /** Which tables a request needs hydrated: all of them unless listed above. */
 export function tablesForRequest(method, pathname) {
-  const route = PARTIAL.find((r) => r.method === method && (r.prefix ? pathname.startsWith(r.prefix) : r.path === pathname));
+  const route = PARTIAL.find((r) => r.method === method && (
+    r.pattern ? r.pattern.test(pathname) : r.prefix ? pathname.startsWith(r.prefix) : r.path === pathname
+  ));
   return route ? route.tables : ALL_TABLES;
 }
 
@@ -127,12 +143,18 @@ export function tablesForRequest(method, pathname) {
  * one fails loudly rather than answering from an empty list, or appending an
  * audit row to a chain it cannot see.
  */
-export async function createRequestStore(env, ctx, io = POSTGRES, { tables = ALL_TABLES } = {}) {
+export async function createRequestStore(env, ctx, io = POSTGRES, { tables: requested = ALL_TABLES } = {}) {
+  // Only the end of the audit chain, unless the whole of it is loaded anyway.
+  const auditTailOnly = requested.includes(AUDIT_TAIL) && !requested.includes('audit');
+  const tables = requested.filter((name) => name !== AUDIT_TAIL);
   const unknown = tables.filter((name) => !HYDRATED[name]);
   if (unknown.length) throw new Error(`Unknown store table: ${unknown.join(', ')}`);
   const loaded = await Promise.all(
-    tables.map((name) => io.query(env, HYDRATED[name]).then((r) => r.rows.map((row) => row.data).filter(Boolean)))
+    [...tables, ...(auditTailOnly ? [AUDIT_TAIL] : [])].map((name) => io
+      .query(env, name === AUDIT_TAIL ? AUDIT_TAIL_SQL : HYDRATED[name])
+      .then((r) => r.rows.map((row) => row.data).filter(Boolean)))
   );
+  const auditTail = auditTailOnly ? loaded[tables.length] : null;
 
   // Notifications are read for one officer at a time, so unlike the tables
   // above they are fetched per request rather than hydrated wholesale — the
@@ -141,6 +163,7 @@ export async function createRequestStore(env, ctx, io = POSTGRES, { tables = ALL
   for (const name of ALL_TABLES) {
     const index = tables.indexOf(name);
     if (index >= 0) db[name] = loaded[index];
+    else if (name === 'audit' && auditTail) db.audit = auditTail;
     else {
       Object.defineProperty(db, name, {
         get() {
@@ -346,7 +369,10 @@ export async function createRequestStore(env, ctx, io = POSTGRES, { tables = ALL
     },
 
     // --- Tamper-evident audit log ---
-    listAudit: () => db.audit,
+    listAudit: () => {
+      if (auditTailOnly) throw new Error('Only the end of the audit table was loaded for this request');
+      return db.audit;
+    },
     addAudit(entry) {
       const prevHash = auditHead(db.audit);
       const row = {
@@ -367,7 +393,9 @@ export async function createRequestStore(env, ctx, io = POSTGRES, { tables = ALL
       db.audit.unshift(row);
       return markDirty('audit', row);
     },
-    verifyAuditChain(rows = db.audit) {
+    verifyAuditChain(rows) {
+      if (rows === undefined && auditTailOnly) throw new Error('Only the end of the audit table was loaded for this request');
+      rows = rows ?? db.audit;
       return verifyAuditLinks(rows, auditHash);
     },
 

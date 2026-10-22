@@ -399,6 +399,91 @@ check('an unknown photo is still not found', (await photoRequest('/api/reports/p
 check('a sighting with no photo is still not found', (await photoRequest('/api/reports/photo/f_1', 'u_mum')).status === 404);
 check('serving photos writes nothing', servingIo.writes.length === 0, `${servingIo.writes.length} writes`);
 
+// --- a video search loads the accounts, the cases and the end of the audit chain ---
+// Up to sixty requests a search, each appending one audit row: the whole
+// log is not read for that, only its newest rows, which hold the chain's head.
+const VIDEO_TABLES = 'users,reports,auditTail';
+check('a video search needs the accounts, the cases and the end of the audit chain',
+  tablesForRequest('POST', '/api/reports/r_1/video-search').join() === VIDEO_TABLES, tablesForRequest('POST', '/api/reports/r_1/video-search').join());
+check('only that route', tablesForRequest('GET', '/api/reports/r_1/video-search').length === 6 && tablesForRequest('POST', '/api/reports/r_1/rematch').length === 6);
+
+// A whole (1 x 1) PNG: the route checks that each face picture is an image.
+const TINY_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=', 'base64');
+const searchIo = fakeIo({
+  users: [
+    { id: 'u_mum', email: 'mumbai@khozo.org', role: 'police', name: 'Mumbai Desk', jurisdiction: { state: 'Maharashtra', district: 'Mumbai' } },
+    { id: 'u_goa', email: 'goa@khozo.org', role: 'police', name: 'Goa Desk', jurisdiction: { state: 'Goa', district: 'North Goa' } },
+  ],
+  reports: [{ id: 'r_vs', status: 'missing', state: 'Maharashtra', district: 'Mumbai', childName: 'Video Search', photoFile: 'r_vs.jpg', createdAt: 1 }],
+  found_reports: [{ id: 'f_1', status: 'no_match' }],
+  grievances: [{ id: 'g_1' }],
+  activity: [{ id: 'a_1', ts: 1, action: 'x' }],
+  // A chain of two rows, oldest first in the file, newest first as read.
+  audit: [
+    { id: 'au_new', ts: 2, action: 'x', hash: 'h2', prevHash: 'h1' },
+    { id: 'au_old', ts: 1, action: 'x', hash: 'h1', prevHash: null },
+  ],
+});
+searchIo.photos.set('r_vs.jpg', { buffer: JPEG, mime: 'image/jpeg' });
+
+const tail = await createRequestStore({}, null, searchIo, { tables: tablesForRequest('POST', '/api/reports/r_vs/video-search') });
+check('the audit table is read as its newest rows only', searchIo.reads.join() === 'users,reports,audit' && searchIo.statements.length === 0, searchIo.reads.join());
+check('the log cannot be listed or checked from its end alone', throws(() => tail.store.listAudit()) && throws(() => tail.store.verifyAuditChain()));
+check('the sightings and the rest still throw', throws(() => tail.store.listFoundReports()) && throws(() => tail.store.listGrievances()));
+const appended = tail.store.addAudit({ action: 'case.video_searched', targetType: 'report', targetId: 'r_vs' });
+check('an audit row still follows the chain’s newest row', appended.prevHash === 'h2' && typeof appended.hash === 'string', JSON.stringify({ prev: appended.prevHash }));
+await tail.flush();
+check('and is written', searchIo.writes.some((w) => w.table === 'audit' && w.id === appended.id));
+
+/** One video-search request through the real report routes on such a replica. */
+async function videoSearch(userId, { faces = 1, fields = {} } = {}) {
+  const reads = searchIo.reads.length;
+  const writes = searchIo.writes.length;
+  const { store: s, flush: done } = await createRequestStore({}, null, searchIo, { tables: tablesForRequest('POST', '/api/reports/r_vs/video-search') });
+  const auth = createAuth({}, s);
+  const router = createRouter();
+  const compared = [];
+  registerReportRoutes(router, {
+    ...s,
+    ...auth,
+    isPostgres: true,
+    auditPublicRateLimit: createAuditPublicRateLimit(s),
+    clientIp,
+    fixedWindowRateLimit,
+    upload: { single: () => (_req, _res, next) => next() },
+    rankMatches: async () => ({ candidates: [], engine: { provider: 'stub', biometric: false } }),
+    detectPerson: async () => ({ verdict: 'unverified', faces: null }),
+    compareFramesWithCase: async (casePhoto, frames) => {
+      compared.push({ casePhoto: casePhoto.equals(JPEG), frames: frames.length });
+      return { results: frames.map((f) => ({ id: f.id, verdict: 'likely', aarakshakScore: 0.9, rekognitionScore: 0.95, enginesAnswered: ['aarakshak', 'rekognition'] })), engines: { aarakshak: true, rekognition: true } };
+    },
+    settings: {},
+  });
+  const body = new FormData();
+  for (let i = 0; i < faces; i += 1) body.append(i === 0 ? 'photo' : 'extraPhotos', new File([TINY_PNG], `face-${i}.png`, { type: 'image/png' }));
+  for (const [k, v] of Object.entries({ searchId: 'vs_replica1', cameraPlace: 'Dadar station, gate 2', times: Array.from({ length: faces }, (_, i) => String(i * 2)).join(','), ...fields })) body.set(k, v);
+  const token = userId ? await auth.signToken(s.findUserById(userId)) : null;
+  const response = await handleRequest(router, new Request('https://khozo.test/api/reports/r_vs/video-search', { method: 'POST', body, headers: token ? { authorization: `Bearer ${token}` } : {} }), { basePath: '/api/reports' });
+  const data = await response.json().catch(() => ({}));
+  await done();
+  return { status: response.status, data, compared, tables: [...new Set(searchIo.reads.slice(reads))].sort().join(), writes: searchIo.writes.slice(writes) };
+}
+
+const searched = await videoSearch('u_mum', { faces: 3 });
+check('a video search is answered from the accounts, the cases and the end of the audit chain',
+  searched.status === 200 && searched.data.results?.length === 3 && searched.data.counts?.likely === 3, `${searched.status} ${JSON.stringify(searched.data).slice(0, 160)}`);
+check('it compares the case photo with every face', searched.compared.length === 1 && searched.compared[0].casePhoto && searched.compared[0].frames === 3, JSON.stringify(searched.compared));
+check('it reads nothing else', searched.tables === 'audit,reports,users', searched.tables);
+const auditRows = searched.writes.filter((w) => w.table === 'audit');
+check('it writes one audit row that follows the chain, and nothing else',
+  // The chain's newest row is now the one appended above.
+  searched.writes.length === 1 && auditRows.length === 1 && auditRows[0].record.action === 'case.video_searched' && auditRows[0].record.prevHash === appended.hash
+  && auditRows[0].record.metadata?.cameraPlace === 'Dadar station, gate 2' && auditRows[0].record.metadata?.faces?.length === 3,
+  JSON.stringify(searched.writes.map((w) => [w.table, w.record.action, w.record.prevHash])));
+check('a desk outside the district is refused', (await videoSearch('u_goa')).status === 403);
+check('no search without a sign-in', (await videoSearch(null)).status === 401);
+check('a search that does not say where the camera is, is refused', (await videoSearch('u_mum', { fields: { cameraPlace: '' } })).status === 400);
+
 const failed = checks.filter((c) => !c.ok);
 console.log(`\n--- ${checks.length - failed.length}/${checks.length} checks passed ---`);
 if (failed.length) {

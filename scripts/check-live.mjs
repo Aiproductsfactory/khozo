@@ -67,6 +67,20 @@ try {
   check('activation links for accounts from a sheet are deployed', false, String(error?.message || error));
 }
 
+// Searching a video for a case (video-frames) is police only, so it is asked
+// for with no token: the route refuses the sign-in (401), where old code
+// answers that there is no such route (404). Nothing is compared or changed.
+try {
+  const res = await fetch(`${base}/api/reports/does-not-exist/video-search`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'user-agent': 'khozo-check-live' },
+    body: '{}',
+  });
+  check('searching a video for a person (video-frames) is deployed', res.status === 401, `POST /api/reports/:id/video-search → HTTP ${res.status}${res.status === 404 ? ' (old code is live)' : ''}`);
+} catch (error) {
+  check('searching a video for a person (video-frames) is deployed', false, String(error?.message || error));
+}
+
 const photo = await get('/api/reports/photo/does-not-exist');
 check('no photo is served without a token', [401, 404].includes(photo.status), `HTTP ${photo.status}`);
 
