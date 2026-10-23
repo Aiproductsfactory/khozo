@@ -2193,6 +2193,11 @@ async function videoJobChecks({ superAdmin, sjpu, cwc, parent, fake }) {
   await expectStatus(403, () => request('POST', `${route}/faces`, { token: superAdmin.token, form: facesForm(twoFaces(), { batch: 'b2' }) }), 'faces added to another officer\'s check');
   await expectStatus(400, () => request('POST', `${route}/faces`, { token: sjpu.token, form: facesForm(twoFaces(), { fileKey: '9', batch: 'b3' }) }), 'faces for a video the check does not hold');
   await expectStatus(404, () => request('POST', `/reports/${id}/video-jobs/vj_nosuchcheck/faces`, { token: sjpu.token, form: facesForm(twoFaces(), { batch: 'b4' }) }), 'faces for a check that does not exist');
+  // The server below runs with KHOZO_DESKTOP_JOB_FACES=4: two faces are in, three more would pass it.
+  const pairsBeforeBudget = fake.pairs.length;
+  const overBudget = await expectStatus(409, () => request('POST', `${route}/faces`, { token: sjpu.token, form: facesForm([...twoFaces(), facePhotoFile('DESKTOP_STRANGER', 'sighting')], { batch: 'b5' }) }), 'faces past the check\'s budget');
+  assert(/faces one check may send/.test(overBudget.error || '') && fake.pairs.length === pairsBeforeBudget,
+    `a check that would pass its face budget should be refused before anything is compared: ${JSON.stringify(overBudget)}`);
 
   // How far the laptop got.
   const progress = await request('POST', `${route}/progress`, {
@@ -2259,6 +2264,16 @@ async function videoJobChecks({ superAdmin, sjpu, cwc, parent, fake }) {
   const closed = await request('POST', `${route}/close`, { token: sjpu.token, body: {} });
   assert(closed.job.status === 'closed', 'a check should close');
   await expectStatus(409, () => request('POST', `${route}/faces`, { token: sjpu.token, form: facesForm(twoFaces(), { batch: 'b9' }) }), 'faces for a closed check');
+
+  // When the case is anonymised, its checks lose the file names and recording
+  // times (which can say where and when a family was); the figures stay.
+  await request('POST', `/dashboard/privacy/retention/report/${id}`, {
+    token: superAdmin.token,
+    body: { decision: 'anonymize', approvalReference: 'SMOKE-CCTV-01', approvalType: 'privacy_officer' },
+  });
+  const [anonymised] = (await request('GET', `/reports/${id}/video-jobs`, { token: sjpu.token })).jobs;
+  assert(anonymised && anonymised.videos[0].name === null && anonymised.videos[0].recordedFrom === null && anonymised.confirmed === 1 && anonymised.counts.faces === 2,
+    `an anonymised case's check should keep its figures and lose its file names and times: ${JSON.stringify(anonymised)}`);
   console.log('Desktop CCTV check checks passed');
 }
 
@@ -2352,6 +2367,8 @@ async function run() {
       KHOZO_CASE_STATUS_LIMIT: '2',
       KHOZO_SIGHTING_STATUS_LIMIT: '2',
       KHOZO_GRIEVANCE_STATUS_LIMIT: '2',
+      // A small face budget for one desktop check, so the suite can reach it.
+      KHOZO_DESKTOP_JOB_FACES: '4',
       // Face comparison goes to the stand-in above, never to a real provider:
       // Aarakshak is pointed at it, and Rekognition is left unconfigured.
       AARAKSHAK_API_URL: fakeAarakshak.url,
