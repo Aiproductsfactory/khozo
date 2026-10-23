@@ -4,3 +4,7 @@
 models/
 # Scan output holds faces of everyone seen in the footage.
 khozo-scan-*/
+# Builds: the bundles, the staged resources (they can hold Aarakshak's model) and installers.
+dist/
+build/resources/
+release/

@@ -59,9 +59,14 @@ export async function caseSignatures({ client, report, detector, recognizer }) {
   return out;
 }
 
-/** The signature of one person's face picture, the picture Khozo would be sent. */
-export function trackSignature({ dir, track, detector, recognizer }) {
-  return pictureSignature(path.join(dir, track.picture), { detector, recognizer, points: track.landmarks });
+/**
+ * The signature of one person's face picture, the picture Khozo would be sent:
+ * from `dir`, or through `readPicture(track)` (the desktop app keeps pictures
+ * encrypted).
+ */
+export async function trackSignature({ dir, track, detector, recognizer, readPicture = null }) {
+  const picture = readPicture ? await readPicture(track) : path.join(dir, track.picture);
+  return pictureSignature(picture, { detector, recognizer, points: track.landmarks });
 }
 
 /** How close a person is to the case: the best cosine over the case's photos. */

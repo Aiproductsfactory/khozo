@@ -57,7 +57,12 @@ export function createClient({ api = 'https://khozo.org/api', token = null, fetc
       auth = data.token;
       return data.user;
     },
+    me: async () => { const data = await call('GET', '/auth/me'); return data.user || data; },
+    /** The cases this officer can see, as Khozo's case list gives them; `q` searches names, FIR numbers and marks. */
+    listCases: async (q = '') => (await call('GET', `/reports${q ? `?q=${encodeURIComponent(q)}` : ''}`)).reports || [],
     getCase: async (id) => (await call('GET', `/reports/${encodeURIComponent(id)}`)).report,
+    /** A note on the case, as the browser's "Add to case" writes one. */
+    addNote: (id, note) => call('POST', `/reports/${encodeURIComponent(id)}/notes`, { json: { note } }),
     photo: (id, photoId = null) => call('GET', `/reports/photo/${encodeURIComponent(id)}${photoId ? `?p=${encodeURIComponent(photoId)}` : ''}`, { bytes: true }),
     videoSearch: (id, form) => call('POST', `/reports/${encodeURIComponent(id)}/video-search`, { form }),
   };
@@ -79,31 +84,34 @@ const sleep = (ms, signal) => new Promise((resolve) => {
 });
 
 /** A face picture as the browser names it: face-12_5s.jpg for a face at 12.5 seconds. */
-function faceFile(dir, track) {
+async function faceFile(readPicture, track) {
   const at = Math.round(Number(track.time) * 10) / 10;
-  return new File([fs.readFileSync(path.join(dir, track.picture))], `face-${String(at).replace('.', '_')}s.jpg`, { type: 'image/jpeg' });
+  return new File([await readPicture(track)], `face-${String(at).replace('.', '_')}s.jpg`, { type: 'image/jpeg' });
 }
 
 /**
  * Sends the people of one scanned file to be compared with a case, five at a
  * time, and resolves to their answers by track id: `{ verdict, engines }`.
  *
- * `record` is the file's entry in the scan's manifest and `dir` its folder.
- * `onAnswers(answers)` is called after every request, so the caller can save
- * them and a stopped run picks up where it stopped. Waits, rather than giving
- * up, when Khozo's limit is reached or the connection drops (`onWait` says
- * why); stops with a KhozoError when Khozo refuses for a reason waiting will
- * not change (signed out, no access, a closed case).
+ * `record` is the file's entry in the scan's manifest and `dir` its folder;
+ * `readPicture(track)` reads a face picture instead (the desktop app keeps
+ * them encrypted). `onAnswers(answers)` is called after every request, so the
+ * caller can save them and a stopped run picks up where it stopped. Waits,
+ * rather than giving up, when Khozo's limit is reached or the connection drops
+ * (`onWait` says why); stops with a KhozoError when Khozo refuses for a reason
+ * waiting will not change (signed out, no access, a closed case).
  */
 export async function sendFaces({
   client, caseId, record, dir, tracks, camera, recordedFrom = null, searchId,
+  readPicture = (track) => fs.readFileSync(path.join(dir, track.picture)),
   onAnswers = () => {}, onWait = () => {}, busyWaitMs = 15000, signal,
 }) {
   const batches = [];
   for (let i = 0; i < tracks.length; i += VIDEO_SEARCH_BATCH) batches.push(tracks.slice(i, i + VIDEO_SEARCH_BATCH));
-  const formFor = (faces, index) => {
+  const formFor = async (faces, index) => {
     const form = new FormData();
-    faces.forEach((track, i) => form.append(i === 0 ? 'photo' : 'extraPhotos', faceFile(dir, track)));
+    const files = await Promise.all(faces.map((track) => faceFile(readPicture, track)));
+    files.forEach((file, i) => form.append(i === 0 ? 'photo' : 'extraPhotos', file));
     form.append('searchId', searchId);
     form.append('videoName', String(record.name || '').slice(0, 200));
     form.append('videoBytes', String(record.bytes || 0));
@@ -125,7 +133,7 @@ export async function sendFaces({
     let pause = 30000;
     for (;;) {
       try {
-        return await client.videoSearch(caseId, formFor(faces, index));
+        return await client.videoSearch(caseId, await formFor(faces, index));
       } catch (err) {
         if (signal?.aborted) throw err;
         if (err.status === 429) {

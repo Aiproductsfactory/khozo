@@ -1,10 +1,13 @@
 {
   "name": "khozo-desktop",
-  "version": "0.0.1",
+  "productName": "Khozo Desktop",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "Khozo on the officer's laptop: long CCTV footage checked where it is, only face pictures sent",
+  "author": "Aegis School of Data Science",
   "license": "Apache-2.0",
+  "main": "dist/main.cjs",
   "bin": {
     "khozo-scan": "bin/scan.mjs",
     "khozo-compare": "bin/compare.mjs"
@@ -12,12 +15,68 @@
   "scripts": {
     "scan": "node bin/scan.mjs",
     "compare": "node bin/compare.mjs",
-    "test": "node test/smoke.mjs"
+    "test": "node test/smoke.mjs && node test/jobs.mjs",
+    "build:app": "node build/build.mjs",
+    "start": "node build/build.mjs && electron .",
+    "dist": "node build/build.mjs && electron-builder --win nsis --x64"
   },
   "dependencies": {
     "ffmpeg-static": "^5.2.0",
     "ffprobe-static": "^3.1.0",
     "onnxruntime-node": "1.30.0",
     "sharp": "^0.34.5"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.24.2"
+  },
+  "build": {
+    "appId": "org.khozo.desktop",
+    "productName": "Khozo Desktop",
+    "copyright": "Aegis School of Data Science",
+    "directories": {
+      "output": "release"
+    },
+    "asar": false,
+    "npmRebuild": false,
+    "files": [
+      "dist/**",
+      "package.json",
+      "!node_modules/onnxruntime-node/bin/napi-v*/darwin/**",
+      "!node_modules/onnxruntime-node/bin/napi-v*/linux/**",
+      "!node_modules/onnxruntime-node/bin/napi-v*/win32/arm64/**",
+      "!node_modules/ffprobe-static/bin/darwin/**",
+      "!node_modules/ffprobe-static/bin/linux/**",
+      "!node_modules/ffprobe-static/bin/win32/ia32/**"
+    ],
+    "extraResources": [
+      {
+        "from": "build/resources",
+        "to": ".",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Khozo Desktop",
+      "artifactName": "Khozo-Desktop-Setup-${version}.exe"
+    },
+    "electronDist": "node_modules/electron/dist"
   }
 }

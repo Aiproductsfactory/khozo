@@ -73,8 +73,15 @@ export function parseTime(value) {
  *   minFace    faces narrower than this, in the video's pixels, are counted but not kept
  *   scoreMin   the face finder's threshold (Aarakshak's, from the model's card, or the browser's)
  *   outDir     where face pictures go (`faces/t<id>.jpg`)
+ *   savePicture(relativePath, jpeg)   writes a face picture; by default into
+ *              outDir as it is (the desktop app encrypts it instead)
+ *   idPrefix   put before every track id ("s2-" gives "s2-17"), so that the
+ *              parts of a file read after a stop never reuse an id
  *   detector   from loadDetector()
  *   onProgress({ t, from, to, looks, people })   every few looks
+ *   onCheckpoint({ t, looks, facesFound, facesTooSmall, tracks })   about
+ *              every `checkpointMs`: everything found so far, so a stopped
+ *              read can carry on from `t`
  *   signal     an AbortSignal: stopping keeps what was found so far
  *
  * Resolves to the file's record: what it holds, the window read, the counts,
@@ -83,6 +90,7 @@ export function parseTime(value) {
  */
 export async function scanFile(file, {
   from = 0, to = null, fps = 2, maxSide = 960, minFace = MIN_FACE_PX, scoreMin, outDir, detector, onProgress, signal,
+  savePicture = null, idPrefix = '', onCheckpoint = null, checkpointMs = 30000,
 } = {}) {
   const info = await probe(file);
   const { width, height } = info;
@@ -95,8 +103,12 @@ export async function scanFile(file, {
   const detH = Math.max(32, Math.round((height * scale) / 2) * 2);
   const back = width / detW;
 
-  const facesDir = path.join(outDir, 'faces');
-  fs.mkdirSync(facesDir, { recursive: true });
+  let save = savePicture;
+  if (!save) {
+    fs.mkdirSync(path.join(outDir, 'faces'), { recursive: true });
+    save = (relative, jpeg) => fs.writeFileSync(path.join(outDir, relative), jpeg);
+  }
+  const idOf = (id) => (idPrefix ? `${idPrefix}${id}` : id);
   const fingerprint = sha256File(file);
   const tracker = createTracker({ maxGap: Math.max(3, (3 / fps)) });
   const pictures = new Map(); // track id -> { file, quality }
@@ -104,6 +116,23 @@ export async function scanFile(file, {
   let tooSmall = 0;
   let faceCount = 0;
   const started = Date.now();
+  let lastCheckpoint = Date.now();
+
+  /** Everyone with a picture so far, earliest first. */
+  const tracksSoFar = () => tracker.tracks()
+    .filter((track) => pictures.has(track.id))
+    .map((track) => ({
+      id: idOf(track.id),
+      time: track.time,
+      firstTime: track.firstTime,
+      lastTime: track.lastTime,
+      seen: track.seen,
+      quality: Math.round(track.face.quality * 1000) / 1000,
+      face: { x: Math.round(track.face.x), y: Math.round(track.face.y), w: Math.round(track.face.w), h: Math.round(track.face.h), score: Math.round(track.face.score * 1000) / 1000 },
+      picture: pictures.get(track.id).file,
+      landmarks: pictures.get(track.id).landmarks,
+    }))
+    .sort((a, b) => a.time - b.time);
 
   await readFrames(file, { from: start, to: end, fps, width, height, signal }, async (rgba, t) => {
     const det = scale < 1 ? await image(rgba, width, height).resize(detW, detH, { fit: 'fill' }).raw().toBuffer() : rgba;
@@ -119,27 +148,18 @@ export async function scanFile(file, {
     for (const { track, better } of tracker.add(t, usable)) {
       if (!better) continue;
       const { jpeg, landmarks } = await cropPicture(rgba, width, height, track.best);
-      const name = `t${track.id}.jpg`;
-      fs.writeFileSync(path.join(facesDir, name), jpeg);
-      pictures.set(track.id, { file: path.join('faces', name), quality: track.best.quality, landmarks });
+      const relative = path.join('faces', `${idPrefix}t${track.id}.jpg`);
+      await save(relative, jpeg);
+      pictures.set(track.id, { file: relative, quality: track.best.quality, landmarks });
     }
     if (onProgress && looks % 10 === 0) onProgress({ t, from: start, to: end, looks, people: pictures.size });
+    if (onCheckpoint && Date.now() - lastCheckpoint >= checkpointMs) {
+      lastCheckpoint = Date.now();
+      await onCheckpoint({ t, looks, facesFound: faceCount, facesTooSmall: tooSmall, tracks: tracksSoFar() });
+    }
   });
 
-  const tracks = tracker.tracks()
-    .filter((track) => pictures.has(track.id))
-    .map((track) => ({
-      id: track.id,
-      time: track.time,
-      firstTime: track.firstTime,
-      lastTime: track.lastTime,
-      seen: track.seen,
-      quality: Math.round(track.face.quality * 1000) / 1000,
-      face: { x: Math.round(track.face.x), y: Math.round(track.face.y), w: Math.round(track.face.w), h: Math.round(track.face.h), score: Math.round(track.face.score * 1000) / 1000 },
-      picture: pictures.get(track.id).file,
-      landmarks: pictures.get(track.id).landmarks,
-    }))
-    .sort((a, b) => a.time - b.time);
+  const tracks = tracksSoFar();
 
   return {
     file: path.resolve(file),
