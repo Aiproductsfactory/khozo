@@ -38,5 +38,13 @@
   "Cases: {cases} · Officers: {officers}": "केस: {cases} · अधिकारी: {officers}",
   "Videos: {videos}": "वीडियो: {videos}",
   "Open sighting {n}": "सूचना {n} खोलें",
-  "From CCTV footage checked on a police laptop, at {times} into the video. The footage stays with the police.": "पुलिस लैपटॉप पर जाँची गई CCTV फ़ुटेज से, वीडियो में {times} पर। फ़ुटेज पुलिस के पास ही रहती है।"
+  "From CCTV footage checked on a police laptop, at {times} into the video. The footage stays with the police.": "पुलिस लैपटॉप पर जाँची गई CCTV फ़ुटेज से, वीडियो में {times} पर। फ़ुटेज पुलिस के पास ही रहती है।",
+  "No word from the laptop": "लैपटॉप से कोई ख़बर नहीं",
+  "On the map": "नक्शे पर",
+  "start not given": "शुरू होने का समय नहीं बताया गया",
+  "{camera}: recording from {start}; {read} of {length} read": "{camera}: रिकॉर्डिंग {start} से; {length} में से {read} पढ़ी गई",
+  "{n} h": "{n} घंटे",
+  "{n} min": "{n} मिनट",
+  "CCTV checks for this case": "इस केस की CCTV जाँच",
+  "Footage read on police laptops with Khozo Desktop. A check that found no one still shows which cameras and hours were read.": "पुलिस लैपटॉप पर Khozo Desktop से पढ़ी गई फ़ुटेज। जिस जाँच में कोई नहीं मिला, वह भी बताती है कि कौन से कैमरे और कितने घंटे पढ़े गए।"
 }

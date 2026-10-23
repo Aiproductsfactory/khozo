@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
 import { fmtDate, roleLabel, timeAgo } from '../lib.jsx';
-import { useT } from '../i18n.jsx';
+import { currentLocale, useT } from '../i18n.jsx';
 
 /**
  * CCTV checks made on police laptops with Khozo Desktop, for the cases this
@@ -42,12 +42,20 @@ function Section({ title, hint, empty, children }) {
 
 const hours = (n) => (Number(n) || 0).toLocaleString(undefined, { maximumFractionDigits: 1 });
 const share = (n) => (n == null ? '-' : `${Math.round(n * 100)}%`);
+/** A length of recording in words: minutes under an hour, hours above. */
+const lengthOf = (t, seconds) => (seconds == null ? '-'
+  : seconds < 3600 ? t('{n} min', { n: Math.max(seconds > 0 ? 1 : 0, Math.round(seconds / 60)) })
+    : t('{n} h', { n: hours(seconds / 3600) }));
+
+/** A laptop that is reading tells Khozo every few minutes; after this long with no word it has stopped or gone offline. */
+const QUIET_MS = 15 * 60 * 1000;
 
 function statusOf(t, job) {
   if (job.status === 'closed') return { label: t('Closed'), className: 'bg-slate-100 text-slate-700 ring-slate-500/20' };
   if (job.progressStatus === 'done') return { label: t('Finished'), className: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' };
   if (job.progressStatus === 'error') return { label: t('Stopped with a problem'), className: 'bg-red-50 text-red-700 ring-red-600/20' };
   if (job.progressStatus === 'paused') return { label: t('Paused'), className: 'bg-amber-50 text-amber-700 ring-amber-600/20' };
+  if (Date.now() - Date.parse(job.updatedAt || job.createdAt) > QUIET_MS) return { label: t('No word from the laptop'), className: 'bg-amber-50 text-amber-700 ring-amber-600/20' };
   return { label: t('Reading'), className: 'bg-sky-50 text-sky-700 ring-sky-600/20' };
 }
 
@@ -91,17 +99,20 @@ function FigureTable({ first, count, rows }) {
   );
 }
 
-function RecentCheck({ job }) {
+/** One check: who ran it, the cameras, what was read and found, the sightings it made. On the case page, without the case's name. */
+export function CheckCard({ job, showCase = true }) {
   const t = useT();
   const status = statusOf(t, job);
   const cameras = [...new Set((job.videos || []).map((v) => v.cameraPlace).filter(Boolean))];
   return (
     <div className="space-y-2 border-t border-black/5 px-4 py-3 text-sm first:border-t-0">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <Link to={`/app/cases?id=${encodeURIComponent(job.reportId)}`} className="font-semibold capitalize text-ink hover:underline">
-          {job.caseName || job.reportId}
-          {job.caseFir && <span className="ml-1.5 font-normal normal-case text-gray-500">{t('FIR {fir}', { fir: job.caseFir })}</span>}
-        </Link>
+        {showCase ? (
+          <Link to={`/app/cases?id=${encodeURIComponent(job.reportId)}`} className="font-semibold capitalize text-ink hover:underline">
+            {job.caseName || job.reportId}
+            {job.caseFir && <span className="ml-1.5 font-normal normal-case text-gray-500">{t('FIR {fir}', { fir: job.caseFir })}</span>}
+          </Link>
+        ) : <span className="font-semibold text-ink">{cameras.join('; ') || '-'}</span>}
         <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ${status.className}`}>{status.label}</span>
       </div>
       <p className="text-gray-600">
@@ -112,9 +123,32 @@ function RecentCheck({ job }) {
           ago: timeAgo(job.updatedAt) || '-',
         })}
       </p>
-      <p className="text-gray-600">
-        {t('{videos} video(s) from {cameras}', { videos: (job.videos || []).length, cameras: cameras.join('; ') || '-' })}
-      </p>
+      {showCase ? (
+        <p className="text-gray-600">
+          {t('{videos} video(s) from {cameras}', { videos: (job.videos || []).length, cameras: cameras.join('; ') || '-' })}
+        </p>
+      ) : (
+        // On the case page: each video, when its recording starts and how much of it was read,
+        // so a desk can see which cameras and hours are already covered.
+        <ul className="list-disc space-y-0.5 pl-5 text-gray-600">
+          {(job.videos || []).map((v) => {
+            const span = v.window ? (v.window.to ?? v.seconds ?? 0) - (v.window.from || 0) : v.seconds;
+            return (
+              <li key={v.key}>
+                {t('{camera}: recording from {start}; {read} of {length} read', {
+                  camera: v.cameraPlace || '-',
+                  start: v.recordedFrom ? new Date(v.recordedFrom).toLocaleString(currentLocale(), { dateStyle: 'medium', timeStyle: 'short' }) : t('start not given'),
+                  read: lengthOf(t, v.secondsRead),
+                  length: lengthOf(t, span),
+                })}
+                {v.lat != null && v.lng != null && (
+                  <a className="ml-1.5 text-khozo-dark underline" href={`https://www.google.com/maps?q=${v.lat},${v.lng}`} target="_blank" rel="noopener noreferrer">{t('On the map')}</a>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
       <p className="text-gray-600">
         {t('{hours} hours read, {people} people seen, {faces} faces compared, {matches} likely or possible', {
           hours: hours(job.hours),
@@ -194,7 +228,7 @@ export default function VideoChecks() {
       </div>
 
       <Section title={t('Newest checks')} empty={none}>
-        {(data.recent || []).map((job) => <RecentCheck key={job.id} job={job} />)}
+        {(data.recent || []).map((job) => <CheckCard key={job.id} job={job} />)}
       </Section>
 
       <Section title={t('By district')} hint={t('The district of the case.')} empty={none}>

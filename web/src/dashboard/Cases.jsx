@@ -25,6 +25,7 @@ import PhotoViewer from './PhotoViewer.jsx';
 // Video, loaded only when an officer opens it (web/src/video/): searching a
 // CCTV export for this person, and photos taken from a family's video.
 const VideoCaseSearch = lazy(() => import('../video/VideoCaseSearch.jsx'));
+import CaseVideoChecks from './CaseVideoChecks.jsx';
 const VideoFacePicker = lazy(() => import('../video/VideoFacePicker.jsx'));
 
 /** "Trafficking risk: high" on a case row, when the case was raised. */
@@ -1541,6 +1542,8 @@ export default function Cases() {
             </div>
 
             <div className="mt-6 space-y-5">
+              {/* The CCTV checks made for this case on police laptops (Khozo Desktop). */}
+              {POLICE_ROLES.includes(user.role) && <CaseVideoChecks caseId={selected.id} />}
               {[
                 [t('Identity'), [
                   [t('Gender'), genderLabel(selected.gender, personCategoryOf(selected)) || '-'],
