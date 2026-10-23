@@ -37,5 +37,6 @@
   "The officer marked {confirmed} as the person and {rejected} as not the person.": "अधिकाऱ्याने {confirmed} ला तीच व्यक्ती आणि {rejected} ला ही व्यक्ती नाही म्हणून चिन्हांकित केले.",
   "Cases: {cases} · Officers: {officers}": "केस: {cases} · अधिकारी: {officers}",
   "Videos: {videos}": "व्हिडिओ: {videos}",
-  "Open sighting {n}": "माहिती {n} उघडा"
+  "Open sighting {n}": "माहिती {n} उघडा",
+  "From CCTV footage checked on a police laptop, at {times} into the video. The footage stays with the police.": "पोलीस लॅपटॉपवर तपासलेल्या CCTV फुटेजमधून, व्हिडिओमध्ये {times} वर. फुटेज पोलिसांकडेच राहते."
 }
