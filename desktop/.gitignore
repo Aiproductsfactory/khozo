@@ -1,0 +1,6 @@
+# Face models are Aarakshak's and are delivered under its licence: never commit one.
+*.onnx
+*.onnx.json
+models/
+# Scan output holds faces of everyone seen in the footage.
+khozo-scan-*/
