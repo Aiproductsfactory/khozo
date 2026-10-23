@@ -147,6 +147,8 @@ export async function sendFaces({
         const form = await formFor(faces, index);
         if (!job) return await client.videoSearch(caseId, form);
         form.append('fileKey', String(job.fileKey));
+        // The laptop's name for each person: what the officer's decision on them is sent under.
+        form.append('keys', faces.map((t) => t.id).join(','));
         // The batch's name replaces its number: a field sent twice may arrive as a list.
         form.set('batch', crypto.createHash('sha1').update(faces.map((t) => t.id).join(',')).digest('hex').slice(0, 24));
         return await client.videoJobFaces(caseId, job.jobId, form);

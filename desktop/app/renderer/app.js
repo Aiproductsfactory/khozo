@@ -68,7 +68,7 @@ function header() {
 }
 
 function render() {
-  if (S.screen === 'signin') return renderSignIn();
+  if (S.screen === 'signin') return renderSignIn(S.signinNote || '');
   if (S.screen === 'home') return renderHome();
   if (S.screen === 'new') return renderNew();
   if (S.screen === 'job') return renderJob(true);
@@ -108,6 +108,7 @@ async function signIn(e) {
     renderSignIn(result.status === 401 ? t('signin.wrong') : result.error);
     return;
   }
+  S.signinNote = '';
   await reload();
 }
 
@@ -184,6 +185,28 @@ function renderCases() {
     </button>`).join('') : `<p class="quiet">${esc(t('new.noCases'))}</p>`;
 }
 
+/**
+ * A map point from what an officer pastes: two numbers ("23.0225, 72.5714"),
+ * or a Google Maps link that holds them (…/@23.0225,72.5714,17z or …!3d23.02!4d72.57).
+ * A short link (maps.app.goo.gl) holds none.
+ */
+function pointFrom(value) {
+  const s = String(value || '');
+  const m = /!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/.exec(s) || /(-?\d{1,2}\.\d{3,})\s*[, ]\s*(-?\d{1,3}\.\d{3,})/.exec(s);
+  if (!m) return null;
+  const lat = Number(m[1]);
+  const lng = Number(m[2]);
+  return Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && (lat || lng) ? { lat, lng } : null;
+}
+
+function whereNote(f) {
+  if (!String(f.where || '').trim()) return '';
+  return f.lat != null ? t('new.whereOk', { lat: f.lat.toFixed(5), lng: f.lng.toFixed(5) }) : t('new.whereBad');
+}
+
+/** Longer than this, a video needs its recording start (spec F3), or nothing in it has a date and time. */
+const LONG_VIDEO_SECONDS = 30 * 60;
+
 function filesHaveStarts() {
   return S.nc.files.filter((f) => !f.error).every((f) => f.recordedFrom);
 }
@@ -200,7 +223,9 @@ function renderFiles() {
     <tbody>${S.nc.files.map((f, i) => `<tr>
       <td><strong>${esc(f.name)}</strong><br><span class="small quiet">${f.error ? esc(t('new.unreadable', { error: f.error })) : `${esc(size(f.bytes))} · ${esc(f.width)}x${esc(f.height)} · ${esc(f.codec || '')}`}</span></td>
       <td>${f.error ? '' : esc(videoTime(f.duration))}</td>
-      <td>${f.error ? '' : `<input type="text" data-input="camera" data-i="${i}" value="${esc(f.camera || '')}" placeholder="${esc(t('new.cameraHint'))}" aria-label="${esc(t('new.camera'))}">`}</td>
+      <td>${f.error ? '' : `<input type="text" data-input="camera" data-i="${i}" value="${esc(f.camera || '')}" placeholder="${esc(t('new.cameraHint'))}" aria-label="${esc(t('new.camera'))}">
+        <input type="text" data-input="where" data-i="${i}" value="${esc(f.where || '')}" placeholder="${esc(t('new.whereHint'))}" aria-label="${esc(t('new.where'))}" style="margin-top:6px">
+        <span class="small quiet" id="where-note-${i}">${esc(whereNote(f))}</span>`}</td>
       <td>${f.error ? '' : `<input type="datetime-local" step="1" data-input="recordedFrom" data-i="${i}" value="${esc(f.recordedFrom || '')}" aria-label="${esc(t('new.starts'))}">`}</td>
       <td><button class="btn danger" data-act="remove-file" data-i="${i}">${esc(t('new.remove'))}</button></td>
     </tr>`).join('')}</tbody></table>`;
@@ -264,7 +289,12 @@ async function addFiles(folder) {
 async function startCheck() {
   const nc = S.nc;
   const usable = nc.files.filter((f) => !f.error);
-  const problem = !nc.caseId ? t('new.needCase') : !usable.length ? t('new.needFiles') : usable.some((f) => String(f.camera || '').trim().length < 3) ? t('new.needCamera') : '';
+  const problem = !nc.caseId ? t('new.needCase')
+    : !usable.length ? t('new.needFiles')
+      : usable.some((f) => String(f.camera || '').trim().length < 3) ? t('new.needCamera')
+        : usable.some((f) => (f.duration || 0) > LONG_VIDEO_SECONDS && !f.recordedFrom) ? t('new.needStart')
+          : usable.some((f) => String(f.where || '').trim() && f.lat == null) ? t('new.whereBad')
+            : '';
   const box = document.getElementById('new-error');
   if (problem) {
     box.textContent = problem;
@@ -276,7 +306,7 @@ async function startCheck() {
   button.disabled = true;
   const result = await k.createJob({
     caseId: nc.caseId,
-    files: usable.map((f) => ({ path: f.path, name: f.name, bytes: f.bytes, duration: f.duration, width: f.width, height: f.height, codec: f.codec, camera: f.camera, recordedFrom: f.recordedFrom || null })),
+    files: usable.map((f) => ({ path: f.path, name: f.name, bytes: f.bytes, duration: f.duration, width: f.width, height: f.height, codec: f.codec, camera: f.camera, lat: f.lat ?? null, lng: f.lng ?? null, recordedFrom: f.recordedFrom || null })),
     window: nc.part && (nc.from || nc.to) ? { mode: filesHaveStarts() ? 'clock' : 'video', from: nc.from, to: nc.to } : null,
     settings: { fps: nc.fps, farFaces: nc.far },
   });
@@ -394,7 +424,7 @@ function personCard(job, p) {
     <div style="flex:1">
       <div class="verdict">${esc(verdictWords(p.verdict))}</div>
       <p>${esc(t('person.seen', { camera: p.camera, when }))}</p>
-      ${p.closeness != null ? `<p class="small quiet">${esc(t('person.closeness', { score: p.closeness.toFixed(2) }))}</p>` : ''}
+      ${p.closeness != null ? `<details class="small quiet"><summary>${esc(t('person.details'))}</summary>${esc(t('person.closeness', { score: p.closeness.toFixed(2) }))}</details>` : ''}
       <div class="row" style="margin-top:10px">
         <button class="btn primary" data-act="play" data-key="${esc(p.key)}">▶ ${esc(t('person.play'))}</button>
         <button class="btn" data-act="frame" data-key="${esc(p.key)}">${esc(t('person.frame'))}</button>
@@ -545,7 +575,9 @@ async function reload() {
 
 const actions = {
   async signout() {
-    if (!window.confirm(t('signout.confirm'))) return;
+    // Signing out deletes every check on this laptop: send what is waiting first, and say if some still cannot go.
+    const { unsent = 0 } = (await k.syncNow().catch(() => null)) || {};
+    if (!window.confirm(unsent ? t('signout.unsent', { n: unsent }) : t('signout.confirm'))) return;
     await k.signOut({ deleteJobs: true });
     S.screen = 'signin';
     await reload();
@@ -562,7 +594,8 @@ const actions = {
   async pause(el) { await k.pauseJob(el.dataset.id); },
   async resume(el) { await k.startJob(el.dataset.id); },
   async remove(el) {
-    if (!window.confirm(t('home.deleteConfirm'))) return;
+    const { unsent = 0 } = (await k.syncNow(el.dataset.id).catch(() => null)) || {};
+    if (!window.confirm(unsent ? t('home.deleteUnsent', { n: unsent }) : t('home.deleteConfirm'))) return;
     await k.removeJob(el.dataset.id);
     if (S.jobId === el.dataset.id) await actions.home();
     else { await loadJobs(); render(); }
@@ -649,9 +682,22 @@ document.addEventListener('input', (e) => {
   } else if (el.dataset.input === 'camera' || el.dataset.input === 'recordedFrom') {
     S.nc.files[Number(el.dataset.i)][el.dataset.input] = el.value;
     if (el.dataset.input === 'recordedFrom') renderPartHint();
+  } else if (el.dataset.input === 'where') {
+    const f = S.nc.files[Number(el.dataset.i)];
+    const point = pointFrom(el.value);
+    Object.assign(f, { where: el.value, lat: point?.lat ?? null, lng: point?.lng ?? null });
+    const note = document.getElementById(`where-note-${el.dataset.i}`);
+    if (note) note.textContent = whereNote(f);
   } else if (el.dataset.input === 'from' || el.dataset.input === 'to') {
     S.nc[el.dataset.input] = el.value;
   }
+});
+
+// Khozo ended the sign-in while the app was working: sign in again; the checks are kept.
+k.onSessionEnded(async () => {
+  S.signinNote = t('signin.expired');
+  S.screen = 'signin';
+  await reload();
 });
 
 k.onJobChanged(async (id) => {

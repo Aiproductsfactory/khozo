@@ -72,6 +72,8 @@ function startWorker() {
 function fakeClient({ keeps = true } = {}) {
   const calls = { searches: [], notes: [], started: [], progress: [], decisions: [], closed: [] };
   let online = true;
+  // Set by a test: what Khozo answers a decision with, and how a start is refused.
+  const knobs = { decisionRefusal: null, startRefusal: null, startDelayMs: 0 };
   const reach = () => { if (!online) throw new KhozoError('No connection to Khozo (ECONNREFUSED)', 0); };
   const compare = async (caseId, form, job = {}) => {
     const faces = [...form.getAll('photo'), ...form.getAll('extraPhotos')];
@@ -80,6 +82,7 @@ function fakeClient({ keeps = true } = {}) {
   };
   return {
     calls,
+    knobs,
     set online(value) { online = value; },
     getCase: async (id) => ({ id, childName: 'Test Person', status: 'missing', extraPhotos: [] }),
     photo: async () => { throw new Error('no photo'); },
@@ -87,14 +90,17 @@ function fakeClient({ keeps = true } = {}) {
     addNote: async (caseId, note) => { reach(); calls.notes.push({ caseId, note }); return { ok: true }; },
     startVideoJob: async (caseId, body) => {
       reach();
-      if (!keeps) throw new KhozoError('Not found', 404);
+      if (knobs.startDelayMs) await sleep(knobs.startDelayMs);
+      if (knobs.startRefusal) throw knobs.startRefusal;
+      if (!keeps) throw new KhozoError('No route for POST /api/reports/r_test/video-jobs', 404, { error: 'No route for POST /api/reports/r_test/video-jobs' });
       calls.started.push({ caseId, body });
       return { job: { id: `vj_${body.jobKey}` } };
     },
-    videoJobFaces: async (caseId, jobId, form) => { reach(); return compare(caseId, form, { jobId, fileKey: form.get('fileKey'), batch: form.get('batch') }); },
+    videoJobFaces: async (caseId, jobId, form) => { reach(); return compare(caseId, form, { jobId, fileKey: form.get('fileKey'), batch: form.get('batch'), keys: form.get('keys') }); },
     videoJobProgress: async (caseId, jobId, body) => { reach(); calls.progress.push({ jobId, ...body }); return { job: {} }; },
     videoJobDecision: async (caseId, jobId, form) => {
       reach();
+      if (knobs.decisionRefusal) throw knobs.decisionRefusal;
       const decision = form.get('decision');
       calls.decisions.push({
         jobId, key: form.get('key'), decision, fileKey: form.get('fileKey'), t: form.get('t'), seenAt: form.get('seenAt'), verdict: form.get('verdict'),
@@ -288,6 +294,66 @@ console.log('Khozo’s record of a check');
   check('on a Khozo without check records, "Same person" is a case note', noted.saved === true && noted.via === 'note' && older.calls.notes.length === 1 && older.calls.notes[0].note.includes('Kalupur railway station, gate 1') && jobs2.get('job_older').sync.olderKhozo === true);
   await jobs2.decide('job_older', '0:s0-2', 'not');
   check('… and "Not this person" stays on the laptop', older.calls.notes.length === 1 && older.calls.decisions.length === 0);
+
+  // A Khozo that was older is asked again later, and a missing case is not mistaken for one.
+  const updated = fakeClient();
+  const root3 = path.join(tmp, 'jobs-updated');
+  plantJob(root3, files, 'job_later');
+  const planted = files.readJson(path.join(root3, 'job_later', 'job.bin'));
+  planted.server = { available: false, checkedAt: new Date(Date.now() - 7 * 3600 * 1000).toISOString() };
+  files.writeJson(path.join(root3, 'job_later', 'job.bin'), planted);
+  const signedOutCalls = [];
+  const jobs3 = createJobs({ root: root3, files, key, startWorker, getClient: () => updated, officer, frameOf, onSignedOut: () => signedOutCalls.push(1) });
+  const retried = await jobs3.decide('job_later', '0:s0-1', 'same');
+  check('a Khozo that kept no checks is asked again after some hours', retried.via === 'check' && updated.calls.started.length === 1);
+
+  const gone = fakeClient();
+  gone.knobs.startRefusal = new KhozoError('Report not found', 404, { error: 'Report not found' });
+  const root4 = path.join(tmp, 'jobs-gone');
+  plantJob(root4, files, 'job_gone');
+  const jobs4 = createJobs({ root: root4, files, key, startWorker, getClient: () => gone, officer, frameOf });
+  const goneDecision = await jobs4.decide('job_gone', '0:s0-1', 'same');
+  check('a case Khozo no longer has is a refusal, not an older Khozo', goneDecision.saved === false && goneDecision.refused === true && gone.calls.notes.length === 0 && jobs4.get('job_gone').sync.olderKhozo === false);
+
+  // Refusals are not sent again; a sign-in Khozo no longer takes ends the session, jobs kept.
+  updated.knobs.decisionRefusal = new KhozoError('This case is closed', 409, { error: 'This case is closed' });
+  const refused = await jobs3.decide('job_later', '0:s0-2', 'same');
+  const sentBefore = updated.calls.decisions.length;
+  await jobs3.syncAll();
+  check('a decision Khozo refused is not sent again by itself, and the officer sees why', refused.refused === true && /closed/.test(refused.error) && updated.calls.decisions.length === sentBefore && jobs3.unsent() === 0);
+  updated.knobs.decisionRefusal = new KhozoError('Session expired', 401, { error: 'Session expired' });
+  const expired = await jobs3.decide('job_later', '0:s0-2', 'not');
+  check('when Khozo no longer takes the sign-in, the app is told once and the decision waits', signedOutCalls.length === 1 && expired.saved === false && !expired.refused && jobs3.unsent() === 1);
+
+  // Two decisions at once on a job Khozo has no check for yet: one check is made, not two.
+  const slow = fakeClient();
+  slow.knobs.startDelayMs = 300;
+  const root5 = path.join(tmp, 'jobs-slow');
+  plantJob(root5, files, 'job_slow');
+  const jobs5 = createJobs({ root: root5, files, key, startWorker, getClient: () => slow, officer, frameOf });
+  await Promise.all([jobs5.decide('job_slow', '0:s0-1', 'same'), jobs5.decide('job_slow', '0:s0-2', 'not')]);
+  check('two decisions at once make one check on Khozo, not two', slow.calls.started.length === 1 && slow.calls.decisions.length === 2);
+
+  // Deleting a job while Khozo cannot be reached: the close waits, and goes later.
+  slow.online = false;
+  jobs5.remove('job_slow');
+  await sleep(100);
+  check('a job deleted while offline does not lose its close', slow.calls.closed.length === 0 && fs.existsSync(path.join(root5, 'closes.bin')));
+  slow.online = true;
+  const reopened = createJobs({ root: root5, files, key, startWorker, getClient: () => slow, officer, frameOf });
+  await reopened.syncAll();
+  check('… it goes when Khozo is back, even after the app was closed', slow.calls.closed.includes('vj_job_slow') && files.readJson(path.join(root5, 'closes.bin')).length === 0);
+
+  // The 30-day clean-up keeps a job until Khozo has its decisions.
+  const root6 = path.join(tmp, 'jobs-old');
+  plantJob(root6, files, 'job_old');
+  const oldJob = files.readJson(path.join(root6, 'job_old', 'job.bin'));
+  oldJob.decisions = { '0:s0-1': { decision: 'same', at: '2026-09-01T00:00:00Z', saved: false, error: 'No connection to Khozo', offline: true } };
+  oldJob.updatedAt = '2026-09-01T00:00:00Z';
+  files.writeJson(path.join(root6, 'job_old', 'job.bin'), oldJob);
+  const jobs6 = createJobs({ root: root6, files, key, startWorker, getClient: () => slow, officer, frameOf });
+  jobs6.sweep(30);
+  check('the 30-day clean-up keeps a job whose decisions have not reached Khozo', jobs6.list().length === 1);
 }
 
 // ---- a whole job on a clip with faces ----------------------------------------------------
@@ -314,6 +380,15 @@ if (process.env.KHOZO_SMOKE_VIDEO) {
   check('"Same person" becomes a sighting of the case', decision.saved === true && Boolean(decision.sightingId) && client.calls.decisions.at(-1).photos === 1);
   await jobs.decide(id, job.everyone.at(-1).key, 'not');
   check('"Not this person" is sent with no picture', client.calls.decisions.at(-1).decision === 'not' && client.calls.decisions.at(-1).photos === 0 && jobs.get(id).everyone.at(-1).decision.decision === 'not');
+  check('each face is sent with the laptop\'s name for the person', client.calls.searches.every((s) => s.keys && s.keys.split(',').length === s.faces && s.keys.split(',').every((k) => /^0:/.test(k))));
+
+  // A check that reaches its face budget finishes with what was answered, and says so.
+  const full = fakeClient();
+  full.videoJobFaces = async () => { throw new KhozoError('This check has sent the 5000 faces one check may send.', 409, { error: 'budget', code: 'face_budget' }); };
+  const fullJobs = createJobs({ root: path.join(tmp, 'jobs-full'), files, key, startWorker, getClient: () => full, officer: { id: 'u1', name: 'PSI Test' } });
+  const fullId = fullJobs.create({ report: { id: 'r_test', childName: 'Test Person' }, files: [{ path: clip, name: path.basename(clip), bytes: fs.statSync(clip).size, duration: 24, width: 1280, height: 720, camera: 'Kalupur railway station, gate 1' }] });
+  const fullJob = await untilDone(fullJobs, fullId);
+  check('a check that reaches its face budget finishes and says so, instead of failing', fullJob.status === 'done' && fullJob.notice === 'face_budget', `${fullJob.status} ${fullJob.notice} ${fullJob.error || ''}`);
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });

@@ -25,6 +25,8 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const API = process.env.KHOZO_API || 'https://khozo.org/api';
 const resources = app.isPackaged ? process.resourcesPath : path.join(here, '..', 'build', 'resources');
 const YUNET = path.join(resources, 'yunet.onnx');
+/** A video longer than this needs its recording start (spec F3). */
+const LONG_VIDEO_SECONDS = 30 * 60;
 const VIDEO_EXTENSIONS = ['mp4', 'avi', 'mov', 'mkv', 'wmv', 'flv', '3gp', 'm4v', 'dav', 'ts', 'mpg', 'mpeg', '264', 'h264', '265', 'h265', 'hevc'];
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'khozo', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
@@ -164,6 +166,14 @@ function openSession() {
     appVersion: app.getVersion(),
     frameOf,
     onChange: jobChanged,
+    // Khozo no longer takes this sign-in (it expired, or the password changed):
+    // back to the sign-in screen, with every job kept for when the officer is back.
+    onSignedOut: () => setTimeout(() => {
+      if (!session) return;
+      log('Khozo ended the sign-in; jobs kept');
+      closeSession();
+      if (win && !win.isDestroyed()) win.webContents.send('session:ended');
+    }, 0),
     log,
   });
   jobs.sweep(30);
@@ -318,9 +328,16 @@ function registerBridge() {
     if (!canSearchCase(report)) throw new Error('This case cannot be checked: it is found, closed, or still waiting to be verified.');
     const good = (chosen || []).filter((f) => f.path && !f.error && String(f.camera || '').trim().length >= 3);
     if (!good.length) throw new Error('Add at least one video and say where its camera is.');
+    // Without the start, nothing seen in a long recording has a date and time.
+    if (good.some((f) => (f.duration || 0) > LONG_VIDEO_SECONDS && !f.recordedFrom)) throw new Error('Say when each video longer than 30 minutes starts, as the camera clock shows it.');
+    const where = (f) => {
+      const lat = Number(f.lat);
+      const lng = Number(f.lng);
+      return f.lat != null && f.lng != null && Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng } : { lat: null, lng: null };
+    };
     const id = j.create({
       report,
-      files: good.map((f) => ({ ...f, camera: String(f.camera).trim().slice(0, 200), recordedFrom: f.recordedFrom || null })),
+      files: good.map((f) => ({ ...f, camera: String(f.camera).trim().slice(0, 200), ...where(f), recordedFrom: f.recordedFrom || null })),
       window,
       settings: {
         fps: [1, 2, 4].includes(Number(options.fps)) ? Number(options.fps) : 2,
@@ -334,6 +351,12 @@ function registerBridge() {
   handle('jobs:start', (id) => needJobs().start(id));
   handle('jobs:pause', (id) => needJobs().pause(id));
   handle('jobs:remove', (id) => { needJobs().remove(id); return { ok: true }; });
+  // Before signing out or deleting a job: send what is waiting, and say what still is.
+  handle('jobs:syncNow', async (id = null) => {
+    const j = needJobs();
+    await j.syncAll();
+    return { unsent: j.unsent(id) };
+  });
   handle('jobs:decide', ({ id, key: k, decision }) => needJobs().decide(id, k, decision === 'same' ? 'same' : 'not'));
 
   handle('jobs:clip', async ({ id, key: k }) => {

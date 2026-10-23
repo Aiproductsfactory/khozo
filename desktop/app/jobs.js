@@ -18,6 +18,8 @@ import { parseTime } from '../scanner/scan.js';
 
 /** Without Aarakshak's model on the laptop, at most this many people a video are sent, clearest first. */
 export const SEND_LIMIT_WITHOUT_MODEL = 600;
+/** A Khozo that kept no checks is asked again after this long: it may have been updated. */
+const OLDER_KHOZO_RECHECK_MS = 6 * 3600 * 1000;
 
 const JOB_FILE = 'job.bin';
 const OPEN_VERDICTS = ['likely', 'possible', 'not_agreed'];
@@ -72,6 +74,8 @@ export function noteFor({ job, file, track, verdict, officer }) {
 }
 
 const keyOf = (fileIndex, trackId) => `${fileIndex}:${trackId}`;
+/** Decisions Khozo does not have yet and may still take (a refused one never will). */
+const unsentOf = (job) => Object.values(job.decisions || {}).filter((d) => d.saved === false && !d.refused).length;
 const tracksOf = (file) => (file.segments || []).flatMap((s) => s.tracks || []);
 const sleep = (ms, signal) => new Promise((resolve) => {
   if (signal?.aborted) return resolve();
@@ -93,11 +97,18 @@ const sleep = (ms, signal) => new Promise((resolve) => {
  *   appVersion     recorded with the check on Khozo
  *   frameOf(file, track) -> JPEG   the whole frame, face marked, sent with "Same person"
  *   onChange(id)   a job changed; the window asks for it again
+ *   onSignedOut()  Khozo no longer takes this officer's sign-in (expired, or the password changed); the jobs stay
  */
 export function createJobs({
   root, files, key, startWorker, getClient, model = null, detectorPath = null, officer = {}, appVersion = null, frameOf = null,
-  onChange = () => {}, checkpointMs = 30000, log = () => {},
+  onChange = () => {}, onSignedOut = () => {}, checkpointMs = 30000, log = () => {},
 }) {
+  let toldSignedOut = false;
+  const signedOut = () => {
+    if (toldSignedOut) return;
+    toldSignedOut = true;
+    onSignedOut();
+  };
   const finder = model?.detectorPath || detectorPath || null;
   const jobs = new Map();
   const caseSignatures = new Map(); // job id -> signatures, in memory only
@@ -113,6 +124,31 @@ export function createJobs({
     } catch (err) {
       log(`Job ${entry.name} could not be read: ${err.message}`);
     }
+  }
+
+  // Checks to close on Khozo for jobs deleted here, kept until Khozo has them.
+  const CLOSES_FILE = path.join(root, 'closes.bin');
+  let pendingCloses = [];
+  try { pendingCloses = files.readJson(CLOSES_FILE); } catch { pendingCloses = []; }
+  const saveCloses = () => files.writeJson(CLOSES_FILE, pendingCloses);
+  let closing = null;
+  function sendCloses() {
+    closing ||= (async () => {
+      for (const c of [...pendingCloses]) {
+        const client = getClient();
+        if (!client) break;
+        try {
+          await client.closeVideoJob(c.caseId, c.jobId);
+        } catch (err) {
+          if (err.status === 401) signedOut();
+          // Not reached, or busy: tried again later. Anything else (gone, refused) is as closed as it will get.
+          if (err.status === 0 || err.status === 401 || err.status === 429 || err.status >= 500) continue;
+        }
+        pendingCloses = pendingCloses.filter((x) => x.jobId !== c.jobId);
+        saveCloses();
+      }
+    })().finally(() => { closing = null; });
+    return closing;
   }
 
   const dirOf = (id) => path.join(root, id);
@@ -149,9 +185,19 @@ export function createJobs({
    * refusal that waiting will not change (signed out, no access, a closed
    * case) is thrown.
    */
-  async function serverJob(job) {
-    if (job.server?.jobId) return job.server.jobId;
-    if (job.server?.available === false) return null;
+  const starting = new Map(); // job id -> the request making its check, so it is never made twice at once
+  function serverJob(job) {
+    if (job.server?.jobId) return Promise.resolve(job.server.jobId);
+    // An older Khozo may have been updated since: asked again after a while.
+    if (job.server?.available === false && Date.now() - Date.parse(job.server.checkedAt || 0) < OLDER_KHOZO_RECHECK_MS) return Promise.resolve(null);
+    if (!starting.has(job.id)) starting.set(job.id, startServerJob(job).finally(() => starting.delete(job.id)));
+    return starting.get(job.id);
+  }
+
+  /** Whether a 404 means "this Khozo has no such route" (an older Khozo), not "no such case". */
+  const routeMissing = (err) => err.status === 405 || err.status === 501 || (err.status === 404 && (!err.data?.error || /no route/i.test(err.data.error)));
+
+  async function startServerJob(job) {
     const firstPass = model?.card && job.settings.firstPass;
     try {
       const { job: made } = await getClient().startVideoJob(job.caseId, {
@@ -159,7 +205,7 @@ export function createJobs({
         appVersion,
         files: JSON.stringify(job.files.map((f, key) => ({
           key, name: f.name, bytes: f.bytes, seconds: f.duration, sha256: f.sha256 || null,
-          cameraPlace: f.camera, recordedFrom: isoOf(f.recordedFrom), from: f.from, to: f.to,
+          cameraPlace: f.camera, lat: f.lat ?? null, lng: f.lng ?? null, recordedFrom: isoOf(f.recordedFrom), from: f.from, to: f.to,
         }))),
         ...(firstPass ? { modelName: model.name, modelVersion: model.version, firstPassLine: job.settings.line, firstPassTop: job.settings.top } : {}),
       });
@@ -168,12 +214,13 @@ export function createJobs({
       log(`Check kept on Khozo as ${made.id}`);
       return made.id;
     } catch (err) {
-      if ([404, 405, 501].includes(err.status)) {
-        job.server = { available: false };
+      if (routeMissing(err)) {
+        job.server = { available: false, checkedAt: new Date().toISOString() };
         save(job);
         return null;
       }
       if (err.status === 0 || err.status === 429 || err.status >= 500) return null;
+      if (err.status === 401) signedOut();
       throw err;
     }
   }
@@ -203,12 +250,18 @@ export function createJobs({
     return f.scanTo ? 'reading' : 'waiting';
   }
 
-  /** Tells Khozo how far the laptop got; true once it is told. */
+  /**
+   * Tells Khozo how far the laptop got; true once it is told. Marked as
+   * waiting, and saved, before it goes: an app closed mid-send tells Khozo
+   * where the check stopped the next time it opens.
+   */
   async function syncProgress(job) {
+    job.sync = { ...(job.sync || {}), progressPending: true };
+    save(job);
     let jobId = null;
     try { jobId = await serverJob(job); } catch { /* the job itself reports it */ }
     if (!jobId) {
-      if (job.server?.available !== false) job.sync = { ...(job.sync || {}), progressPending: true };
+      if (job.server?.available === false) job.sync = { ...job.sync, progressPending: false };
       return false;
     }
     const status = job.status === 'done' ? 'done' : job.status === 'error' ? 'error' : ['running', 'queued'].includes(job.status) ? 'running' : 'paused';
@@ -227,8 +280,10 @@ export function createJobs({
       });
       job.sync = { ...(job.sync || {}), progressPending: false, progressAt: new Date().toISOString() };
       return true;
-    } catch {
-      job.sync = { ...(job.sync || {}), progressPending: true };
+    } catch (err) {
+      if (err.status === 401) signedOut();
+      // A refusal (a closed check, a closed case) is not sent again; a lost connection is.
+      job.sync = { ...(job.sync || {}), progressPending: err.status === 0 || err.status === 429 || err.status >= 500 };
       return false;
     }
   }
@@ -293,8 +348,12 @@ export function createJobs({
         Object.assign(d, { saved: false, error: 'No connection to Khozo', offline: true });
       }
     } catch (err) {
-      // `offline`: Khozo could not be reached or was busy, so waiting will do; anything else Khozo refused.
-      Object.assign(d, { saved: false, error: err.message, offline: err.status === 0 || err.status === 429 || err.status >= 500 });
+      // `offline`: Khozo could not be reached or was busy, so it goes again by
+      // itself. `refused`: Khozo said no (a closed case, a closed check, no
+      // access), which sending again will not change; the officer sees why.
+      const offline = err.status === 0 || err.status === 429 || err.status >= 500;
+      if (err.status === 401) signedOut();
+      Object.assign(d, { saved: false, error: err.message, offline, refused: !offline && err.status !== 401 });
     }
   }
 
@@ -302,7 +361,7 @@ export function createJobs({
   async function syncPending(job) {
     let touched = false;
     for (const [k, d] of Object.entries(job.decisions || {})) {
-      if (d.saved !== false) continue;
+      if (d.saved !== false || d.refused) continue;
       await syncDecision(job, k);
       touched = true;
     }
@@ -357,7 +416,9 @@ export function createJobs({
         kept: Boolean(job.server?.jobId),
         olderKhozo: job.server?.available === false,
         // Decisions Khozo did not take; one still on its way is not counted.
-        decisionsWaiting: Object.values(job.decisions).filter((d) => d.saved === false && d.error).length,
+        decisionsWaiting: Object.values(job.decisions).filter((d) => d.saved === false && d.error && !d.refused).length,
+        // Every decision Khozo does not have yet, including one on its way: what deleting the job would lose.
+        unsent: unsentOf(job),
         progressWaiting: Boolean(job.sync?.progressPending),
         at: job.sync?.progressAt || null,
       },
@@ -490,31 +551,47 @@ export function createJobs({
       if (tracks.length > SEND_LIMIT_WITHOUT_MODEL) job.notice = 'send_limit';
     }
     const toSend = candidates.filter((t) => !job.answers[t.id] || job.answers[t.id].verdict === 'no_answer');
+    // The check has sent all the faces one check may send: the rest are read, not sent.
+    if (toSend.length && job.budgetReached) {
+      file.sent = true;
+      changed(job);
+      return;
+    }
     if (toSend.length) {
       file.searchId ||= `vs_${crypto.randomBytes(9).toString('base64url')}`;
       const jobId = await checkFor(job, signal);
       if (signal.aborted) return;
-      await sendFaces({
-        job: jobId ? { jobId, fileKey: index } : null,
-        client: getClient(),
-        caseId: job.caseId,
-        record: { name: file.name, bytes: file.bytes, duration: file.duration, sha256: file.sha256, tracks, facesTooSmall: file.facesTooSmall },
-        tracks: toSend,
-        camera: file.camera,
-        recordedFrom: file.recordedFrom,
-        searchId: file.searchId,
-        readPicture: (t) => files.read(path.join(fileDir(job.id, index), t.picture)),
-        signal,
-        onAnswers: (answers) => {
-          Object.assign(job.answers, answers);
-          job.waiting = null;
-          changed(job);
-        },
-        onWait: (wait) => {
-          job.waiting = wait;
-          changed(job, false);
-        },
-      });
+      try {
+        await sendFaces({
+          job: jobId ? { jobId, fileKey: index } : null,
+          client: getClient(),
+          caseId: job.caseId,
+          record: { name: file.name, bytes: file.bytes, duration: file.duration, sha256: file.sha256, tracks, facesTooSmall: file.facesTooSmall },
+          tracks: toSend,
+          camera: file.camera,
+          recordedFrom: file.recordedFrom,
+          searchId: file.searchId,
+          readPicture: (t) => files.read(path.join(fileDir(job.id, index), t.picture)),
+          signal,
+          onAnswers: (answers) => {
+            Object.assign(job.answers, answers);
+            job.waiting = null;
+            changed(job);
+          },
+          onWait: (wait) => {
+            job.waiting = wait;
+            changed(job, false);
+          },
+        });
+      } catch (err) {
+        if (err.status !== 409 || err.data?.code !== 'face_budget') throw err;
+        // What was answered stays; the officer is told the rest was not sent.
+        job.budgetReached = true;
+        job.notice = 'face_budget';
+        file.sent = true;
+        changed(job);
+        return;
+      }
     }
     if (!signal.aborted) {
       file.sent = true;
@@ -559,6 +636,7 @@ export function createJobs({
       else {
         job.status = 'error';
         job.error = err.status === 401 ? 'signed_out' : err.message;
+        if (err.status === 401) signedOut();
       }
     } finally {
       worker.kill();
@@ -607,7 +685,7 @@ export function createJobs({
           const span = windowFor(f, window);
           return {
             path: f.path, name: f.name, bytes: f.bytes, duration: f.duration, width: f.width, height: f.height, codec: f.codec,
-            camera: f.camera, recordedFrom: f.recordedFrom || null,
+            camera: f.camera, lat: f.lat ?? null, lng: f.lng ?? null, recordedFrom: f.recordedFrom || null,
             from: span.from ?? 0, to: span.to ?? null, outside: Boolean(span.outside),
             segments: [], scanned: false, scored: false, sent: false,
           };
@@ -653,9 +731,10 @@ export function createJobs({
       }
       const job = jobs.get(id);
       if (job?.server?.jobId) {
-        try {
-          getClient()?.closeVideoJob(job.caseId, job.server.jobId).catch(() => {});
-        } catch { /* signed out: Khozo's record stays open, and nothing more is sent to it */ }
+        // Kept until Khozo has it: a laptop offline now closes the check when it is back.
+        pendingCloses.push({ caseId: job.caseId, jobId: job.server.jobId });
+        saveCloses();
+        sendCloses();
       }
       jobs.delete(id);
       caseSignatures.delete(id);
@@ -680,11 +759,14 @@ export function createJobs({
       next();
     },
 
-    /** Deletes jobs nobody has touched for `days`. */
+    /** Deletes jobs nobody has touched for `days`, once Khozo has everything they hold. */
     sweep(days = 30) {
       const limit = Date.now() - days * 86400000;
       for (const job of [...jobs.values()]) {
-        if (Date.parse(job.updatedAt || job.createdAt) < limit && job.status !== 'running') this.remove(job.id);
+        if (Date.parse(job.updatedAt || job.createdAt) >= limit || job.status === 'running') continue;
+        // Sent first (syncAll), deleted on a later day.
+        if (unsentOf(job) || job.sync?.progressPending) continue;
+        this.remove(job.id);
       }
     },
 
@@ -714,6 +796,12 @@ export function createJobs({
       for (const job of [...jobs.values()]) {
         if (jobs.get(job.id) === job) await syncPending(job);
       }
+      await sendCloses();
+    },
+
+    /** How many decisions Khozo does not have yet: in one job, or in all of them. */
+    unsent(id = null) {
+      return id ? (jobs.has(id) ? unsentOf(jobs.get(id)) : 0) : [...jobs.values()].reduce((n, job) => n + unsentOf(job), 0);
     },
 
     /** A face picture of a job, decrypted. */
