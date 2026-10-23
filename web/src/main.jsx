@@ -66,6 +66,7 @@ const FraudQueue = page(() => import('./dashboard/FraudQueue.jsx'));
 const PrivacyReview = page(() => import('./dashboard/PrivacyReview.jsx'));
 const MisReport = page(() => import('./dashboard/MisReport.jsx'));
 const Patterns = page(() => import('./dashboard/Patterns.jsx'));
+const VideoChecks = page(() => import('./dashboard/VideoChecks.jsx'));
 const Grievances = page(() => import('./dashboard/Grievances.jsx'));
 const CciRegister = page(() => import('./dashboard/CciRegister.jsx'));
 const SimulationResults = page(() => import('./dashboard/SimulationResults.jsx'));
@@ -135,6 +136,7 @@ const router = createBrowserRouter([
           { path: 'fraud', element: gated('fraud', <FraudQueue />) },
           { path: 'mis', element: gated('mis', <MisReport />) },
           { path: 'patterns', element: gated('patterns', <Patterns />) },
+          { path: 'cctv-checks', element: gated('cctv-checks', <VideoChecks />) },
           { path: 'grievances', element: gated('grievances', <Grievances />) },
           { path: 'network', element: gated('network', <Network />) },
           { path: 'simulations', element: <RequireRole roles={['super_admin', 'admin']}><SimulationResults /></RequireRole> },

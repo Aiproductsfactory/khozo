@@ -62,6 +62,14 @@ const PATHS = {
       <path d="M7 17v-5M12 17V6M17 17V9.5" />
     </>
   ),
+  // A CCTV camera on its bracket.
+  cctv: (
+    <>
+      <path d="M4 7.5 16.5 4l1.6 5.6L5.6 13.1z" />
+      <path d="m18.1 9.6 2.4-.7" />
+      <path d="M8.5 12.2 9.8 17H4.5M4.5 14.5v5" />
+    </>
+  ),
   audit: (
     <>
       <path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8.5" />
