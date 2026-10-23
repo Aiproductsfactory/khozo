@@ -126,6 +126,12 @@ function buildDeps(env) {
       desktopJobLimit: env.KHOZO_DESKTOP_JOB_LIMIT,
       desktopJobFaces: env.KHOZO_DESKTOP_JOB_FACES,
       desktopDecisionLimit: env.KHOZO_DESKTOP_DECISION_LIMIT,
+      openCases: env.KHOZO_DESKTOP_OPEN_CASES,
+      openCasesArea: env.KHOZO_DESKTOP_OPEN_CASES_AREA,
+      openCasesTop: env.KHOZO_OPEN_CASES_TOP,
+      openCasesAarakshak: env.KHOZO_OPEN_CASES_AARAKSHAK,
+      openCasesRekognition: env.KHOZO_OPEN_CASES_AWS,
+      openCasesFaceLimit: env.KHOZO_OPEN_CASES_FACE_LIMIT,
       // The newest Khozo Desktop, for the app to offer (GET /api/dashboard/desktop-version).
       desktopLatest: {
         version: env.KHOZO_DESKTOP_LATEST_VERSION,

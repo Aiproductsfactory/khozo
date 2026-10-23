@@ -215,9 +215,10 @@ export function selectMatchCandidates(reports = [], hints = {}, max = 25, now = 
       if (fromIndex.length >= limit) break;
     }
     // `now` may be a past sighting's time (a re-match); settling is about
-    // the index today.
-    const unindexed = open.filter((r) => !seen.has(r.id) && !isIndexed(r, hints.indexProvider, Date.now()));
-    const rest = limit - fromIndex.length > 0
+    // the index today. A check against open cases (shared/open-case-checks.js)
+    // compares only the index's shortlist: its bar asks for the index's closest.
+    const unindexed = hints.onlyShortlist ? [] : open.filter((r) => !seen.has(r.id) && !isIndexed(r, hints.indexProvider, Date.now()));
+    const rest = limit - fromIndex.length > 0 && unindexed.length
       ? spendBudget(unindexed, hints, missingTime, limit - fromIndex.length, limit, fit).selected
       : [];
     const selected = [...fromIndex, ...rest];

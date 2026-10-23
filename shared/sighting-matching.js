@@ -41,6 +41,7 @@ import { MAX_MATCH_CANDIDATES, configHashOf, thresholdsOf } from './match-config
 import { INDEX_TOP_K, enrollCaseInIndex, removeCaseFromIndex, safeFaceIndex } from './face-index.js';
 import { MAIN_PHOTO, isBadFacePhoto, leadPhotoOf, loadPhotos } from './photo-set.js';
 import { sightingScreenVerdict } from './face-screen.js';
+import { clearsOpenCaseBar, shortlistOf } from './open-case-checks.js';
 
 /**
  * Whether a comparison result is put in front of an officer.
@@ -369,6 +370,28 @@ export function createSightingMatcher(deps) {
     const candidates = (Array.isArray(result?.candidates) ? result.candidates : [])
       .filter((c) => c?.report?.id && !excluded.has(c.report.id));
     return { candidates, engine };
+  }
+
+  /**
+   * One face from a CCTV check against open cases (shared/open-case-checks.js):
+   * the index's closest cases among `caseIds`, at most `bar.top`, each then
+   * compared pairwise by Aarakshak and AWS, and kept only when both clear the
+   * bar. Answers `{ answered: false }` when the index gave no answer (no face
+   * in the picture, or the gallery down), so the laptop can send it again.
+   */
+  async function searchOpenCases(photo, { caseIds, bar }) {
+    if (!photo?.length || !faceIndex.enabled) return { answered: false, hits: [], leads: [] };
+    const hits = await faceIndex.search(photo, INDEX_TOP_K);
+    if (!Array.isArray(hits)) return { answered: false, hits: [], leads: [] };
+    const shortlist = shortlistOf(hits, caseIds instanceof Set ? caseIds : new Set(caseIds || []), bar.top);
+    if (!shortlist.length) return { answered: true, hits: [], leads: [], engine: null };
+    const result = await rankMatches(photo, { shortlist: shortlist.map((s) => s.caseId), onlyShortlist: true, indexProvider: faceIndex.name });
+    const byCase = new Map(shortlist.map((s) => [s.caseId, s]));
+    const leads = (Array.isArray(result?.candidates) ? result.candidates : [])
+      .filter((c) => byCase.has(c?.report?.id) && clearsOpenCaseBar(c, bar))
+      .map((c) => ({ caseId: c.report.id, rank: byCase.get(c.report.id).rank, aarakshak: c.primaryScore, rekognition: c.secondOpinionScore }))
+      .sort((a, b) => a.rank - b.rank);
+    return { answered: Number(result?.engine?.comparedAgainst) > 0, hits: shortlist, leads, engine: result?.engine || null };
   }
 
   /** The proposals a search produced: the strong candidates, best first, at most five. */
@@ -891,6 +914,7 @@ export function createSightingMatcher(deps) {
     caseOfficers,
     alertCaseOfficers,
     forwardSearch,
+    searchOpenCases,
     newSightingFields,
     rematchSighting,
     walkPatch,

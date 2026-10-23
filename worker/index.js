@@ -22,7 +22,7 @@ import {
   clientIp,
   fixedWindowRateLimit,
 } from './src/http/express-compat.js';
-import { createRequestStore, reportIdOf, tablesForRequest } from './src/store-sync.js';
+import { createRequestStore, jobIdOf, reportIdOf, tablesForRequest } from './src/store-sync.js';
 import { checkDatabase, scheduled as runScheduledChecks } from './src/ops.js';
 import { compareFramesWithCase, detectPerson, matchEngineInfo, probeMatchProviders, rankMatches, rankSightingMatches } from './src/match.js';
 import { createFaceIndex } from '../shared/face-index.js';
@@ -154,6 +154,16 @@ function buildDeps(env, store, ctx) {
       desktopJobLimit: env.KHOZO_DESKTOP_JOB_LIMIT,
       desktopJobFaces: env.KHOZO_DESKTOP_JOB_FACES,
       desktopDecisionLimit: env.KHOZO_DESKTOP_DECISION_LIMIT,
+      // Checking footage against open cases (shared/open-case-checks.js): off
+      // unless KHOZO_DESKTOP_OPEN_CASES is on, after Aarakshak's permission for
+      // live use of its gallery; district desks search their state, or with
+      // KHOZO_DESKTOP_OPEN_CASES_AREA=district their district; the bar.
+      openCases: env.KHOZO_DESKTOP_OPEN_CASES,
+      openCasesArea: env.KHOZO_DESKTOP_OPEN_CASES_AREA,
+      openCasesTop: env.KHOZO_OPEN_CASES_TOP,
+      openCasesAarakshak: env.KHOZO_OPEN_CASES_AARAKSHAK,
+      openCasesRekognition: env.KHOZO_OPEN_CASES_AWS,
+      openCasesFaceLimit: env.KHOZO_OPEN_CASES_FACE_LIMIT,
       // The newest Khozo Desktop, for the app to offer (GET /api/dashboard/desktop-version).
       desktopLatest: {
         version: env.KHOZO_DESKTOP_LATEST_VERSION,
@@ -259,6 +269,7 @@ export default {
         tables: tablesForRequest(request.method, url.pathname),
         // A CCTV check request reads only its case's checks.
         reportId: reportIdOf(url.pathname),
+        jobId: jobIdOf(url.pathname),
       });
       flush = requestStore.flush;
 

@@ -100,9 +100,15 @@ const ALL_TABLES = Object.keys(HYDRATED);
  */
 const VIDEO_JOBS_OF_CASE = 'videoJobsOfCase';
 const VIDEO_JOB_SUMMARIES = 'videoJobSummaries';
+// A check against open cases has no case: its routes name the check itself,
+// and starting one needs only the recent ones, to find a start sent twice.
+const VIDEO_JOB_BY_ID = 'videoJobById';
+const RECENT_OPEN_CASE_CHECKS = 'recentOpenCaseChecks';
 const VIDEO_JOB_VIEWS = {
   [VIDEO_JOBS_OF_CASE]: 'select data from public.video_jobs where report_id = $1 order by created_at desc nulls last',
   [VIDEO_JOB_SUMMARIES]: "select data - 'batches' as data from public.video_jobs order by created_at desc nulls last",
+  [VIDEO_JOB_BY_ID]: 'select data from public.video_jobs where id = $1',
+  [RECENT_OPEN_CASE_CHECKS]: "select data - 'batches' as data from public.video_jobs where report_id is null and created_at > now() - interval '2 days' order by created_at desc",
 };
 /** What a request reads when no rule below says otherwise: everything but the CCTV checks. */
 const DEFAULT_TABLES = ALL_TABLES.filter((name) => name !== 'videoJobs');
@@ -150,8 +156,17 @@ const PARTIAL = [
   // loads everything else too.
   { method: 'POST', pattern: /^\/api\/reports\/[^/]+\/video-jobs(\/[^/]+\/(faces|progress|close))?$/, tables: ['users', 'reports', VIDEO_JOBS_OF_CASE, AUDIT_TAIL] },
   { method: 'POST', pattern: /^\/api\/reports\/[^/]+\/video-jobs\/[^/]+\/decisions$/, tables: [...DEFAULT_TABLES, VIDEO_JOBS_OF_CASE] },
-  { method: 'GET', pattern: /^\/api\/reports\/[^/]+\/video-jobs$/, tables: ['users', 'reports', VIDEO_JOBS_OF_CASE] },
+  // The case's checks, and its route from the CCTV sightings.
+  { method: 'GET', pattern: /^\/api\/reports\/[^/]+\/video-jobs$/, tables: ['users', 'reports', 'foundReports', VIDEO_JOBS_OF_CASE, AUDIT_TAIL] },
   { method: 'GET', pattern: /^\/api\/reports\/[^/]+\/video-jobs\/[^/]+\/report$/, tables: ['users', 'reports', VIDEO_JOBS_OF_CASE, AUDIT_TAIL] },
+  // A check of footage against open cases (shared/open-case-checks.js): how
+  // many cases it would search reads the cases; starting one, the recent
+  // checks too; a face, its progress and its close, that one check. Sending a
+  // face to a case makes a sighting, so it loads everything else too.
+  { method: 'GET', path: '/api/reports/open-case-checks/cases', tables: ['users', 'reports'] },
+  { method: 'POST', path: '/api/reports/open-case-checks', tables: ['users', 'reports', RECENT_OPEN_CASE_CHECKS, AUDIT_TAIL] },
+  { method: 'POST', pattern: /^\/api\/reports\/open-case-checks\/[^/]+\/(faces|progress|close)$/, tables: ['users', 'reports', VIDEO_JOB_BY_ID, AUDIT_TAIL] },
+  { method: 'POST', pattern: /^\/api\/reports\/open-case-checks\/[^/]+\/leads\/[^/]+$/, tables: [...DEFAULT_TABLES, VIDEO_JOB_BY_ID] },
   // The command centre's CCTV checks page: the checks of the cases the desk can see, without their batches.
   { method: 'GET', path: '/api/dashboard/video-checks', tables: ['users', 'reports', VIDEO_JOB_SUMMARIES] },
   // Anonymising a case also anonymises its checks (shared/retention.js).
@@ -173,6 +188,13 @@ export function reportIdOf(pathname) {
   try { return decodeURIComponent(m[1]); } catch { return null; }
 }
 
+/** The check against open cases a request is about, for reading only that check. */
+export function jobIdOf(pathname) {
+  const m = /^\/api\/reports\/open-case-checks\/([^/]+)\/./.exec(pathname || '');
+  if (!m) return null;
+  try { return decodeURIComponent(m[1]); } catch { return null; }
+}
+
 /**
  * Hydrates the dataset and returns the synchronous store the shared routes use,
  * plus a `flush` that persists everything the request changed.
@@ -182,12 +204,13 @@ export function reportIdOf(pathname) {
  * one fails loudly rather than answering from an empty list, or appending an
  * audit row to a chain it cannot see.
  */
-export async function createRequestStore(env, ctx, io = POSTGRES, { tables: requested = ALL_TABLES, reportId = null } = {}) {
+export async function createRequestStore(env, ctx, io = POSTGRES, { tables: requested = ALL_TABLES, reportId = null, jobId = null } = {}) {
   // Only the end of the audit chain, unless the whole of it is loaded anyway.
   const auditTailOnly = requested.includes(AUDIT_TAIL) && !requested.includes('audit');
   // Part of the CCTV checks (VIDEO_JOB_VIEWS), unless the whole table is loaded anyway.
   const videoView = requested.includes('videoJobs') ? null : requested.find((name) => VIDEO_JOB_VIEWS[name]) || null;
   if (videoView === VIDEO_JOBS_OF_CASE && !reportId) throw new Error('Reading one case\'s CCTV checks needs the case');
+  if (videoView === VIDEO_JOB_BY_ID && !jobId) throw new Error('Reading one CCTV check needs the check');
   const tables = requested.filter((name) => name !== AUDIT_TAIL && !VIDEO_JOB_VIEWS[name]);
   const unknown = tables.filter((name) => !HYDRATED[name]);
   if (unknown.length) throw new Error(`Unknown store table: ${unknown.join(', ')}`);
@@ -199,7 +222,7 @@ export async function createRequestStore(env, ctx, io = POSTGRES, { tables: requ
   const reads = [...tables, ...(auditTailOnly ? [AUDIT_TAIL] : []), ...(videoView ? [videoView] : [])];
   const loaded = await Promise.all(
     reads.map((name) => io
-      .query(env, name === AUDIT_TAIL ? AUDIT_TAIL_SQL : VIDEO_JOB_VIEWS[name] || HYDRATED[name], name === VIDEO_JOBS_OF_CASE ? [reportId] : undefined)
+      .query(env, name === AUDIT_TAIL ? AUDIT_TAIL_SQL : VIDEO_JOB_VIEWS[name] || HYDRATED[name], name === VIDEO_JOBS_OF_CASE ? [reportId] : name === VIDEO_JOB_BY_ID ? [jobId] : undefined)
       .then((r) => r.rows.map((row) => row.data).filter(Boolean))
       .catch((err) => {
         if (!(name === 'videoJobs' || VIDEO_JOB_VIEWS[name]) || err?.code !== '42P01') throw err; // 42P01: no such table
@@ -245,9 +268,13 @@ export async function createRequestStore(env, ctx, io = POSTGRES, { tables: requ
 
   // Records touched during this request, by table, so the flush writes only what
   // changed rather than the whole dataset.
-  // The command centre reads checks without their batches (VIDEO_JOB_SUMMARIES): writing one back would lose them.
-  const readOnlyChecks = () => {
-    if (videoView === VIDEO_JOB_SUMMARIES) throw new Error('These CCTV checks were read without their batches and cannot be changed in this request');
+  // The command centre reads checks without their batches (VIDEO_JOB_SUMMARIES), and so does starting a
+  // check against open cases (RECENT_OPEN_CASE_CHECKS): writing one back would lose them. A new check may be added.
+  const withoutBatches = videoView === RECENT_OPEN_CASE_CHECKS ? new Set(videoRows.map((row) => row.id)) : null;
+  const readOnlyChecks = (id = null) => {
+    if (videoView === VIDEO_JOB_SUMMARIES || (id && withoutBatches?.has(id))) {
+      throw new Error('These CCTV checks were read without their batches and cannot be changed in this request');
+    }
   };
   const dirty = new Map();
   const markDirty = (table, record) => {
@@ -377,7 +404,7 @@ export async function createRequestStore(env, ctx, io = POSTGRES, { tables: requ
       return markDirty('video_jobs', job);
     },
     updateVideoJob(id, patch) {
-      readOnlyChecks();
+      readOnlyChecks(id);
       const job = store.findVideoJob(id);
       if (!job) return null;
       return markDirty('video_jobs', replace(db.videoJobs, id, { ...job, ...patch }));
@@ -390,7 +417,7 @@ export async function createRequestStore(env, ctx, io = POSTGRES, { tables: requ
      * another request got there first.
      */
     async changeVideoJob(id, makePatch) {
-      readOnlyChecks();
+      readOnlyChecks(id);
       const local = store.findVideoJob(id);
       if (!local) return null;
       // Added or already changed by this request: there is no other copy to race with.

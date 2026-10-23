@@ -126,6 +126,8 @@ export function newVideoJob({ id, report, user, body, files, now = new Date().to
     jobKey: text(body?.jobKey, 80),
     source: 'desktop',
     appVersion: text(body?.appVersion, 40) || null,
+    // The laptop's own name, so checks from two laptops on one case can be told apart.
+    device: text(body?.device, 80) || null,
     model: model && (model.name || model.version) ? model : null,
     firstPass: model && Number.isFinite(line) ? { line, top: Number.isFinite(top) ? top : null } : null,
     status: 'open',
@@ -215,14 +217,19 @@ export function answerFor(job, fileKey, { key = null, t = null } = {}) {
  * write, finds or rewrites the same sighting instead of making a second.
  */
 export function sightingIdFor(jobId, key) {
+  return `f_v${keyHash(`${jobId}|${key}`)}`.slice(0, 18);
+}
+
+/** A short name made from `text`, the same every time: two 32-bit hashes in base 36. */
+export function keyHash(text) {
   let a = 0x811c9dc5;
   let b = 0x01000193;
-  for (const ch of `${jobId}|${key}`) {
+  for (const ch of String(text)) {
     const c = ch.codePointAt(0);
     a = Math.imul(a ^ c, 0x01000193) >>> 0;
     b = Math.imul(b ^ c, 0x5bd1e995) >>> 0;
   }
-  return `f_v${a.toString(36)}${b.toString(36)}`.slice(0, 18);
+  return `${a.toString(36)}${b.toString(36)}`;
 }
 
 /**
@@ -235,6 +242,8 @@ export function closedVideoJobPatch(job, now = new Date().toISOString()) {
     status: 'closed',
     closedAt: now,
     batches: Object.fromEntries(Object.entries(job.batches || {}).map(([k, b]) => [k, { at: b.at, faces: (b.faces || []).map((f) => ({ key: f.key || null, verdict: f.verdict })) }])),
+    // A check against open cases keeps which case each lead was, for its decisions, and not the scores.
+    ...(job.leads ? { leads: Object.fromEntries(Object.entries(job.leads).map(([id, l]) => [id, { id, fileKey: l.fileKey, faceKey: l.faceKey, t: l.t, caseId: l.caseId, rank: l.rank ?? null }])) } : {}),
     updatedAt: now,
   };
 }
@@ -274,15 +283,57 @@ export function decisionPatch(job, key, decision, now = new Date().toISOString()
   return { decisions: { ...(job.decisions || {}), [key]: decision }, updatedAt: now };
 }
 
+/** The clock time of a moment `t` seconds into a video that started recording at `recordedFrom`, or null. */
+function clockOf(file, t) {
+  const start = Date.parse(file?.recordedFrom || '');
+  return Number.isFinite(start) && t != null ? new Date(start + t * 1000).toISOString() : null;
+}
+
+/**
+ * Each decision on a check, in the order the faces were seen: the camera and
+ * its map point, the moment, what the engines said, what the officer decided
+ * and who. The case page's route view draws the "same person" ones.
+ */
+export function decisionsOf(job) {
+  const files = new Map((job.files || []).map((f) => [String(f.key), f]));
+  return Object.entries(job.decisions || {})
+    .map(([key, d]) => {
+      const file = files.get(String(d?.fileKey));
+      const point = coordinatesOf(d?.lat, d?.lng) || coordinatesOf(file?.lat, file?.lng);
+      return {
+        key,
+        decision: d?.decision || null,
+        fileKey: d?.fileKey ?? null,
+        cameraPlace: file?.cameraPlace || null,
+        lat: point?.lat ?? null,
+        lng: point?.lng ?? null,
+        t: d?.t ?? null,
+        videoTime: d?.t != null ? videoTimeText(d.t) : null,
+        seenAt: isoOrNull(d?.seenAt) || clockOf(file, d?.t),
+        verdict: d?.verdict || null,
+        markedBy: d?.byName || null,
+        markedAt: d?.at || null,
+        sightingId: d?.sightingId || null,
+      };
+    })
+    .sort((a, b) => String(a.seenAt || '').localeCompare(String(b.seenAt || '')) || (a.t ?? 0) - (b.t ?? 0));
+}
+
 const hoursOf = (job) => Object.values(job.progress?.files || {}).reduce((n, f) => n + (Number(f.secondsRead) || 0), 0) / 3600;
 const peopleOf = (job) => Object.values(job.progress?.files || {}).reduce((n, f) => n + (Number(f.peopleSeen) || 0), 0);
-const decisionsOf = (job, decision) => Object.values(job.decisions || {}).filter((d) => d?.decision === decision);
+const decidedAs = (job, decision) => Object.values(job.decisions || {}).filter((d) => d?.decision === decision);
 
-/** A check as the case page and the command centre show it: no face scores, no file fingerprints. */
+/**
+ * A check as the case page and the command centre show it: no face scores, no
+ * file fingerprints. A check against open cases (shared/open-case-checks.js)
+ * has no case, and its view never says which cases its faces were sent to.
+ */
 export function videoJobView(job) {
+  const openCases = job.mode === 'open_cases';
   return {
     id: job.id,
-    reportId: job.reportId,
+    mode: openCases ? 'open_cases' : 'case',
+    reportId: job.reportId ?? null,
     status: job.status,
     progressStatus: job.progress?.status || null,
     createdAt: job.createdAt,
@@ -291,6 +342,7 @@ export function videoJobView(job) {
     createdByName: job.createdByName,
     createdByRole: job.createdByRole,
     officerPlace: job.officerPlace || null,
+    device: job.device || null,
     appVersion: job.appVersion,
     model: job.model ? { name: job.model.name } : null,
     videos: (job.files || []).map((f) => ({
@@ -309,9 +361,13 @@ export function videoJobView(job) {
     hours: round(hoursOf(job), 2),
     peopleSeen: peopleOf(job),
     counts: { ...zeroCounts(), ...(job.counts || {}) },
-    confirmed: decisionsOf(job, 'same').length,
-    rejected: decisionsOf(job, 'not').length,
-    sightings: Object.values(job.decisions || {}).map((d) => d?.sightingId).filter(Boolean),
+    confirmed: decidedAs(job, 'same').length,
+    rejected: decidedAs(job, 'not').length,
+    sightings: openCases ? [] : Object.values(job.decisions || {}).map((d) => d?.sightingId).filter(Boolean),
+    decisions: openCases ? decisionsOf(job).map((d) => ({ ...d, sightingId: null })) : decisionsOf(job),
+    ...(openCases
+      ? { openCases: { area: job.area || null, filters: job.filters || null, casesSearched: job.casesSearched ?? null, leads: Object.keys(job.leads || {}).length } }
+      : {}),
   };
 }
 
@@ -328,8 +384,8 @@ function add(into, job) {
   into.likely += Number(job.counts?.likely) || 0;
   into.possible += Number(job.counts?.possible) || 0;
   into.notAgreed += Number(job.counts?.not_agreed) || 0;
-  into.confirmed += decisionsOf(job, 'same').length;
-  into.rejected += decisionsOf(job, 'not').length;
+  into.confirmed += decidedAs(job, 'same').length;
+  into.rejected += decidedAs(job, 'not').length;
   return into;
 }
 
@@ -355,7 +411,7 @@ export function summariseVideoJobs(jobs, { recent = 25 } = {}) {
   for (const job of jobs) {
     add(totals, job);
     officers.add(job.createdById);
-    cases.add(job.reportId);
+    if (job.reportId) cases.add(job.reportId);
     const dk = `${job.scope?.state || ''}|${job.scope?.district || ''}`;
     if (!byDistrict.has(dk)) byDistrict.set(dk, { state: job.scope?.state || null, district: job.scope?.district || null, ...blank() });
     add(byDistrict.get(dk), job);
@@ -406,20 +462,9 @@ export function summariseVideoJobs(jobs, { recent = 25 } = {}) {
  */
 export function videoJobReport(job, report, now = new Date().toISOString()) {
   const counts = job.fileCounts || countsOfBatches(job.batches).fileCounts;
-  const files = new Map((job.files || []).map((f) => [String(f.key), f]));
-  const clockOf = (file, t) => {
-    const start = Date.parse(file?.recordedFrom || '');
-    return Number.isFinite(start) && t != null ? new Date(start + t * 1000).toISOString() : null;
-  };
-  const decisions = Object.entries(job.decisions || {})
-    .map(([key, d]) => {
-      const file = files.get(String(d.fileKey));
-      return {
-        key, decision: d.decision, cameraPlace: file?.cameraPlace || null, videoTime: d.t != null ? videoTimeText(d.t) : null,
-        seenAt: clockOf(file, d.t), verdict: d.verdict || null, markedBy: d.byName || null, markedAt: d.at || null, sightingId: d.sightingId || null,
-      };
-    })
-    .sort((a, b) => String(a.seenAt || a.videoTime).localeCompare(String(b.seenAt || b.videoTime)));
+  const decisions = decisionsOf(job).map(({ key, decision, cameraPlace, videoTime, seenAt, verdict, markedBy, markedAt, sightingId }) => ({
+    key, decision, cameraPlace, videoTime, seenAt, verdict, markedBy, markedAt, sightingId,
+  }));
   const view = videoJobView(job);
   return {
     title: 'Khozo CCTV check report',
@@ -427,7 +472,7 @@ export function videoJobReport(job, report, now = new Date().toISOString()) {
     case: { id: report.id, name: report.childName || report.name || null, fir: report.firNo || null, state: report.state || null, district: report.district || null },
     check: {
       id: job.id, status: job.status, progressStatus: job.progress?.status || null, startedAt: job.createdAt, closedAt: job.closedAt || null,
-      officer: job.createdByName || null, role: job.createdByRole || null, officerPlace: job.officerPlace || null,
+      officer: job.createdByName || null, role: job.createdByRole || null, officerPlace: job.officerPlace || null, laptop: job.device || null,
       app: job.appVersion || null, model: job.model?.name || null, firstPassLine: job.firstPass?.line ?? null, scanSeconds: job.progress?.scanSeconds ?? null,
     },
     videos: (job.files || []).map((f) => ({
@@ -440,6 +485,39 @@ export function videoJobReport(job, report, now = new Date().toISOString()) {
     decisions,
     note: 'Every result is a lead, not an identification. A face marked as the person is a sighting waiting for the case officer\'s review.',
   };
+}
+
+/**
+ * A case's route (spec F13): each moment a CCTV check put the person on a
+ * camera and an officer sent it to the case, from any laptop and either kind
+ * of check, in time order, with the camera's map point. Read from the
+ * sightings themselves, so one the case's officers turned down on review
+ * (which unlinks it) drops off the route.
+ */
+export function caseRoute(report, foundReports = []) {
+  return foundReports
+    .filter((f) => f?.matchedReportId === report.id && f.videoCheck && !f.anonymizedAt && !['rejected', 'dismissed'].includes(f.status))
+    .map((f) => {
+      const v = f.videoCheck;
+      const start = Date.parse(v.recordedFrom || '');
+      const seenAt = isoOrNull(v.seenAt) || (Number.isFinite(start) && v.t != null ? new Date(start + v.t * 1000).toISOString() : null);
+      const point = coordinatesOf(f.lat, f.lng);
+      return {
+        sightingId: f.id,
+        seenAt,
+        cameraPlace: v.cameraPlace || f.foundLocation || null,
+        lat: point?.lat ?? null,
+        lng: point?.lng ?? null,
+        videoName: v.videoName || null,
+        videoTime: v.t != null ? videoTimeText(v.t) : null,
+        markedBy: v.markedByName || null,
+        laptop: v.laptop || null,
+        jobId: v.jobId || null,
+        fromOpenCases: v.mode === 'open_cases',
+        status: f.status || null,
+      };
+    })
+    .sort((a, b) => (a.seenAt == null) - (b.seenAt == null) || String(a.seenAt || '').localeCompare(String(b.seenAt || '')));
 }
 
 /**

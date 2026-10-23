@@ -172,10 +172,13 @@ import { NO_FAMILY_CONTACT_ROLES, aadhaarFields, deskCaseView } from '../privacy
 import { stripImageMetadata } from '../photo-strip.js';
 import { FRAME_VERDICTS, VIDEO_SEARCH_BATCH, VIDEO_SEARCH_FIELDS, videoFrameTimesOf, videoSearchRecord } from '../video-search.js';
 import {
-  DECISIONS, DEFAULT_JOB_FACE_BUDGET, VIDEO_JOB_ID, answerFor, batchKeyOf, batchPatch, closedVideoJobPatch, coordinatesOf, decisionPatch,
+  DECISIONS, DEFAULT_JOB_FACE_BUDGET, VIDEO_JOB_ID, answerFor, batchKeyOf, batchPatch, caseRoute, closedVideoJobPatch, coordinatesOf, countsOfBatches, decisionPatch,
   facesSent, isClientKey, jobFilesOf, listFromText, newVideoJob, progressPatch, sightingIdFor, videoJobReport, videoJobView, videoTimeText,
 } from '../video-jobs.js';
 import { signExport } from '../export-signing.js';
+import {
+  LEAD_ID, caseKeyFor, leadIdFor, leadView, newOpenCaseCheck, openCaseArea, openCaseFaceKey, openCaseFacePatch, openCaseFiltersOf, openCasesFor, openCaseSettingsOf,
+} from '../open-case-checks.js';
 
 export default function registerReportRoutes(router, deps) {
   const {
@@ -3824,11 +3827,17 @@ export default function registerReportRoutes(router, deps) {
    * Why a case cannot be checked against video, or null: the same rules for
    * the browser's check and the desktop's.
    */
-  function videoCaseProblem(r, { needPhoto = true } = {}) {
+  /**
+   * Why a case cannot be checked in a video, or null. A found child's case
+   * is checked only from the desktop app (`allowFoundChild`): there the probe
+   * is the found child's own photo, to learn where the child came from and
+   * with whom (spec scenario 5), not to search for someone missing.
+   */
+  function videoCaseProblem(r, { needPhoto = true, allowFoundChild = false } = {}) {
     if (r.anonymizedAt) return { status: 409, error: 'Cases whose details were removed cannot be searched for' };
-    if (r.status === 'found') return { status: 409, error: 'This person has been found' };
+    if (r.status === 'found' && !(allowFoundChild && isFoundChildIntake(r))) return { status: 409, error: 'This person has been found' };
     if (r.status === 'closed') return { status: 409, error: 'This case is closed' };
-    if (isFoundChildIntake(r)) return { status: 409, error: 'A found-child case is not searched for in videos' };
+    if (isFoundChildIntake(r) && !allowFoundChild) return { status: 409, error: 'A found-child case is not searched for in videos' };
     if (isPendingCitizenIntake(r)) return { status: 409, error: 'A citizen or NGO report must be checked before it is searched for' };
     if (needPhoto && !leadPhotoOf(r)?.file) return { status: 409, error: 'This case has no photo to compare with' };
     return null;
@@ -3968,6 +3977,109 @@ export default function registerReportRoutes(router, deps) {
   }
 
   /**
+   * A face from a CCTV check made into a sighting of case `r`: the face
+   * picture, the whole frame when the laptop sent it, the camera place and map
+   * point, the moment, and what the engines said. Filed under the case, so the
+   * case's officers see it, and waiting for their review like any other; the
+   * check never marks a case found. Only the case's officers are told: the
+   * desk that sent it has already looked, and no other desk needs telling that
+   * a case may have been seen.
+   */
+  async function addVideoSighting(req, { id, r, job, file, t, seenAt, verdict, aarakshak, rekognition, closeness = null, point, extras, note, activity, audit, alert, from = {} }) {
+    const lead = leadPhotoOf(r);
+    const candidate = storedCandidate({
+      reportId: r.id,
+      score: aarakshak ?? 0,
+      primaryScore: aarakshak,
+      secondOpinionScore: rekognition,
+      corroborated: verdict === 'likely',
+      notChecked: rekognition == null,
+      enginesAnswered: [aarakshak != null && 'aarakshak', rekognition != null && 'rekognition'].filter(Boolean),
+      photoPair: { sighting: MAIN_PHOTO, case: lead?.id || MAIN_PHOTO },
+    }, 1, { source: 'video_check', trigger: from.mode === 'open_cases' ? 'desktop_open_cases' : 'desktop' });
+    const storedExtras = await storeExtraPhotos(id, extras, req.user);
+    const fr = {
+      id,
+      ...(await storePhoto(id, req.file)),
+      // The whole frame, with the face marked, when the laptop sent it.
+      extraPhotos: storedExtras.entries,
+      foundLocation: file.cameraPlace,
+      // Where the camera is, as the officer gave it for this video (or with the decision).
+      lat: point?.lat ?? null,
+      lng: point?.lng ?? null,
+      reporterName: req.user.name || 'Police officer',
+      reporterDisplayName: req.user.name || 'Police officer',
+      reporterPhone: null,
+      reporterPhoneVisible: null,
+      confidentialReporter: false,
+      identityConfidential: false,
+      idProofType: null,
+      idProofLabel: null,
+      idProofNumberMasked: null,
+      idProofVerified: false,
+      note: note.slice(0, 500),
+      personCategory: r.personCategory || null,
+      ageApprox: null,
+      gender: r.gender || null,
+      // Filed under the case, so the case's officers see it, as a linked sighting is.
+      state: r.state || null,
+      district: r.district || null,
+      stateCode: r.stateCode || null,
+      districtCode: r.districtCode || null,
+      reportedLocation: { state: job.officerPlace?.state || null, stateCode: null, district: job.officerPlace?.district || null, districtCode: null, districtText: null },
+      matchedReportId: r.id,
+      matchCandidates: [candidate],
+      ...evidenceOf(candidate),
+      matchEngine: engineRecordOf({ provider: 'video-check', biometric: true, corroborated: verdict === 'likely', comparedAgainst: 1 }, { trigger: 'video_check' }),
+      status: 'pending_review',
+      photoConsent: true,
+      dataPurpose: 'cctv_check_police_review',
+      retentionUntil: retentionUntil(SIGHTING_PHOTO_RETENTION_DAYS),
+      referredTo1098: false,
+      referralStatus: 'Police review pending',
+      screening: null,
+      locationSource: 'camera',
+      geoAddress: null,
+      campaignSource: null,
+      concernReason: null,
+      fromVideo: { times: [videoTimeText(t)] },
+      // Where this sighting came from: the check, the video, the moment, and what was seen.
+      videoCheck: {
+        jobId: job.id, fileKey: file.key, videoName: file.name, videoSha256: file.sha256, cameraPlace: file.cameraPlace,
+        recordedFrom: file.recordedFrom, t, seenAt, verdict, aarakshakScore: aarakshak, rekognitionScore: rekognition,
+        laptopCloseness: closeness, markedById: req.user.id, markedByName: req.user.name || null, laptop: job.device || null,
+        ...from,
+      },
+      reportedById: req.user.id,
+      reportedByRole: req.user.role,
+      humanCheck: null,
+      createdAt: Date.now(),
+    };
+    addFoundReport(fr);
+    addActivity({
+      actor: req.user.name,
+      action: activity,
+      target: fr.foundLocation,
+      icon: 'upload',
+      actorId: req.user.id,
+      scope: { state: fr.state, district: fr.district, reportId: r.id, matchedReportId: r.id, foundReportId: fr.id },
+    });
+    addAudit({
+      actorId: req.user.id,
+      actorName: req.user.name,
+      actorRole: req.user.role,
+      action: audit.action,
+      targetType: 'foundReport',
+      targetId: fr.id,
+      summary: audit.summary,
+      scope: { state: r.state, district: r.district, reportId: r.id, matchedReportId: r.id },
+      metadata: { jobId: job.id, fileKey: file.key, t, seenAt, verdict, aarakshak, rekognition, closeness, cameraPlace: file.cameraPlace, videoSha256: file.sha256, ...from },
+    });
+    matcher.alertCaseOfficers(fr, r, alert);
+    return fr;
+  }
+
+  /**
    * Starts a check: the case, the videos and where each camera is. Sending
    * the same `jobKey` again gives back the same check, so a laptop that lost
    * the answer can ask again.
@@ -3979,7 +4091,7 @@ export default function registerReportRoutes(router, deps) {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
     if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
-    const problem = videoCaseProblem(r);
+    const problem = videoCaseProblem(r, { allowFoundChild: true });
     if (problem) return res.status(problem.status).json({ error: problem.error });
     const b = req.body || {};
     if (!isClientKey(b.jobKey)) return res.status(400).json({ error: 'This check has no reference. Start it again.' });
@@ -4010,12 +4122,28 @@ export default function registerReportRoutes(router, deps) {
 
   /** The checks of a case, for the officers who can open it. */
   router.get('/:id/video-jobs', protectedRoute, requireRole(...POLICE_ROLES), (req, res) => {
-    if (typeof listVideoJobs !== 'function') return res.json({ jobs: [] });
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
     if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
+    // The route (spec F13): the moments CCTV checks sent to this case, in time order.
+    const route = caseRoute(r, listFoundReports());
+    if (typeof listVideoJobs !== 'function') return res.json({ jobs: [], route });
     const jobs = listVideoJobs().filter((j) => j.reportId === r.id).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
-    res.json({ jobs: jobs.map(videoJobView) });
+    // Who looked at a case's CCTV checks, and when (spec scenario 13). A case with none has nothing to record.
+    if (jobs.length) {
+      addAudit({
+        actorId: req.user.id,
+        actorName: req.user.name,
+        actorRole: req.user.role,
+        action: 'case.video_jobs_viewed',
+        targetType: 'report',
+        targetId: r.id,
+        summary: `Opened the ${jobs.length} CCTV check(s) of case ${r.id}`,
+        scope: { state: r.state, district: r.district, reportId: r.id },
+        metadata: { jobs: jobs.map((j) => j.id) },
+      });
+    }
+    res.json({ jobs: jobs.map(videoJobView), route });
   });
 
   /**
@@ -4029,7 +4157,7 @@ export default function registerReportRoutes(router, deps) {
     const found = videoJobOf(req, res, { mine: true });
     if (!found) return;
     const { r, job } = found;
-    const problem = videoCaseProblem(r);
+    const problem = videoCaseProblem(r, { allowFoundChild: true });
     if (problem) return res.status(problem.status).json({ error: problem.error });
     if (job.status !== 'open') return res.status(409).json({ error: 'This check is closed' });
     if (typeof compareFramesWithCase !== 'function') return res.status(501).json({ error: 'Searching a video is not available here' });
@@ -4207,13 +4335,15 @@ export default function registerReportRoutes(router, deps) {
     const rekognition = scoreOf(b.rekognitionScore) ?? recorded?.rekognition ?? null;
     const closeness = scoreOf(b.closeness);
     const seenAt = b.seenAt && Number.isFinite(Date.parse(b.seenAt)) ? new Date(Date.parse(b.seenAt)).toISOString() : null;
+    // Where the camera is, as the officer gave it with the decision or for the video.
+    const point = coordinatesOf(b.lat, b.lng) || coordinatesOf(file.lat, file.lng);
     const entry = {
-      decision: b.decision, fileKey: file.key, t, verdict, closeness,
+      decision: b.decision, fileKey: file.key, t, verdict, closeness, seenAt, lat: point?.lat ?? null, lng: point?.lng ?? null,
       at: new Date().toISOString(), byId: req.user.id, byName: req.user.name || null,
     };
 
     if (b.decision === 'same') {
-      const problem = videoCaseProblem(r, { needPhoto: false });
+      const problem = videoCaseProblem(r, { needPhoto: false, allowFoundChild: true });
       if (problem) return res.status(problem.status).json({ error: problem.error });
       const extras = uploadedExtras(req, 1);
       if (extras.error) return res.status(extras.status).json({ error: extras.error });
@@ -4228,97 +4358,16 @@ export default function registerReportRoutes(router, deps) {
         entry.sightingId = id;
       } else {
         const when = seenAt ? new Date(seenAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'medium' }) : null;
-        const lead = leadPhotoOf(r);
-        const candidate = storedCandidate({
-          reportId: r.id,
-          score: aarakshak ?? 0,
-          primaryScore: aarakshak,
-          secondOpinionScore: rekognition,
-          corroborated: verdict === 'likely',
-          notChecked: rekognition == null,
-          enginesAnswered: [aarakshak != null && 'aarakshak', rekognition != null && 'rekognition'].filter(Boolean),
-          photoPair: { sighting: MAIN_PHOTO, case: lead?.id || MAIN_PHOTO },
-        }, 1, { source: 'video_check', trigger: 'desktop' });
-        const storedExtras = await storeExtraPhotos(id, extras.extras, req.user);
-        const fr = {
-          id,
-          ...(await storePhoto(id, req.file)),
-          // The whole frame, with the face marked, when the laptop sent it.
-          extraPhotos: storedExtras.entries,
-          foundLocation: file.cameraPlace,
-          // Where the camera is, as the officer gave it for this video (or with the decision).
-          lat: (coordinatesOf(b.lat, b.lng) || coordinatesOf(file.lat, file.lng))?.lat ?? null,
-          lng: (coordinatesOf(b.lat, b.lng) || coordinatesOf(file.lat, file.lng))?.lng ?? null,
-          reporterName: req.user.name || 'Police officer',
-          reporterDisplayName: req.user.name || 'Police officer',
-          reporterPhone: null,
-          reporterPhoneVisible: null,
-          confidentialReporter: false,
-          identityConfidential: false,
-          idProofType: null,
-          idProofLabel: null,
-          idProofNumberMasked: null,
-          idProofVerified: false,
-          note: `Seen on a CCTV camera at ${file.cameraPlace}${when ? `, ${when}` : ''}, ${videoTimeText(t)} into the video${file.name ? ` "${file.name}"` : ''}. An officer looked at the face and the video on Khozo Desktop and marked it as the same person. A lead, not an identification.`.slice(0, 500),
-          personCategory: r.personCategory || null,
-          ageApprox: null,
-          gender: r.gender || null,
-          // Filed under the case, so the case's officers see it, as a linked sighting is.
-          state: r.state || null,
-          district: r.district || null,
-          stateCode: r.stateCode || null,
-          districtCode: r.districtCode || null,
-          reportedLocation: { state: job.officerPlace?.state || null, stateCode: null, district: job.officerPlace?.district || null, districtCode: null, districtText: null },
-          matchedReportId: r.id,
-          matchCandidates: [candidate],
-          ...evidenceOf(candidate),
-          matchEngine: engineRecordOf({ provider: 'video-check', biometric: true, corroborated: verdict === 'likely', comparedAgainst: 1 }, { trigger: 'video_check' }),
-          status: 'pending_review',
-          photoConsent: true,
-          dataPurpose: 'cctv_check_police_review',
-          retentionUntil: retentionUntil(SIGHTING_PHOTO_RETENTION_DAYS),
-          referredTo1098: false,
-          referralStatus: 'Police review pending',
-          screening: null,
-          locationSource: 'camera',
-          geoAddress: null,
-          campaignSource: null,
-          concernReason: null,
-          fromVideo: { times: [videoTimeText(t)] },
-          // Where this sighting came from: the check, the video, the moment, and what was seen.
-          videoCheck: {
-            jobId: job.id, fileKey: file.key, videoName: file.name, videoSha256: file.sha256, cameraPlace: file.cameraPlace,
-            recordedFrom: file.recordedFrom, t, seenAt, verdict, aarakshakScore: aarakshak, rekognitionScore: rekognition,
-            laptopCloseness: closeness, markedById: req.user.id, markedByName: req.user.name || null,
+        const fr = await addVideoSighting(req, {
+          id, r, job, file, t, seenAt, verdict, aarakshak, rekognition, closeness, point, extras: extras.extras,
+          note: `Seen on a CCTV camera at ${file.cameraPlace}${when ? `, ${when}` : ''}, ${videoTimeText(t)} into the video${file.name ? ` "${file.name}"` : ''}. An officer looked at the face and the video on Khozo Desktop and marked it as the same person. A lead, not an identification.`,
+          activity: 'Marked a face from a CCTV check as the missing person',
+          audit: {
+            action: 'sighting.video_confirmed',
+            summary: `CCTV check ${job.id}: an officer marked a face at ${file.cameraPlace} as the person in case ${r.id}`,
           },
-          reportedById: req.user.id,
-          reportedByRole: req.user.role,
-          humanCheck: null,
-          createdAt: Date.now(),
-        };
-        addFoundReport(fr);
-        addActivity({
-          actor: req.user.name,
-          action: 'Marked a face from a CCTV check as the missing person',
-          target: fr.foundLocation,
-          icon: 'upload',
-          actorId: req.user.id,
-          scope: { state: fr.state, district: fr.district, reportId: r.id, matchedReportId: r.id, foundReportId: fr.id },
+          alert: `A CCTV check saw this person at ${file.cameraPlace}${when ? ` (${when})` : ''}. An officer marked it as the same person.`,
         });
-        addAudit({
-          actorId: req.user.id,
-          actorName: req.user.name,
-          actorRole: req.user.role,
-          action: 'sighting.video_confirmed',
-          targetType: 'foundReport',
-          targetId: fr.id,
-          summary: `CCTV check ${job.id}: an officer marked a face at ${file.cameraPlace} as the person in case ${r.id}`,
-          scope: { state: r.state, district: r.district, reportId: r.id, matchedReportId: r.id },
-          metadata: { jobId: job.id, fileKey: file.key, t, seenAt, verdict, aarakshak, rekognition, closeness, cameraPlace: file.cameraPlace, videoSha256: file.sha256 },
-        });
-        // The case's officers only: the desk that marked it has already looked,
-        // and no other desk needs telling that a case may have been seen.
-        matcher.alertCaseOfficers(fr, r, `A CCTV check saw this person at ${file.cameraPlace}${when ? ` (${when})` : ''}. An officer marked it as the same person.`);
         entry.sightingId = fr.id;
       }
     } else {
@@ -4356,6 +4405,337 @@ export default function registerReportRoutes(router, deps) {
       targetId: r.id,
       summary: `Closed CCTV check ${job.id} for case ${r.id}`,
       scope: { state: r.state, district: r.district, reportId: r.id },
+      metadata: { jobId: job.id, counts: updated.counts || null },
+    });
+    res.json({ job: videoJobView(updated) });
+  });
+
+  // ---- CCTV checks against open cases (shared/open-case-checks.js) -----------
+  //
+  // Footage with no case (spec F15-F17, K9): each person the laptop saw is
+  // searched in the face index among the open cases the officer chose, and
+  // shown only above the mode-2 bar. A case outside the officer's area is
+  // never named to them. Off unless KHOZO_DESKTOP_OPEN_CASES is on, which
+  // waits on Aarakshak's permission for live use of its gallery (A3).
+
+  const openCaseSettings = openCaseSettingsOf(settings);
+  // One face a request (a face costs up to a dozen calls to the engines), so
+  // its own limit a quarter-hour: about 27 a minute, under the 30 index
+  // searches a minute Aarakshak's pilot key allows.
+  const openCaseFaceLimit = fixedWindowRateLimit({
+    name: 'open_case_face',
+    limit: 400,
+    envLimit: settings.openCasesFaceLimit,
+    key: (req) => `user:${req.user?.id || clientIp(req)}`,
+  });
+
+  /** Why a check against open cases cannot search here, or null. */
+  function openCasesOff() {
+    if (!openCaseSettings.on) return { status: 403, code: 'off', error: 'Checking footage against open cases is not switched on.' };
+    if (typeof findVideoJob !== 'function' || typeof addVideoJob !== 'function') {
+      return { status: 501, code: 'no_table', error: 'CCTV checks from the desktop app are not available here' };
+    }
+    if (!matcher.faceIndex.enabled) return { status: 503, code: 'no_index', error: 'The face index of open cases is not set up.' };
+    let info = null;
+    try {
+      info = typeof deps.matchEngineInfo === 'function' ? deps.matchEngineInfo() : null;
+    } catch {
+      info = null;
+    }
+    if (!info?.aarakshakConfigured || !info?.rekognitionConfigured) {
+      return { status: 503, code: 'engines', error: 'Checking against open cases needs both face engines, and one is not set up.' };
+    }
+    return null;
+  }
+
+  /** The cases a check of this officer's searches with this narrowing. */
+  const openCasesOf = (user, filters) => openCasesFor({
+    user, reports: listReports(), filters, areaSetting: openCaseSettings.area, indexName: matcher.faceIndex.name,
+  });
+
+  /** A check against open cases the officer started, or null once the refusal is sent. */
+  function openCaseCheckOf(req, res) {
+    if (typeof findVideoJob !== 'function' || typeof updateVideoJob !== 'function') {
+      res.status(501).json({ error: 'CCTV checks from the desktop app are not available here' });
+      return null;
+    }
+    const job = VIDEO_JOB_ID.test(String(req.params.jobId || '')) ? findVideoJob(req.params.jobId) : null;
+    if (!job || job.mode !== 'open_cases') {
+      res.status(404).json({ error: 'There is no such check' });
+      return null;
+    }
+    if (job.createdById !== req.user.id) {
+      res.status(403).json({ error: 'Only the officer who started this check can add to it' });
+      return null;
+    }
+    return job;
+  }
+
+  /** One face's answer as the officer who ran the check sees it. */
+  const faceAnswerOf = (job, face, user) => ({
+    verdict: face.verdict,
+    leads: (face.leads || []).map((id) => job.leads?.[id]).filter(Boolean)
+      .map((lead) => leadView(lead, findReport(lead.caseId), user, job.decisions?.[lead.id] || null)),
+  });
+
+  /**
+   * How many open cases a check would search with this narrowing (F15), and
+   * whether checks against open cases can run here at all.
+   */
+  router.get('/open-case-checks/cases', protectedRoute, requireRole(...POLICE_ROLES), (req, res) => {
+    const off = openCasesOff();
+    if (off) return res.json({ enabled: false, reason: off.code, error: off.error });
+    const read = openCaseFiltersOf(req.query || {});
+    if (read.error) return res.status(400).json({ error: read.error });
+    const { open, searched, notInIndex } = openCasesOf(req.user, read.filters);
+    res.json({
+      enabled: true,
+      area: openCaseArea(req.user, openCaseSettings.area),
+      filters: read.filters,
+      cases: searched.length,
+      open: open.length,
+      notInIndex,
+      bar: openCaseSettings.bar,
+    });
+  });
+
+  /**
+   * Starts a check against open cases: the videos, where each camera is, and
+   * the officer's narrowing. Sending the same `jobKey` again gives back the
+   * same check.
+   */
+  router.post('/open-case-checks', protectedRoute, requireRole(...POLICE_ROLES), desktopJobLimit, (req, res) => {
+    const off = openCasesOff();
+    if (off) return res.status(off.status).json({ error: off.error, code: off.code });
+    const b = req.body || {};
+    if (!isClientKey(b.jobKey)) return res.status(400).json({ error: 'This check has no reference. Start it again.' });
+    const earlier = listVideoJobs().find((j) => j.mode === 'open_cases' && j.createdById === req.user.id && j.jobKey === b.jobKey);
+    if (earlier) return res.json({ job: videoJobView(earlier), repeated: true });
+    const read = jobFilesOf(listFromText(b.files));
+    if (read.error) return res.status(400).json({ error: read.error });
+    const narrowed = openCaseFiltersOf(b);
+    if (narrowed.error) return res.status(400).json({ error: narrowed.error });
+    const area = openCaseArea(req.user, openCaseSettings.area);
+    const { searched } = openCasesOf(req.user, narrowed.filters);
+    if (!searched.length) return res.status(409).json({ error: 'No open case in the face index fits this choice. Choose fewer limits.', code: 'no_cases' });
+    const job = newOpenCaseCheck({
+      id: `vj_${nanoid(10)}`, user: req.user, body: b, files: read.files, filters: narrowed.filters, area, searched: searched.length, bar: openCaseSettings.bar,
+    });
+    addVideoJob(job);
+    addAudit({
+      actorId: req.user.id,
+      actorName: req.user.name,
+      actorRole: req.user.role,
+      action: 'video.open_case_check_started',
+      targetType: 'videoJob',
+      targetId: job.id,
+      summary: `Started a CCTV check of ${job.files.length} video(s) against ${searched.length} open case(s) on a laptop`,
+      scope: { state: job.scope.state, district: job.scope.district },
+      metadata: {
+        jobId: job.id,
+        area,
+        filters: job.filters,
+        casesSearched: searched.length,
+        appVersion: job.appVersion,
+        laptop: job.device,
+        videos: job.files.map((f) => ({ name: f.name, bytes: f.bytes, seconds: f.seconds, cameraPlace: f.cameraPlace, recordedFrom: f.recordedFrom, window: f.window })),
+      },
+    });
+    res.status(201).json({ job: videoJobView(job) });
+  });
+
+  /**
+   * One person's best picture from a check against open cases (F16): searched
+   * in the index among the check's cases, the closest compared pairwise by
+   * both engines, and a lead for each case above the bar. Answered from the
+   * record when sent again. A face the index or the engines gave no answer for
+   * is not recorded, so the laptop can send it again later.
+   */
+  router.post('/open-case-checks/:jobId/faces', protectedRoute, requireRole(...POLICE_ROLES), openCaseFaceLimit, upload.single('photo'), async (req, res) => {
+    const job = openCaseCheckOf(req, res);
+    if (!job) return;
+    if (job.status !== 'open') return res.status(409).json({ error: 'This check is closed', code: 'closed' });
+    const b = req.body || {};
+    const file = job.files.find((f) => String(f.key) === String(b.fileKey));
+    if (!file) return res.status(400).json({ error: 'There is no such video in this check' });
+    if (!isClientKey(b.key)) return res.status(400).json({ error: 'This face has no reference' });
+    const t = scoreOf(b.t);
+    if (t == null || t < 0) return res.status(400).json({ error: 'Say when in the video this face was seen' });
+    const earlier = job.batches?.[openCaseFaceKey(file.key, b.key)]?.faces?.[0];
+    if (earlier) return res.json({ ...faceAnswerOf(job, earlier, req.user), repeated: true });
+
+    const off = openCasesOff();
+    if (off) return res.status(off.status).json({ error: off.error, code: off.code });
+    if (!req.file?.buffer?.length) return res.status(400).json({ error: 'Send the face picture' });
+    const pictureError = validateImageFile(req.file, 'Face picture');
+    if (pictureError) return res.status(pictureError === PHOTO_TOO_LARGE ? 413 : 400).json({ error: pictureError });
+    if (facesSent(job) + 1 > jobFaceBudget) {
+      return res.status(409).json({ error: `This check has sent the ${jobFaceBudget} faces one check may send. Check a shorter time.`, code: 'face_budget' });
+    }
+
+    // The check's cases as they are now: one found or closed since it started is not searched.
+    const { searched } = openCasesOf(req.user, job.filters || {});
+    const found = await matcher.searchOpenCases(req.file.buffer, { caseIds: new Set(searched.map((r) => r.id)), bar: job.bar || openCaseSettings.bar });
+    if (!found.answered) return res.json({ verdict: 'no_answer', leads: [] });
+    const now = new Date().toISOString();
+    const leads = found.leads.map((l) => ({
+      id: leadIdFor(job.id, b.key, l.caseId), caseKey: caseKeyFor(job.id, l.caseId), fileKey: file.key, faceKey: b.key, t, caseId: l.caseId, rank: l.rank, aarakshak: l.aarakshak, rekognition: l.rekognition, at: now,
+    }));
+    const face = { key: b.key, t, verdict: leads.length ? 'likely' : 'unlikely' };
+    const updated = await changeJob(job.id, (current) => {
+      const patch = openCaseFacePatch(current, file.key, face, leads, now);
+      return { ...patch, ...countsOfBatches(patch.batches) };
+    }) || job;
+    addAudit({
+      actorId: req.user.id,
+      actorName: req.user.name,
+      actorRole: req.user.role,
+      action: 'video.open_case_searched',
+      targetType: 'videoJob',
+      targetId: job.id,
+      summary: `Searched a face from a video against ${searched.length} open case(s): ${leads.length ? `${leads.length} case(s) close enough to show` : 'none close enough to show'}`,
+      scope: { state: job.scope?.state, district: job.scope?.district },
+      // Never which cases: the officer's own desks may not be able to open them.
+      metadata: { jobId: job.id, fileKey: file.key, t, leads: leads.length, casesSearched: searched.length, videoName: file.name, videoSha256: file.sha256, cameraPlace: file.cameraPlace },
+    });
+    // One record on each case a face was close to, for the officers who can open it.
+    for (const lead of leads) {
+      const r = findReport(lead.caseId);
+      if (!r) continue;
+      addAudit({
+        actorId: req.user.id,
+        actorName: req.user.name,
+        actorRole: req.user.role,
+        action: 'case.video_open_case_lead',
+        targetType: 'report',
+        targetId: r.id,
+        summary: `A CCTV check against open cases found a face close to case ${r.id}, at ${file.cameraPlace}`,
+        scope: { state: r.state, district: r.district, reportId: r.id },
+        metadata: { jobId: job.id, leadId: lead.id, rank: lead.rank, aarakshak: lead.aarakshak, rekognition: lead.rekognition, t, cameraPlace: file.cameraPlace, officerPlace: job.officerPlace },
+      });
+    }
+    res.json(faceAnswerOf(updated.leads ? updated : { ...job, leads: Object.fromEntries(leads.map((l) => [l.id, l])) }, { ...face, leads: leads.map((l) => l.id) }, req.user));
+  });
+
+  /**
+   * The officer's word on a lead (F17). "same" sends the face to the case as
+   * a sighting waiting for its officers' review; the officer who can open the
+   * case has compared it with the case photo, and one who cannot is told only
+   * that it was sent. "not" is recorded for the false-alarm counts.
+   */
+  router.post('/open-case-checks/:jobId/leads/:leadId', protectedRoute, requireRole(...POLICE_ROLES), desktopDecisionLimit, upload.single('photo'), withoutPhotoMetadata, async (req, res) => {
+    const job = openCaseCheckOf(req, res);
+    if (!job) return;
+    if (job.status !== 'open') return res.status(409).json({ error: 'This check is closed', code: 'closed' });
+    const lead = LEAD_ID.test(String(req.params.leadId || '')) ? job.leads?.[req.params.leadId] : null;
+    if (!lead) return res.status(404).json({ error: 'There is no such face in this check' });
+    const b = req.body || {};
+    if (!DECISIONS.includes(b.decision)) return res.status(400).json({ error: 'Say whether to send this face' });
+    const r = findReport(lead.caseId);
+    const earlier = job.decisions?.[lead.id];
+    if (earlier && earlier.decision === b.decision && (b.decision === 'not' || earlier.sightingId)) {
+      return res.json({ lead: leadView(lead, r, req.user, earlier), repeated: true });
+    }
+    if (earlier?.sightingId && b.decision === 'not') {
+      return res.status(409).json({ error: 'This face was already sent to the case. Its officers will review it.', code: 'already_sighting' });
+    }
+    const file = job.files.find((f) => String(f.key) === String(lead.fileKey));
+    const seenAt = b.seenAt && Number.isFinite(Date.parse(b.seenAt)) ? new Date(Date.parse(b.seenAt)).toISOString() : null;
+    const point = coordinatesOf(b.lat, b.lng) || coordinatesOf(file?.lat, file?.lng);
+    const inScope = Boolean(r && canAccessReport(req.user, r));
+    const entry = {
+      decision: b.decision, fileKey: lead.fileKey, t: lead.t, verdict: 'likely', leadId: lead.id, caseId: lead.caseId, inScope,
+      seenAt, lat: point?.lat ?? null, lng: point?.lng ?? null,
+      at: new Date().toISOString(), byId: req.user.id, byName: req.user.name || null,
+    };
+
+    if (b.decision === 'same') {
+      // Found, closed or its details removed since the face was searched: nothing to send to.
+      if (!r || !isForwardPoolCase(r)) return res.status(409).json({ error: 'That case is no longer open, so the face was not sent.', code: 'case_closed' });
+      const extras = uploadedExtras(req, 1);
+      if (extras.error) return res.status(extras.status).json({ error: extras.error });
+      if (!req.file) return res.status(400).json({ error: 'Send the face picture' });
+      const pictureError = validateImageFile(req.file, 'Face picture');
+      if (pictureError) return res.status(pictureError === PHOTO_TOO_LARGE ? 413 : 400).json({ error: pictureError });
+      const id = sightingIdFor(job.id, lead.id);
+      if (findFoundReport(id)) {
+        entry.sightingId = id;
+      } else {
+        const when = seenAt ? new Date(seenAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'medium' }) : null;
+        const from = job.officerPlace?.district ? ` from ${job.officerPlace.district}` : '';
+        const fr = await addVideoSighting(req, {
+          id, r, job, file, t: lead.t, seenAt, verdict: 'likely', aarakshak: lead.aarakshak, rekognition: lead.rekognition, point, extras: extras.extras,
+          note: `Seen on a CCTV camera at ${file.cameraPlace}${when ? `, ${when}` : ''}, ${videoTimeText(lead.t)} into the video${file.name ? ` "${file.name}"` : ''}. A check of this footage against open cases found the face close to this case on both face engines. ${inScope ? 'An officer looked at it beside the case photo on Khozo Desktop and sent it.' : `An officer${from} who cannot open this case sent it for its officers to look at.`} A lead, not an identification.`,
+          activity: 'Sent a face from a CCTV check of open cases to a case',
+          audit: {
+            action: 'sighting.video_open_case_sent',
+            summary: `CCTV check ${job.id} against open cases: an officer sent a face at ${file.cameraPlace} to case ${r.id}`,
+          },
+          alert: `A CCTV check of footage at ${file.cameraPlace}${when ? ` (${when})` : ''} found a face close to this person on both face engines. ${inScope ? 'An officer looked at it and sent it.' : `An officer${from} sent it for you to look at.`}`,
+          from: { mode: 'open_cases', leadId: lead.id, rank: lead.rank ?? null, outsideArea: !inScope },
+        });
+        entry.sightingId = fr.id;
+      }
+    } else if (r) {
+      addAudit({
+        actorId: req.user.id,
+        actorName: req.user.name,
+        actorRole: req.user.role,
+        action: 'case.video_open_case_lead_rejected',
+        targetType: 'report',
+        targetId: r.id,
+        summary: `CCTV check ${job.id} against open cases: an officer did not send a face at ${file?.cameraPlace || 'a camera'} to case ${r.id}`,
+        scope: { state: r.state, district: r.district, reportId: r.id },
+        metadata: { jobId: job.id, leadId: lead.id, t: lead.t, inScope, aarakshak: lead.aarakshak ?? null, rekognition: lead.rekognition ?? null },
+      });
+    }
+    await changeJob(job.id, (current) => decisionPatch(current, lead.id, entry));
+    res.status(b.decision === 'same' ? 201 : 200).json({ lead: leadView(lead, r, req.user, entry) });
+  });
+
+  /** How far the laptop got on a check against open cases. */
+  router.post('/open-case-checks/:jobId/progress', protectedRoute, requireRole(...POLICE_ROLES), desktopJobLimit, async (req, res) => {
+    const job = openCaseCheckOf(req, res);
+    if (!job) return;
+    let wasDone = false;
+    const updated = await changeJob(job.id, (current) => {
+      wasDone = current.progress?.status === 'done';
+      return progressPatch(current, req.body || {});
+    });
+    if (!updated) return res.status(404).json({ error: 'There is no such check' });
+    if (updated.progress?.status === 'done' && !wasDone) {
+      const view = videoJobView(updated);
+      addAudit({
+        actorId: req.user.id,
+        actorName: req.user.name,
+        actorRole: req.user.role,
+        action: 'video.open_case_check_finished',
+        targetType: 'videoJob',
+        targetId: job.id,
+        summary: `A CCTV check against open cases finished: ${view.hours} hours read, ${view.peopleSeen} people seen, ${view.counts.faces} faces searched`,
+        scope: { state: job.scope?.state, district: job.scope?.district },
+        metadata: { jobId: job.id, hours: view.hours, peopleSeen: view.peopleSeen, counts: view.counts, leads: view.openCases?.leads ?? 0 },
+      });
+    }
+    res.json({ job: videoJobView(updated) });
+  });
+
+  /** Ends a check against open cases. Its record stays, without the scores. */
+  router.post('/open-case-checks/:jobId/close', protectedRoute, requireRole(...POLICE_ROLES), desktopJobLimit, async (req, res) => {
+    const job = openCaseCheckOf(req, res);
+    if (!job) return;
+    if (job.status === 'closed') return res.json({ job: videoJobView(job), repeated: true });
+    const now = new Date().toISOString();
+    const updated = await changeJob(job.id, (current) => closedVideoJobPatch(current, now)) || { ...job, status: 'closed', closedAt: now };
+    addAudit({
+      actorId: req.user.id,
+      actorName: req.user.name,
+      actorRole: req.user.role,
+      action: 'video.open_case_check_closed',
+      targetType: 'videoJob',
+      targetId: job.id,
+      summary: `Closed CCTV check ${job.id} against open cases`,
+      scope: { state: job.scope?.state, district: job.scope?.district },
       metadata: { jobId: job.id, counts: updated.counts || null },
     });
     res.json({ job: videoJobView(updated) });

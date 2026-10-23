@@ -13,7 +13,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 
-import { createRequestStore, reportIdOf, tablesForRequest } from '../worker/src/store-sync.js';
+import { createRequestStore, jobIdOf, reportIdOf, tablesForRequest } from '../worker/src/store-sync.js';
 import { VIDEO_JOBS_DDL } from '../worker/src/db.js';
 
 // What a request reads when no rule says otherwise: every table but the CCTV checks.
@@ -72,6 +72,8 @@ function fakeIo(seed = {}) {
       let rows = tables[table] || [];
       if (/user_id = \$1/.test(sql)) rows = rows.filter((r) => r.userId === params[0]);
       if (/report_id = \$1/.test(sql)) rows = rows.filter((r) => r.reportId === params[0]);
+      if (/where id = \$1/.test(sql)) rows = rows.filter((r) => r.id === params[0]);
+      if (/report_id is null/.test(sql)) rows = rows.filter((r) => r.reportId == null);
       if (/data - 'batches'/.test(sql)) rows = rows.map(({ batches: _b, ...r }) => r);
       return { rows: rows.map((data) => ({ data: clone(data) })) };
     },
@@ -420,7 +422,13 @@ check('starting a desktop check, and its faces, progress and close, need the acc
   ['/api/reports/r_1/video-jobs', '/api/reports/r_1/video-jobs/vj_abc123/faces', '/api/reports/r_1/video-jobs/vj_abc123/progress', '/api/reports/r_1/video-jobs/vj_abc123/close']
     .every((p) => tablesForRequest('POST', p).join() === JOB_TABLES));
 check('a desktop decision, which can make a sighting, loads everything else and the case\'s checks', tablesForRequest('POST', '/api/reports/r_1/video-jobs/vj_abc123/decisions').join() === `${DEFAULT},videoJobsOfCase`);
-check('listing a case\'s checks reads that case\'s checks and no audit', tablesForRequest('GET', '/api/reports/r_1/video-jobs').join() === 'users,reports,videoJobsOfCase' && reportIdOf('/api/reports/r_1/video-jobs') === 'r_1');
+check('listing a case\'s checks reads that case\'s checks, its sightings for the route, and the end of the audit chain, to record the view', tablesForRequest('GET', '/api/reports/r_1/video-jobs').join() === 'users,reports,foundReports,videoJobsOfCase,auditTail' && reportIdOf('/api/reports/r_1/video-jobs') === 'r_1');
+check('how many open cases a check would search reads the accounts and the cases', tablesForRequest('GET', '/api/reports/open-case-checks/cases').join() === 'users,reports');
+check('starting a check against open cases reads the recent ones, to find a start sent twice', tablesForRequest('POST', '/api/reports/open-case-checks').join() === 'users,reports,recentOpenCaseChecks,auditTail');
+check('a face, the progress and the close of a check against open cases read that one check',
+  ['faces', 'progress', 'close'].every((p) => tablesForRequest('POST', `/api/reports/open-case-checks/vj_abc123/${p}`).join() === 'users,reports,videoJobById,auditTail')
+  && jobIdOf('/api/reports/open-case-checks/vj_abc123/faces') === 'vj_abc123' && reportIdOf('/api/reports/open-case-checks/vj_abc123/faces') === null);
+check('sending a face to a case, which makes a sighting, loads everything else and the check', tablesForRequest('POST', '/api/reports/open-case-checks/vj_abc123/leads/ld_x1').join() === `${DEFAULT},videoJobById`);
 check('the command centre\'s CCTV checks page reads the checks without their batches', tablesForRequest('GET', '/api/dashboard/video-checks').join() === 'users,reports,videoJobSummaries');
 check('the desktop app asking for its newest version reads only the accounts', tablesForRequest('GET', '/api/dashboard/desktop-version').join() === 'users');
 check('anonymising a case reads its checks whole', tablesForRequest('POST', '/api/dashboard/privacy/retention/report/r_1').includes('videoJobs') && tablesForRequest('POST', '/api/dashboard/privacy/retention-sweep').includes('videoJobs'));
@@ -445,6 +453,22 @@ check('anonymising a case reads its checks whole', tablesForRequest('POST', '/ap
   let refused = false;
   try { summaries.store.updateVideoJob('vj_one111', { status: 'closed' }); } catch { refused = true; }
   check('and cannot write a check back without them', refused);
+
+  // Checks against open cases have no case.
+  jobsIo.tables.video_jobs.push({ ...job('vj_open333', null), mode: 'open_cases', batches: { '0|p1': { faces: [1] } } });
+  const one = await createRequestStore({}, null, jobsIo, { tables: tablesForRequest('POST', '/api/reports/open-case-checks/vj_open333/faces'), jobId: 'vj_open333' });
+  check('a face for a check against open cases reads that check alone, whole', one.store.listVideoJobs().length === 1 && one.store.findVideoJob('vj_open333')?.batches?.['0|p1'] != null);
+  let needsId = false;
+  try { await createRequestStore({}, null, jobsIo, { tables: tablesForRequest('POST', '/api/reports/open-case-checks/x/faces') }); } catch { needsId = true; }
+  check('and reading one check without saying which is refused', needsId);
+  const starting = await createRequestStore({}, null, jobsIo, { tables: tablesForRequest('POST', '/api/reports/open-case-checks') });
+  check('starting one reads the recent checks against open cases, without batches', starting.store.listVideoJobs().map((j) => j.id).join() === 'vj_open333' && !('batches' in starting.store.findVideoJob('vj_open333')));
+  let kept = false;
+  try { starting.store.updateVideoJob('vj_open333', { status: 'closed' }); } catch { kept = true; }
+  starting.store.addVideoJob({ id: 'vj_new444', reportId: null, mode: 'open_cases', status: 'open', batches: {} });
+  await starting.flush();
+  check('which it cannot write back, while a new check is added', kept && jobsIo.tables.video_jobs.some((j) => j.id === 'vj_new444')
+    && jobsIo.tables.video_jobs.find((j) => j.id === 'vj_open333').batches['0|p1'] != null);
 }
 
 // A Worker deployed before server/sql/003_video_jobs.sql has run.

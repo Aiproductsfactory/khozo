@@ -102,6 +102,13 @@ export default registerReportRoutes(Router(), {
     desktopJobLimit: process.env.KHOZO_DESKTOP_JOB_LIMIT,
     desktopJobFaces: process.env.KHOZO_DESKTOP_JOB_FACES,
     desktopDecisionLimit: process.env.KHOZO_DESKTOP_DECISION_LIMIT,
+    // Checking footage against open cases (shared/open-case-checks.js), off unless switched on.
+    openCases: process.env.KHOZO_DESKTOP_OPEN_CASES,
+    openCasesArea: process.env.KHOZO_DESKTOP_OPEN_CASES_AREA,
+    openCasesTop: process.env.KHOZO_OPEN_CASES_TOP,
+    openCasesAarakshak: process.env.KHOZO_OPEN_CASES_AARAKSHAK,
+    openCasesRekognition: process.env.KHOZO_OPEN_CASES_AWS,
+    openCasesFaceLimit: process.env.KHOZO_OPEN_CASES_FACE_LIMIT,
     // The family alert goes through the same gateway as the registration OTP
     // (shared/sms.js); without one, Khozo says so instead of claiming a send.
     smsGatewayUrl: process.env.KHOZO_SMS_GATEWAY_URL,

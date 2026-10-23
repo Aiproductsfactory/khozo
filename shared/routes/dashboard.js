@@ -11,7 +11,7 @@ import bcrypt from 'bcryptjs';
 import { nanoid } from 'nanoid';
 
 import {
-  POLICE_ROLES, sameDistrict, sameDistrictPlace, sameState, sameStatePlace,
+  POLICE_ROLES, canAccessReport, sameDistrict, sameDistrictPlace, sameState, sameStatePlace,
   scopeActivity, scopeAudit, scopeFoundReports, scopeReports, scopeLabel,
 } from '../scope.js';
 import { canonicalPlace } from '../geo/index.js';
@@ -2133,7 +2133,9 @@ export default function registerDashboardRoutes(router, deps) {
     if (typeof listVideoJobs !== 'function') return res.json({ ...summariseVideoJobs([]), available: false, days });
     const cases = new Map(scopeReports(req.user, listReports()).map((r) => [r.id, r]));
     const since = days ? Date.now() - days * 86400000 : null;
-    const jobs = listVideoJobs().filter((j) => cases.has(j.reportId) && (!since || Date.parse(j.createdAt) >= since));
+    // A check against open cases has no case: the desks over the officer's own place see it.
+    const ownPlace = (j) => j.mode === 'open_cases' && canAccessReport(req.user, { id: j.id, ...(j.scope || {}) });
+    const jobs = listVideoJobs().filter((j) => (cases.has(j.reportId) || ownPlace(j)) && (!since || Date.parse(j.createdAt) >= since));
     const summary = summariseVideoJobs(jobs);
     // The viewer can open each of these cases, so the list names them.
     summary.recent = summary.recent.map((job) => ({ ...job, caseName: cases.get(job.reportId)?.childName || null, caseFir: cases.get(job.reportId)?.firNo || null }));
