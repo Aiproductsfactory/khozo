@@ -161,7 +161,7 @@ const face = (x, y, w = 60, extra = {}) => ({
   check('a short video is looked at often, a long one less', sampleInterval(20) === 0.25 && sampleInterval(3600) === 2 && sampleInterval(150) === 0.5);
   check('a DVR second stream, D1 and VGA are small videos; HD and a phone video are not',
     isSmallVideo(352, 288) && isSmallVideo(704, 576) && isSmallVideo(640, 480) && !isSmallVideo(1280, 720) && !isSmallVideo(1920, 1080) && !isSmallVideo(1080, 1920) && !isSmallVideo(0, 0));
-  check('a small video keeps faces down to 16 px, others 36', minFaceFor(352, 288) === SMALL_MIN_FACE_PX && minFaceFor(1920, 1080) === MIN_FACE_PX);
+  check('a small video keeps faces down to 12 px, others 36', minFaceFor(352, 288) === SMALL_MIN_FACE_PX && SMALL_MIN_FACE_PX === 12 && minFaceFor(1920, 1080) === MIN_FACE_PX);
   check('a smaller frame is looked at more often, up to 8 a second; HD as usual',
     lookRate(2, 352, 288) === MAX_LOOKS_A_SECOND && lookRate(2, 960, 540) === 2 && lookRate(2, 1280, 720) === 2 && lookRate(1, 352, 288) === 5.11 && lookRate(2, 640, 360) === 4.5,
     JSON.stringify([lookRate(2, 352, 288), lookRate(2, 960, 540), lookRate(1, 352, 288), lookRate(2, 640, 360)]));
@@ -202,6 +202,9 @@ const face = (x, y, w = 60, extra = {}) => ({
     [ans(0.9), { status: 'not_configured' }, 'possible'],
     [ans(0.9), { status: 'no_answer' }, 'possible'],
     [ans(0.1), { status: 'not_asked' }, 'unlikely'],
+    // A small video's faces go to both engines: Rekognition sure where Aarakshak is not.
+    [ans(0.1), ans(0.94), 'not_agreed'],
+    [ans(0.1), ans(0.5), 'unlikely'],
     [{ status: 'no_face' }, ans(0.85), 'possible'],
     [{ status: 'no_answer' }, ans(0.4), 'unlikely'],
     [{ status: 'no_face' }, { status: 'no_face' }, 'no_face'],
@@ -228,6 +231,9 @@ const face = (x, y, w = 60, extra = {}) => ({
   check('the person is found twice and strangers are not', results.map((r) => r.verdict).join() === 'likely,unlikely,unlikely,no_face,likely', results.map((r) => r.verdict).join());
   check('the face from the video is always the source', calls.aarakshak.every(([s, tg]) => !s.startsWith('CASE') && tg.startsWith('CASE')));
   check('the second engine is asked only about possible matches and faces the first could not read', calls.rekognition.length === 3, `${calls.rekognition.length} calls`);
+  calls.rekognition.length = 0;
+  const both = await compareFramesWithCase({ casePhotoBuf: Buffer.from('CASE FACE:K'), frames, providers, reviewThreshold: 0.35, askBoth: true });
+  check('the faces of a small video are put to both engines', calls.rekognition.length === 5 && both.map((r) => r.verdict).join() === 'likely,unlikely,unlikely,no_face,likely', `${calls.rekognition.length} calls, ${both.map((r) => r.verdict).join()}`);
 }
 
 // ---- The request and the sighting ------------------------------------------------------
@@ -236,6 +242,8 @@ const face = (x, y, w = 60, extra = {}) => ({
   const good = videoSearchRecord({ searchId: 'vs_abc12345', cameraPlace: 'Kalupur station gate', videoSha256: 'A'.repeat(64), videoBytes: '2048', times: '1.25,7,x,-1', recordedFrom: '2026-10-20T14:30' });
   check('a search is recorded with its camera, fingerprint and moments', !good.error && good.cameraPlace === 'Kalupur station gate' && good.videoSha256 === 'a'.repeat(64) && good.videoBytes === 2048 && good.times.join() === '1.3,7' && good.recordedFrom === '2026-10-20T14:30', JSON.stringify(good));
   check('a search with no reference is refused', Boolean(videoSearchRecord({ cameraPlace: 'Gate 1' }).error));
+  check('a search says whether its faces are from a small video', videoSearchRecord({ searchId: 'vs_abc12345', cameraPlace: 'Gate 1', smallVideo: '1' }).smallVideo === true
+    && videoSearchRecord({ searchId: 'vs_abc12345', cameraPlace: 'Gate 1' }).smallVideo === false);
   check('a search that does not say where the camera is, is refused', Boolean(videoSearchRecord({ searchId: 'vs_abc12345', cameraPlace: ' a ' }).error));
   check('a malformed fingerprint or time is dropped, not stored', videoSearchRecord({ searchId: 'vs_abc12345', cameraPlace: 'Gate 1', videoSha256: 'nothex', recordedFrom: 'soon' }).videoSha256 === null);
   check('a request carries at most five faces', VIDEO_SEARCH_BATCH === 5);

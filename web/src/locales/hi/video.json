@@ -95,5 +95,7 @@
   "Choose the video first": "पहले वीडियो चुनें",
   "Say where the camera is": "बताएँ कि कैमरा कहाँ है",
   "Start checking": "जाँच शुरू करें",
-  "Check another video": "दूसरा वीडियो जाँचें"
+  "Check another video": "दूसरा वीडियो जाँचें",
+  "The two face engines did not agree": "दोनों फेस इंजन सहमत नहीं हुए",
+  "One says it is the same person, the other does not. Look carefully.": "एक कहता है कि यह वही व्यक्ति है, दूसरा नहीं। ध्यान से देखें।"
 }

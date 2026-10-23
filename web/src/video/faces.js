@@ -11,6 +11,8 @@
 // faces found in one frame after another into "tracks", so that a person seen
 // in fifty frames is shown and checked once, with their clearest picture.
 
+import { SMALL_VIDEO_SIDE, isSmallVideo } from '../../../shared/video-search.js';
+
 /** The three scales YuNet looks at, in pixels per output cell. */
 const STRIDES = [8, 16, 32];
 
@@ -27,11 +29,15 @@ export const NMS_IOU = 0.3;
 export const MIN_FACE_PX = 36;
 
 /**
- * A small video: its shorter side is this many pixels or fewer, as a DVR's
- * second stream (CIF, 352 x 288), D1 (704 x 576) or VGA. Every face in one is
- * small, so three things change for it, measured on an office camera at
- * 352 x 288 with faces 16 to 40 px wide (23 October 2026, four volunteers
- * from the team and their own test cases):
+ * A small video (shared/video-search.js isSmallVideo: the shorter side 576 px
+ * or less, as a DVR's second stream, D1 or VGA). Every face in one is small,
+ * so four things change for it, measured on an office camera at 352 x 288
+ * with faces 12 to 40 px wide (23 October 2026, four volunteers from the team
+ * and their own test cases):
+ *   - faces are found on the frame enlarged SMALL_VIDEO_ENLARGE times, which
+ *     finds faces the finder misses at their own size and places their eyes
+ *     better: 66 people instead of 42, among them a volunteer seen three more
+ *     times;
  *   - faces down to SMALL_MIN_FACE_PX are used: at MIN_FACE_PX almost no one
  *     in that video was seen at all;
  *   - the video is looked at more often (lookRate): a person passing for two
@@ -39,29 +45,30 @@ export const MIN_FACE_PX = 36;
  *   - each person is checked with up to SMALL_VIDEO_PICTURES pictures, the
  *     best answer counting: one picture of a small, blurred face can miss a
  *     person whom a moment later matches clearly.
- * Together they found a volunteer at 0.46 against their own photo (the line
- * is 0.35) who had scored 0.34 at two looks a second and was never seen at
- * 36 px. No stranger scored above 0.18.
+ * Their faces are also put to both face engines (shared/match-pipeline.js
+ * compareFramesWithCase `askBoth`): there Rekognition saw each of the four
+ * volunteers (82 to 97 against 24 at most for anyone else) where Aarakshak
+ * found one.
  */
-export const SMALL_VIDEO_SIDE = 576;
+export { SMALL_VIDEO_SIDE, isSmallVideo };
 
-/** The narrowest face used in a small video: the face finder's own floor. */
-export const SMALL_MIN_FACE_PX = 16;
+/** How many times a small video's frame is enlarged for finding faces. */
+export const SMALL_VIDEO_ENLARGE = 2;
+
+/** The narrowest face used in a small video, in the video's own pixels. */
+export const SMALL_MIN_FACE_PX = 12;
 
 /** How many pictures of each person in a small video are checked. */
 export const SMALL_VIDEO_PICTURES = 3;
+
+/** The face finder's line in a small video: Aarakshak's own (0.6), which keeps more of the smallest faces. */
+export const SMALL_FACE_SCORE_MIN = 0.6;
 
 /** The most looks a second at a video, however small. */
 export const MAX_LOOKS_A_SECOND = 8;
 
 /** The frame size the usual look rate is for: an HD frame searched at 960 px. */
 const USUAL_FRAME_PIXELS = 960 * 540;
-
-/** Whether a video of `width` x `height` pixels is small (SMALL_VIDEO_SIDE). */
-export function isSmallVideo(width, height) {
-  const side = Math.min(Number(width) || 0, Number(height) || 0);
-  return side > 0 && side <= SMALL_VIDEO_SIDE;
-}
 
 /** The narrowest face to use in a video of `width` x `height`. */
 export function minFaceFor(width, height) {
@@ -72,7 +79,8 @@ export function minFaceFor(width, height) {
  * How many times a second to look at a video whose frames are searched at
  * `width` x `height`: `usual` for an HD frame, and more for a smaller one so
  * that the work stays about the same (a frame a quarter the size is looked at
- * four times as often), up to MAX_LOOKS_A_SECOND. Reading the office camera
+ * four times as often), up to MAX_LOOKS_A_SECOND. The size is the video's
+ * own, before any enlarging (SMALL_VIDEO_ENLARGE). Reading the office camera
  * above at 8 looks a second took 33 seconds for 15 minutes of video.
  */
 export function lookRate(usual, width, height) {

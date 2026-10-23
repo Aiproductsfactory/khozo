@@ -38,6 +38,7 @@ const INTERVALS = [
 const VERDICT_WORDS = {
   likely: msg('Likely the same person'),
   possible: msg('Possibly the same person'),
+  not_agreed: msg('The two face engines did not agree'),
 };
 
 /** How long to wait before sending faces again that no engine answered. */
@@ -178,6 +179,8 @@ export default function VideoCaseSearch({ report, onClose }) {
       fd.append('facesFound', String(result.tracks.length));
       fd.append('facesTooSmall', String(result.tooSmall || 0));
       fd.append('times', faces.map((item) => timeOf(item).toFixed(1)).join(','));
+      // A small video's faces are put to both face engines.
+      fd.append('smallVideo', result.small ? '1' : '0');
       return fd;
     };
     // Every face unanswered means the engines were busy or briefly down:
@@ -344,7 +347,11 @@ export default function VideoCaseSearch({ report, onClose }) {
       'CCTV check: a possible sighting.',
       `Camera: ${form.cameraPlace.trim()}.`,
       `Seen ${formatVideoTime(track.time)} into the video${clock ? ` (about ${clock})` : ''}.`,
-      verdicts[track.id] === 'likely' ? 'Likely the same person: both face engines agree.' : 'Possibly the same person: one face engine.',
+      {
+        likely: 'Likely the same person: both face engines agree.',
+        possible: 'Possibly the same person: one face engine.',
+        not_agreed: 'The two face engines did not agree: one says it is the same person, the other does not.',
+      }[verdicts[track.id]] || 'Possibly the same person: one face engine.',
       `Video "${file?.name || 'video'}" (${formatBytes(file?.size || 0)})${fingerprint ? `, fingerprint (SHA-256) ${fingerprint}` : ''}.`,
       'Checked by eye: not yet.',
     ].join(' ').slice(0, 1000);
@@ -364,7 +371,8 @@ export default function VideoCaseSearch({ report, onClose }) {
     const p = track.pictures?.[answeredBy[track.id]];
     return p ? { ...track, blob: p.blob, url: p.url, time: p.time ?? track.time, face: p.face || track.face } : track;
   };
-  const hits = [...ids(['likely']), ...ids(['possible'])].map(asAnswered);
+  // Where the two engines did not agree, the officer looks too: one of them says it is the person.
+  const hits = [...ids(['likely']), ...ids(['possible']), ...ids(['not_agreed'])].map(asAnswered);
   const unanswered = ids(['no_answer']);
   const checked = Object.values(verdicts).filter((v) => v !== 'no_answer').length;
 
@@ -519,6 +527,7 @@ export default function VideoCaseSearch({ report, onClose }) {
                       </figure>
                     </div>
                     <p className={`mt-3 text-base font-bold ${verdicts[track.id] === 'likely' ? 'text-amber-900' : 'text-ink'}`}>{t(VERDICT_WORDS[verdicts[track.id]] || VERDICT_WORDS.possible)}</p>
+                    {verdicts[track.id] === 'not_agreed' && <p className="text-sm text-gray-600">{t('One says it is the same person, the other does not. Look carefully.')}</p>}
                     <p className="text-sm text-gray-700">
                       {t('At {time} in the video', { time: formatVideoTime(track.time) })}
                       {clock && <span className="text-gray-500"> · {clock}</span>}

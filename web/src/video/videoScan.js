@@ -7,8 +7,8 @@
 // comes out is a short list of face pictures with the moment each was seen:
 // the only thing that is ever sent.
 import {
-  COMPARE_SIDE, CROP_SIDE, MIN_FACE_PX, SMALL_VIDEO_PICTURES, cropBox, createTracker, faceQuality, isSmallVideo, lookRate,
-  minFaceFor, sampleInterval, sampleTimes, scaleFaces, sharpness,
+  COMPARE_SIDE, CROP_SIDE, MIN_FACE_PX, SMALL_FACE_SCORE_MIN, SMALL_VIDEO_ENLARGE, SMALL_VIDEO_PICTURES, cropBox, createTracker,
+  faceQuality, isSmallVideo, lookRate, minFaceFor, sampleInterval, sampleTimes, scaleFaces, sharpness,
 } from './faces.js';
 import { loadDetector } from './detector.js';
 import { msg } from '../i18n.jsx';
@@ -151,8 +151,9 @@ export async function frameBlob(opened, t, { mark = null } = {}) {
  *   interval  seconds between looks; by default set from the length
  *   minFace   the narrowest face used, in the video's pixels (MIN_FACE_PX)
  *   smallVideo  true: a small video (faces.js isSmallVideo) is looked at more
- *             often (lookRate), faces down to SMALL_MIN_FACE_PX are used, and
- *             up to SMALL_VIDEO_PICTURES pictures of each person are kept
+ *             often (lookRate), its faces are found on the frame enlarged
+ *             (SMALL_VIDEO_ENLARGE), faces down to SMALL_MIN_FACE_PX are used,
+ *             and up to SMALL_VIDEO_PICTURES pictures of each person are kept
  *   maxTracks the most people kept; past it, a clearer face replaces the
  *             least clear person
  *   keepOpen  leave the player open afterwards, to show whole frames
@@ -177,15 +178,18 @@ export async function scanVideo(file, {
   try {
     onStage?.('reading');
     const small = smallVideo && isSmallVideo(width, height);
-    const scale = Math.min(1, maxSide / Math.max(width, height));
+    // A small video's frame is enlarged to find its faces; any other is made no larger than maxSide.
+    const scale = small ? SMALL_VIDEO_ENLARGE : Math.min(1, maxSide / Math.max(width, height));
     const dw = Math.max(32, Math.round(width * scale));
     const dh = Math.max(32, Math.round(height * scale));
     const usual = interval || sampleInterval(duration);
-    const step = small ? 1 / lookRate(1 / usual, dw, dh) : usual;
+    const step = small ? 1 / lookRate(1 / usual, width, height) : usual;
     const times = sampleTimes(duration, step);
     const smallest = minFace ?? (small ? minFaceFor(width, height) : MIN_FACE_PX);
     const keep = small ? SMALL_VIDEO_PICTURES : 1;
     const look = makeCanvas(dw, dh).getContext('2d', { willReadFrequently: true });
+    look.imageSmoothingEnabled = true;
+    look.imageSmoothingQuality = 'high';
     const patch = makeCanvas(64, 64).getContext('2d', { willReadFrequently: true });
     const tracker = createTracker({ maxGap: Math.max(3, step * 3) });
     // Track id -> [{ blob, url, quality, time, face }], clearest first, at most `keep`
@@ -210,7 +214,7 @@ export async function scanVideo(file, {
       if (!(await seekTo(video, t))) continue;
       look.drawImage(video, 0, 0, dw, dh);
       // eslint-disable-next-line no-await-in-loop
-      const found = scaleFaces(await detector.detect(look.getImageData(0, 0, dw, dh)), 1 / scale);
+      const found = scaleFaces(await detector.detect(look.getImageData(0, 0, dw, dh), small ? SMALL_FACE_SCORE_MIN : undefined), 1 / scale);
       looks += 1;
       const usable = [];
       for (const face of found) {
