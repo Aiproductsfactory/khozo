@@ -4,7 +4,7 @@ import { currentLocale, msg, useT } from '../i18n.jsx';
 import { ProtectedImage, txt } from '../lib.jsx';
 import { formatBytes } from '../photoPrep.js';
 import { useBackClose } from '../useBackClose.js';
-import { VIDEO_SEARCH_BATCH, VIDEO_SEARCH_MAX_FACES } from '../../../shared/video-search.js';
+import { FRAME_VERDICTS, VIDEO_SEARCH_BATCH, VIDEO_SEARCH_MAX_FACES } from '../../../shared/video-search.js';
 import { formatVideoTime } from './faces.js';
 import { fileSha256 } from './sha256.js';
 import { comparisonFile, frameBlob, releaseTracks, scanVideo } from './videoScan.js';
@@ -17,10 +17,17 @@ import { comparisonFile, frameBlob, releaseTracks, scanVideo } from './videoScan
  * checked; see the places the person may be, each with two buttons. Every
  * technical step is still done, out of sight: the faces are found on this
  * computer (the video is never uploaded), the clearest picture of each face
- * is compared with this case's photo by the face engines, a few at a time
- * (POST /reports/:id/video-search), and the file's fingerprint (SHA-256) goes
- * into the audit log with every request.
+ * (on a small video, the clearest three: faces.js says why, and the best
+ * answer counts) is compared with this case's photo by the face engines, a
+ * few at a time (POST /reports/:id/video-search), and the file's fingerprint
+ * (SHA-256) goes into the audit log with every request.
  */
+
+/** Which of two answers is more worth an officer's time. */
+const rankOf = (verdict) => {
+  const i = FRAME_VERDICTS.indexOf(verdict);
+  return i < 0 ? FRAME_VERDICTS.length : i;
+};
 
 const INTERVALS = [
   { value: '1', label: msg('Normal') },
@@ -63,6 +70,8 @@ export default function VideoCaseSearch({ report, onClose }) {
   const [progress, setProgress] = useState(null);
   const [scan, setScan] = useState(null);
   const [verdicts, setVerdicts] = useState({});
+  // Track id -> which of its pictures got its answer: the one shown, and the moment.
+  const [answeredBy, setAnsweredBy] = useState({});
   const [error, setError] = useState('');
   const [fingerprint, setFingerprint] = useState(null);
   const [frame, setFrame] = useState(null); // { id, url }
@@ -113,6 +122,7 @@ export default function VideoCaseSearch({ report, onClose }) {
     frameRef.current = null;
     setScan(null);
     setVerdicts({});
+    setAnsweredBy({});
     setFingerprint(null);
     setFrame(null);
     setSaved({});
@@ -133,17 +143,28 @@ export default function VideoCaseSearch({ report, onClose }) {
   const placeMissing = form.cameraPlace.trim().length < 3;
   const ready = Boolean(file) && !placeMissing;
 
-  /** Sends faces to be compared with the case, a few at a time. */
+  /**
+   * Sends faces to be compared with the case, a few pictures at a time. A
+   * person with several pictures (a small video) gets the best answer of
+   * them, even when their pictures go in two requests.
+   */
   const compare = async (result, tracks, { searchId, sha, controller }) => {
     setStage('comparing');
+    const items = tracks.flatMap((track) => (track.pictures?.length ? track.pictures : [track]).map((picture, n) => ({ track, picture, n })));
     const batches = [];
-    for (let i = 0; i < tracks.length; i += VIDEO_SEARCH_BATCH) batches.push(tracks.slice(i, i + VIDEO_SEARCH_BATCH));
-    setProgress({ done: 0, total: tracks.length });
+    for (let i = 0; i < items.length; i += VIDEO_SEARCH_BATCH) batches.push(items.slice(i, i + VIDEO_SEARCH_BATCH));
+    setProgress({ done: 0, total: items.length });
+    const best = {}; // track id -> { verdict, n }
+    const keepBest = (item, verdict) => {
+      const have = best[item.track.id];
+      if (!have || rankOf(verdict) < rankOf(have.verdict)) best[item.track.id] = { verdict, n: item.n };
+    };
+    const timeOf = ({ picture, track }) => picture.time ?? track.time;
 
     const formFor = async (faces, index) => {
       const fd = new FormData();
       // The engines' copies, at the size they find faces best (faces.js COMPARE_SIDE).
-      const pictures = await Promise.all(faces.map((track) => comparisonFile(track, 'face')));
+      const pictures = await Promise.all(faces.map((item) => comparisonFile({ blob: item.picture.blob, time: timeOf(item) }, 'face')));
       pictures.forEach((picture, i) => fd.append(i === 0 ? 'photo' : 'extraPhotos', picture));
       fd.append('searchId', searchId);
       fd.append('videoName', (file.name || '').slice(0, 200));
@@ -156,7 +177,7 @@ export default function VideoCaseSearch({ report, onClose }) {
       fd.append('batches', String(batches.length));
       fd.append('facesFound', String(result.tracks.length));
       fd.append('facesTooSmall', String(result.tooSmall || 0));
-      fd.append('times', faces.map((track) => track.time.toFixed(1)).join(','));
+      fd.append('times', faces.map((item) => timeOf(item).toFixed(1)).join(','));
       return fd;
     };
     // Every face unanswered means the engines were busy or briefly down:
@@ -169,12 +190,10 @@ export default function VideoCaseSearch({ report, onClose }) {
         setBusyEngines(false);
         if (!controller.signal.aborted) data = await api.postForm(`/reports/${report.id}/video-search`, await formFor(faces, index));
       }
-      const answered = {};
       for (const row of data.results || []) {
-        const track = faces[row.index];
-        if (track) answered[track.id] = row.verdict;
+        const item = faces[row.index];
+        if (item) keepBest(item, row.verdict);
       }
-      return answered;
     };
     // The server itself failed, with no answer in words: on the smallest
     // hosting plan a request doing too much is cut off.
@@ -183,19 +202,18 @@ export default function VideoCaseSearch({ report, onClose }) {
     let done = 0;
     for (const [index, batch] of batches.entries()) {
       if (controller.signal.aborted) break;
-      const answered = {};
       let stop = null;
       try {
         // eslint-disable-next-line no-await-in-loop
-        Object.assign(answered, await ask(batch, index));
+        await ask(batch, index);
       } catch (err) {
         if (isFault(err) && batch.length > 1) {
           // Several faces at once were too much: one at a time.
-          for (const track of batch) {
+          for (const item of batch) {
             if (controller.signal.aborted) break;
             try {
               // eslint-disable-next-line no-await-in-loop
-              Object.assign(answered, await ask([track], index));
+              await ask([item], index);
             } catch (single) {
               if (!isFault(single)) {
                 stop = single;
@@ -208,7 +226,9 @@ export default function VideoCaseSearch({ report, onClose }) {
         }
       }
       // A face with no verdict is "not checked", to send again.
-      setVerdicts((prev) => ({ ...prev, ...Object.fromEntries(batch.map((track) => [track.id, answered[track.id] || 'no_answer'])) }));
+      const people = [...new Set(batch.map((item) => item.track.id))];
+      setVerdicts((prev) => ({ ...prev, ...Object.fromEntries(people.map((id) => [id, best[id]?.verdict || 'no_answer'])) }));
+      setAnsweredBy((prev) => ({ ...prev, ...Object.fromEntries(people.filter((id) => best[id]).map((id) => [id, best[id].n])) }));
       if (stop) {
         if (stop.status === 429) {
           setError(msg('Too many faces were checked in a short time. Wait a few minutes, then press Try again.'));
@@ -220,7 +240,7 @@ export default function VideoCaseSearch({ report, onClose }) {
         }
       }
       done += batch.length;
-      setProgress({ done, total: tracks.length });
+      setProgress({ done, total: items.length });
     }
   };
 
@@ -236,6 +256,8 @@ export default function VideoCaseSearch({ report, onClose }) {
       const result = await scanVideo(file, {
         maxSide: form.smallFaces ? 1920 : 1280,
         interval: Number(form.interval) || 1,
+        // A DVR's second stream and other small videos: looked at more often, smaller faces, three pictures a person.
+        smallVideo: true,
         maxTracks: 1000,
         keepOpen: true,
         signal: controller.signal,
@@ -337,7 +359,12 @@ export default function VideoCaseSearch({ report, onClose }) {
 
   const tracksById = useMemo(() => new Map((scan?.tracks || []).map((track) => [track.id, track])), [scan]);
   const ids = (wanted) => Object.entries(verdicts).filter(([, v]) => wanted.includes(v)).map(([id]) => tracksById.get(Number(id))).filter(Boolean);
-  const hits = [...ids(['likely']), ...ids(['possible'])];
+  // A match is shown, timed and saved by the picture that got its answer.
+  const asAnswered = (track) => {
+    const p = track.pictures?.[answeredBy[track.id]];
+    return p ? { ...track, blob: p.blob, url: p.url, time: p.time ?? track.time, face: p.face || track.face } : track;
+  };
+  const hits = [...ids(['likely']), ...ids(['possible'])].map(asAnswered);
   const unanswered = ids(['no_answer']);
   const checked = Object.values(verdicts).filter((v) => v !== 'no_answer').length;
 

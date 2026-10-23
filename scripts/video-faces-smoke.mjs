@@ -18,8 +18,8 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import {
-  CROP_MARGIN, MIN_FACE_PX, createTracker, cropBox, decodeFaces, faceQuality, formatVideoTime, frontalness,
-  iou, networkInput, sampleInterval, sampleTimes, scaleFaces, sharpness, suppress,
+  CROP_MARGIN, MAX_LOOKS_A_SECOND, MIN_FACE_PX, SMALL_MIN_FACE_PX, createTracker, cropBox, decodeFaces, faceQuality, formatVideoTime,
+  frontalness, iou, isSmallVideo, lookRate, minFaceFor, networkInput, sampleInterval, sampleTimes, scaleFaces, sharpness, suppress,
 } from '../web/src/video/faces.js';
 import { createSha256 } from '../web/src/video/sha256.js';
 import { compareFramesWithCase, frameVerdict } from '../shared/match-pipeline.js';
@@ -159,6 +159,12 @@ const face = (x, y, w = 60, extra = {}) => ({
 {
   check('times in a video read as people say them', formatVideoTime(7.9) === '0:07' && formatVideoTime(725) === '12:05' && formatVideoTime(3729) === '1:02:09');
   check('a short video is looked at often, a long one less', sampleInterval(20) === 0.25 && sampleInterval(3600) === 2 && sampleInterval(150) === 0.5);
+  check('a DVR second stream, D1 and VGA are small videos; HD and a phone video are not',
+    isSmallVideo(352, 288) && isSmallVideo(704, 576) && isSmallVideo(640, 480) && !isSmallVideo(1280, 720) && !isSmallVideo(1920, 1080) && !isSmallVideo(1080, 1920) && !isSmallVideo(0, 0));
+  check('a small video keeps faces down to 16 px, others 36', minFaceFor(352, 288) === SMALL_MIN_FACE_PX && minFaceFor(1920, 1080) === MIN_FACE_PX);
+  check('a smaller frame is looked at more often, up to 8 a second; HD as usual',
+    lookRate(2, 352, 288) === MAX_LOOKS_A_SECOND && lookRate(2, 960, 540) === 2 && lookRate(2, 1280, 720) === 2 && lookRate(1, 352, 288) === 5.11 && lookRate(2, 640, 360) === 4.5,
+    JSON.stringify([lookRate(2, 352, 288), lookRate(2, 960, 540), lookRate(1, 352, 288), lookRate(2, 640, 360)]));
   const times = sampleTimes(10, 1);
   check('looks start half a step in and stop before the end', times[0] === 0.5 && times.at(-1) === 9.5 && times.length === 10, times.join());
   check('a very short clip is still looked at', sampleTimes(0.3, 1).length === 1);

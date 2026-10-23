@@ -26,6 +26,62 @@ export const NMS_IOU = 0.3;
  */
 export const MIN_FACE_PX = 36;
 
+/**
+ * A small video: its shorter side is this many pixels or fewer, as a DVR's
+ * second stream (CIF, 352 x 288), D1 (704 x 576) or VGA. Every face in one is
+ * small, so three things change for it, measured on an office camera at
+ * 352 x 288 with faces 16 to 40 px wide (23 October 2026, four volunteers
+ * from the team and their own test cases):
+ *   - faces down to SMALL_MIN_FACE_PX are used: at MIN_FACE_PX almost no one
+ *     in that video was seen at all;
+ *   - the video is looked at more often (lookRate): a person passing for two
+ *     seconds is then seen in a dozen moments, not four;
+ *   - each person is checked with up to SMALL_VIDEO_PICTURES pictures, the
+ *     best answer counting: one picture of a small, blurred face can miss a
+ *     person whom a moment later matches clearly.
+ * Together they found a volunteer at 0.46 against their own photo (the line
+ * is 0.35) who had scored 0.34 at two looks a second and was never seen at
+ * 36 px. No stranger scored above 0.18.
+ */
+export const SMALL_VIDEO_SIDE = 576;
+
+/** The narrowest face used in a small video: the face finder's own floor. */
+export const SMALL_MIN_FACE_PX = 16;
+
+/** How many pictures of each person in a small video are checked. */
+export const SMALL_VIDEO_PICTURES = 3;
+
+/** The most looks a second at a video, however small. */
+export const MAX_LOOKS_A_SECOND = 8;
+
+/** The frame size the usual look rate is for: an HD frame searched at 960 px. */
+const USUAL_FRAME_PIXELS = 960 * 540;
+
+/** Whether a video of `width` x `height` pixels is small (SMALL_VIDEO_SIDE). */
+export function isSmallVideo(width, height) {
+  const side = Math.min(Number(width) || 0, Number(height) || 0);
+  return side > 0 && side <= SMALL_VIDEO_SIDE;
+}
+
+/** The narrowest face to use in a video of `width` x `height`. */
+export function minFaceFor(width, height) {
+  return isSmallVideo(width, height) ? SMALL_MIN_FACE_PX : MIN_FACE_PX;
+}
+
+/**
+ * How many times a second to look at a video whose frames are searched at
+ * `width` x `height`: `usual` for an HD frame, and more for a smaller one so
+ * that the work stays about the same (a frame a quarter the size is looked at
+ * four times as often), up to MAX_LOOKS_A_SECOND. Reading the office camera
+ * above at 8 looks a second took 33 seconds for 15 minutes of video.
+ */
+export function lookRate(usual, width, height) {
+  const base = Number(usual) > 0 ? Number(usual) : 2;
+  const pixels = Math.max(1, (Number(width) || 0) * (Number(height) || 0));
+  const scaled = Math.floor(base * (USUAL_FRAME_PIXELS / pixels) * 100) / 100;
+  return Math.max(base, Math.min(MAX_LOOKS_A_SECOND, scaled));
+}
+
 /** The side of a face picture made from a frame, in pixels. */
 export const CROP_SIDE = 360;
 
