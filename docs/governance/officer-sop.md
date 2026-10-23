@@ -340,6 +340,38 @@ out: signing out deletes everything on the laptop.
 A face once marked "Same person" cannot be taken back on the laptop. If it was wrong, review the
 sighting on khozo.org.
 
+**Seen within 10 seconds.** Under a face you have marked, the laptop shows the people seen on the
+same camera within ten seconds. Being nearby does not mean they were together, and Khozo does not
+search for them. Note what you see in the case diary as you would any other observation.
+
+**An old photo.** If the case photo is years old, the laptop says so: close matches are less
+likely. Look through "Everyone seen" as well as "Look at these first".
+
+**Many clips from the public.** Add them all to one check, and press "Use this place for all
+videos" when they come from one place.
+
+**The route.** On the case page on khozo.org, "Route from CCTV" shows every moment sent to the
+case from a CCTV check, in time order, from every laptop, with the cameras on a simple drawing.
+A moment the case officer turns down on review leaves the route.
+
+## 17. Footage against open cases (Khozo Desktop)
+
+Only when your nodal officer says it is switched on. For footage from a busy place, such as a
+station or a bus stand, when you are not looking for one person.
+
+1. Press **Check footage against open cases**. Choose who to search for: sex, age today, a
+   district, when they went missing. The screen says how many open cases that is. Fewer limits
+   search more cases.
+2. Add the videos and their camera places, as in section 16, and start.
+3. A face is shown only when both face engines find it very close to a case. A case you can see
+   comes with its photo: compare the faces and play the video at that moment, then press
+   **Same person: send to the case** or **Not this person**.
+4. A case outside your area is not named to you. If you send the face, that case's own officers
+   look at it and decide. You are told only that it was sent. Press **Do not send** if the face
+   is unclear.
+5. Every result is a lead, not an identification. Never detain, question or tell anyone on a
+   match alone.
+
 ### Annex A — Verification record
 
 | Field | Entry |

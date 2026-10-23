@@ -133,6 +133,20 @@ roles only, for an open, verified case they can open. The video stays on the lap
 | Decide | "Same person": the face picture and the whole frame. "Not this person": nothing but the decision | `POST .../decisions` | "Same person" becomes a police sighting of the case, waiting for review, kept as any sighting (Flow C); "not" is counted for false alarms | As a sighting; the case's officers are alerted |
 | Anonymise | When the case is anonymised, its checks lose file names, recording times and scores; the counts stay | `shared/retention.js` | — | — |
 
+### Flow H3 — Footage against open cases (Khozo Desktop, `shared/open-case-checks.js`)
+
+For footage from a busy place with no one case: a railway station, a bus stand. **Off** unless
+`KHOZO_DESKTOP_OPEN_CASES` is on, which waits on Aarakshak's written permission to use its gallery
+live (A3) and the legal advice in the desktop specification (section 16). Police roles only.
+
+| Step | Data | Goes to | Stored | Who can see it |
+|---|---|---|---|---|
+| Narrow | The officer chooses sex, an age band, a district and when the person went missing; Khozo says how many open cases that is. District desks search their state (`KHOZO_DESKTOP_OPEN_CASES_AREA=district`: their district); state desks their state | `reports.js` `GET /open-case-checks/cases` | — | The officer |
+| Read | As Flow H2. No case photo and no case template is on the laptop | The officer's laptop | As Flow H2 | The officer |
+| Search | Each person's clearest face, one a request, up to 600 a video and 5,000 a check | `POST /open-case-checks/:jobId/faces`: Aarakshak's index (50 closest), then the closest five of the officer's chosen cases compared pairwise by Aarakshak and Rekognition | **No picture is kept.** A face is shown only when the case is in the index's five closest **and** Aarakshak is at least 0.45 **and** Rekognition at least 0.90. The check keeps each face's moment and answer, and for each such face the case and both scores **until the check is closed**; then the case alone | The officer sees a case only if they can open it; for any other case, only that one exists |
+| Send | "Send to the case": the face picture and the whole frame | `POST /open-case-checks/:jobId/leads/:leadId` | A police sighting of that case, waiting for its officers' review (Flow C); an officer who cannot open the case is told only "sent" | That case's officers, who are alerted |
+| Audit | One row per face searched, on the officer's place, naming no case; one row per face close to a case, on that case's place | `addAudit` | As the audit log | Audit readers of each place |
+
 ## 4. Necessity and proportionality
 
 | Question | Answer |
@@ -164,6 +178,8 @@ L = likelihood, S = severity (Low, Medium, High), before the controls.
 | R13 | **Audit log tampering or loss.** | L | M | UPDATE and DELETE blocked by a trigger (`001_schema.sql:194-203`); the hash chain detects edited and deleted rows and counts concurrent branches (`shared/audit-chain.js`); a gap can only be acknowledged in the log itself. | Low to medium. TRUNCATE, or a database owner dropping the trigger, is not blocked. Gaps since 1 Aug 2026 have been acknowledged (`shared/audit-chain.js` header). |
 | R14 | **Outage** during a live search. | M | H | Writes are flushed before the response is sent (`worker/index.js`). | Medium. [Confirm the Cloudflare plan; CPU-limit errors (HTTP 503) have been seen.] |
 | R15 | **Bystanders in CCTV.** Searching a camera recording compares the faces of everyone in it, none of whom is missing, and could be turned to finding someone who is not missing. | M | H | The video stays on the officer's computer; each face is compared with one case's photo only, never searched across cases or kept (`shared/routes/reports.js` `POST /:id/video-search`); police roles only, for open, verified cases; the camera's place is required; every request is audited with the file's fingerprint (`case.video_searched`); at most 300 faces a search, 5 a request, 200 requests a quarter-hour an officer. Khozo Desktop (Flow H2) reads far longer footage, so it allows up to 5,000 faces a check; with Aarakshak's model on the laptop only the faces closest to the case's photo are sent, usually a few dozen a video. The faces found stay encrypted on the officer's laptop until the job is deleted, the officer signs out, or 30 days pass. | Medium. The same gap as R3: nothing stops an officer registering a person who is not missing and then searching footage for them. The monthly audit review must read `case.video_searched` rows against open cases. Faces are sent to Aarakshak and Rekognition under the existing agreements; [confirm both agreements cover faces of people who are not in any case]. |
+
+| R16 | **Searching passers-by across every open case.** A check against open cases (Flow H3) compares each face in a busy place's footage with hundreds of cases: many more chances of a false alarm, and a tool that could be turned to finding anyone in the index. | M | H | Off unless switched on after Aarakshak's permission and legal advice; police roles only; the officer narrows the cases first; a face is shown only above a higher bar than a one-case check (index top five, Aarakshak 0.45 and Rekognition 0.90, "possible" never shown); a case outside the officer's area is never named to them, and the face goes to that case's own officers to look at; each face searched and each face close to a case is audited, the latter on the case's own place; 5,000 faces a check; nothing about the people searched is kept but their moment and answer. | Medium to high until measured. The false-alarm rate per hour of footage is not known until Phase 1's checks are counted (`/app/cctv-checks`) and the solved-case calibration (spec Phase 0) is done. The bar should be set from those numbers before the switch is turned on. |
 
 ## 6. Controls that exist today
 
