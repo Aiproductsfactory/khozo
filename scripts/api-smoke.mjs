@@ -2103,6 +2103,25 @@ async function videoChecks({ superAdmin, sjpu, cwc, parent, fake }) {
   const caseAfter = (await request('GET', `/reports/${id}`, { token: superAdmin.token })).report;
   assert(!caseAfter.extraPhotos?.length && caseAfter.status === target.report.status, 'a video search should not change the case');
 
+  // A case with a second photo: a face that matches only the second is still
+  // found, and the audit says which photo matched.
+  const twoPhotos = await request('POST', '/reports', {
+    token: sjpu.token,
+    form: caseForm({ childName: 'Video Two Photos', parentPhone: '9876500804' }, facePhotoFile('VIDEO_TWO_A', 'case')),
+  });
+  const extraForm = new FormData();
+  extraForm.append('extraPhotos', facePhotoFile('VIDEO_TWO_B', 'case'));
+  const second = await request('POST', `/reports/${twoPhotos.report.id}/photos`, { token: sjpu.token, form: extraForm });
+  const secondId = second.report.extraPhotos?.[0]?.id;
+  const both = await request('POST', `/reports/${twoPhotos.report.id}/video-search`, {
+    token: sjpu.token,
+    form: searchForm([facePhotoFile('VIDEO_TWO_B', 'sighting'), facePhotoFile('VIDEO_TWO_A', 'sighting'), facePhotoFile('VIDEO_STRANGER', 'sighting')]),
+  });
+  assert(both.results.map((r) => r.verdict).join() === 'possible,possible,unlikely', `a face matching any of the case's photos should be found: ${JSON.stringify(both.results)}`);
+  const bothAudit = (await request('GET', '/dashboard/audit', { token: superAdmin.token })).audit.find((row) => row.action === 'case.video_searched' && row.targetId === twoPhotos.report.id);
+  assert(bothAudit?.metadata?.comparedWith?.length === 2 && bothAudit.metadata.faces[0].photo === secondId && bothAudit.metadata.faces[1].photo === 'main',
+    `the audit should say which case photo each face matched: ${JSON.stringify(bothAudit?.metadata)}`);
+
   // An engine outage: the faces are "not checked", to send again.
   fake.down = true;
   const down = await request('POST', route, { token: sjpu.token, form: searchForm([facePhotoFile('VIDEO_TARGET', 'sighting')]) });

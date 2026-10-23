@@ -24,6 +24,20 @@ export const VIDEO_SEARCH_BATCH = 5;
 export const VIDEO_SEARCH_MAX_FACES = 300;
 
 /**
+ * A small video: its shorter side is this many pixels or fewer, as a DVR's
+ * second stream (CIF, 352 x 288), D1 (704 x 576) or VGA. Every face in one is
+ * small; web/src/video/faces.js says how such a video is read, and its faces
+ * are put to both face engines (shared/match-pipeline.js compareFramesWithCase).
+ */
+export const SMALL_VIDEO_SIDE = 576;
+
+/** Whether a video of `width` x `height` pixels is small (SMALL_VIDEO_SIDE). */
+export function isSmallVideo(width, height) {
+  const side = Math.min(Number(width) || 0, Number(height) || 0);
+  return side > 0 && side <= SMALL_VIDEO_SIDE;
+}
+
+/**
  * What the engines said about each face (shared/match-pipeline.js
  * frameVerdict), from most to least worth an officer's time.
  */
@@ -43,6 +57,8 @@ export const VIDEO_SEARCH_FIELDS = {
   facesFound: 'number',
   facesTooSmall: 'number',
   times: ['text', 200],
+  // 1 when the faces are from a small video (isSmallVideo): both engines are asked.
+  smallVideo: 'number',
 };
 
 const SEARCH_ID = /^vs_[A-Za-z0-9_-]{6,32}$/;
@@ -84,6 +100,7 @@ export function videoSearchRecord(body = {}) {
     facesFound: count(body.facesFound),
     facesTooSmall: count(body.facesTooSmall),
     times,
+    smallVideo: count(body.smallVideo) === 1,
   };
 }
 

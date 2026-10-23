@@ -670,8 +670,11 @@ export async function screenPhoto(photoBuf, { aarakshak, rekognition }) {
  *   possible    one engine says so: Aarakshak, with Rekognition not set up or
  *               not answering (the "not checked" lane), or Rekognition alone
  *               at its confirmation bar where Aarakshak had no answer
- *   not_agreed  Aarakshak said so and Rekognition looked and did not agree:
- *               withheld, exactly as a sighting's candidate would be
+ *   not_agreed  one engine said so and the other looked and did not agree:
+ *               Aarakshak at its line and Rekognition below its bar (withheld,
+ *               as a sighting's candidate would be), or, for a face from a
+ *               small video, where both are asked (compareFramesWithCase
+ *               `askBoth`), Rekognition at its bar and Aarakshak below its line
  *   unlikely    the engines that answered put it below their line
  *   no_face     no engine found a face in the picture to compare
  *   no_answer   no engine answered: worth sending again
@@ -685,7 +688,7 @@ export function frameVerdict(aarakshak, rekognition, { reviewThreshold, confirmT
   const rScore = r.status === 'answered' ? rounded(r.score) : null;
   const out = (verdict) => ({ verdict, aarakshakScore: aScore, rekognitionScore: rScore, ...engineRecord(a, r) });
   if (aScore != null) {
-    if (aScore < reviewThreshold) return out('unlikely');
+    if (aScore < reviewThreshold) return out(rScore != null && rScore >= confirmThreshold ? 'not_agreed' : 'unlikely');
     if (rScore != null) return out(rScore >= confirmThreshold ? 'likely' : 'not_agreed');
     return out('possible');
   }
@@ -708,12 +711,16 @@ export function frameVerdict(aarakshak, rekognition, { reviewThreshold, confirmT
  * Resolves to `[{ id, verdict, aarakshakScore, rekognitionScore, engines,
  * enginesAnswered }]` in the order given. Nothing is kept.
  */
-export async function compareFramesWithCase({ casePhotoBuf, frames, providers, reviewThreshold, confirmThreshold = 0.8, concurrency = 5 }) {
+export async function compareFramesWithCase({ casePhotoBuf, frames, providers, reviewThreshold, confirmThreshold = 0.8, concurrency = 5, askBoth = false }) {
   const { aarakshak, rekognition } = providers;
   return mapLimit(frames, concurrency, async (frame) => {
     const pair = orient('forward', frame.buffer, casePhotoBuf);
     const a = aarakshak.ready ? answer(await aarakshak.compare(...pair)) : { status: 'not_configured' };
-    const askSecond = rekognition.ready && (a.status !== 'answered' || rounded(a.score) >= reviewThreshold);
+    // A face from a small video (`askBoth`) is put to both engines: there
+    // Aarakshak scores the person low where Rekognition still sees them (an
+    // office camera at 352 x 288, 23 Oct 2026: four volunteers, Rekognition
+    // 82 to 97 on each against 24 at most for anyone else, Aarakshak 0.10 to 0.46).
+    const askSecond = rekognition.ready && (askBoth || a.status !== 'answered' || rounded(a.score) >= reviewThreshold);
     const r = askSecond
       ? answer(await rekognition.compare(...pair))
       : { status: rekognition.ready ? 'not_asked' : 'not_configured' };

@@ -420,7 +420,7 @@ export async function rankSightingMatches(casePhotoBuf, hints = {}, source = {})
  * POST /reports/:id/video-search. See worker/src/match.js for the Worker
  * build and shared/match-pipeline.js compareFramesWithCase for the rules.
  */
-export async function compareFramesWithCase(casePhotoBuf, frames, { reviewThreshold } = {}) {
+export async function compareFramesWithCase(casePhotoBuf, frames, { reviewThreshold, askBoth = false } = {}) {
   const cfg = config();
   const providers = providersFor(cfg);
   const engines = { aarakshak: providers.aarakshak.ready, rekognition: providers.rekognition.ready };
@@ -432,6 +432,7 @@ export async function compareFramesWithCase(casePhotoBuf, frames, { reviewThresh
     reviewThreshold: Number(reviewThreshold),
     confirmThreshold: cfg.confirmThreshold,
     concurrency: cfg.concurrency,
+    askBoth,
   });
   return { results, engines };
 }

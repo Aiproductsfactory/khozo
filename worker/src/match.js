@@ -460,9 +460,10 @@ export async function rankSightingMatches(env, casePhotoBuf, hints = {}, source 
  * (shared/match-pipeline.js compareFramesWithCase): POST
  * /reports/:id/video-search. `frames` is `[{ id, buffer }]`, at most five a
  * request, so a request stays well inside the Worker's outbound-call limit:
- * five Aarakshak calls and at most five Rekognition calls.
+ * five Aarakshak calls and at most five Rekognition calls for each case photo
+ * compared (shared/routes/reports.js compares up to three).
  */
-export async function compareFramesWithCase(env, casePhotoBuf, frames, { reviewThreshold } = {}) {
+export async function compareFramesWithCase(env, casePhotoBuf, frames, { reviewThreshold, askBoth = false } = {}) {
   const cfg = config(env);
   const providers = providersFor(env, cfg);
   const engines = { aarakshak: providers.aarakshak.ready, rekognition: providers.rekognition.ready };
@@ -474,6 +475,7 @@ export async function compareFramesWithCase(env, casePhotoBuf, frames, { reviewT
     reviewThreshold: Number(reviewThreshold),
     confirmThreshold: cfg.confirmThreshold,
     concurrency: cfg.concurrency,
+    askBoth,
   });
   return { results, engines };
 }

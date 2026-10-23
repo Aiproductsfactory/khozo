@@ -26,7 +26,7 @@ import { createSightingMatcher, engineRecordOf, engineSummary, evidenceOf, isRev
 import { detectImageMime } from '../photo-format.js';
 import {
   MAIN_PHOTO, MAX_CASE_PHOTOS, MAX_SIGHTING_PHOTOS, TOO_MANY_PHOTOS,
-  extraPhotoKey, extraPhotoUrl, extraPhotosOf, extraPhotosView, isBadFacePhoto, isExtraPhotoId, leadPhotoOf, photoCountOf,
+  extraPhotoKey, extraPhotoUrl, extraPhotosOf, extraPhotosView, isBadFacePhoto, isExtraPhotoId, leadPhotoOf, photoCountOf, photosOf,
 } from '../photo-set.js';
 import { sendSms, smsGatewayConfigured } from '../sms.js';
 import { STATION_OUTCOMES, alertPhones, canSeeStationAlert, stationAlertSentTo, escalateStationAlert, stationAlertOpen, stationAlertWords, stationDeskOf, stationDesksFor, stationName } from '../station-alerts.js';
@@ -3844,13 +3844,61 @@ export default function registerReportRoutes(router, deps) {
     return null;
   }
 
+  /** The most photos of a case that one face from a video is compared with. */
+  const VIDEO_CASE_PHOTOS = 3;
+
+  /**
+   * The case's photos a face from a video is compared with, read into memory:
+   * the lead photo first, then the others with one face, VIDEO_CASE_PHOTOS at
+   * most. A face in CCTV may match a family's second photo, closer or from
+   * another side, when it does not match the first.
+   */
+  async function videoCasePhotos(r) {
+    const lead = leadPhotoOf(r);
+    const rest = photosOf(r).filter((p) => p.id !== lead?.id && !isBadFacePhoto(p));
+    const out = [];
+    for (const photo of [lead, ...rest].filter((p) => p?.file).slice(0, VIDEO_CASE_PHOTOS)) {
+      const buffer = await Promise.resolve(readPhoto(photo.file)).catch(() => null);
+      if (buffer?.length) out.push({ id: photo.id, buffer });
+    }
+    return out;
+  }
+
+  /**
+   * Each face compared with each of the case's photos, keeping its best answer
+   * (FRAME_VERDICTS order, then Aarakshak's score); a face already "likely"
+   * is not compared again. As compareFramesWithCase, with each result's
+   * `photo`, the case photo that gave it, in the order of `frames`. `askBoth`:
+   * the faces are from a small video, so both engines are asked about each.
+   */
+  async function compareWithCasePhotos(casePhotos, frames, { askBoth = false } = {}) {
+    const rank = (v) => FRAME_VERDICTS.indexOf(v);
+    const best = new Map();
+    let engines = null;
+    for (const photo of casePhotos) {
+      const todo = frames.filter((f) => best.get(f.id)?.verdict !== 'likely');
+      if (!todo.length) break;
+      const got = await compareFramesWithCase(photo.buffer, todo, { reviewThreshold: MATCH_REVIEW_THRESHOLD, askBoth });
+      engines = {
+        aarakshak: Boolean(engines?.aarakshak || got.engines?.aarakshak),
+        rekognition: Boolean(engines?.rekognition || got.engines?.rekognition),
+      };
+      for (const result of got.results || []) {
+        const have = best.get(result.id);
+        const better = !have || rank(result.verdict) < rank(have.verdict)
+          || (rank(result.verdict) === rank(have.verdict) && (result.aarakshakScore ?? -1) > (have.aarakshakScore ?? -1));
+        if (better) best.set(result.id, { ...result, photo: photo.id });
+      }
+    }
+    return { results: frames.map((f) => best.get(f.id)).filter(Boolean), engines: engines || {} };
+  }
+
   router.post('/:id/video-search', protectedRoute, requireRole(...POLICE_ROLES), videoSearchLimit, upload.single('photo'), async (req, res) => {
     const r = findReport(req.params.id);
     if (!r) return res.status(404).json({ error: 'Report not found' });
     if (!canAccessReport(req.user, r)) return res.status(403).json({ error: 'This report is outside your area' });
     const problem = videoCaseProblem(r);
     if (problem) return res.status(problem.status).json({ error: problem.error });
-    const lead = leadPhotoOf(r);
     if (typeof compareFramesWithCase !== 'function') {
       return res.status(501).json({ error: 'Searching a video is not available here' });
     }
@@ -3870,14 +3918,10 @@ export default function registerReportRoutes(router, deps) {
       if (error) return res.status(error === PHOTO_TOO_LARGE ? 413 : 400).json({ error });
     }
 
-    const casePhoto = await Promise.resolve(readPhoto(lead.file)).catch(() => null);
-    if (!casePhoto?.length) return res.status(409).json({ error: 'The case photo could not be read' });
+    const casePhotos = await videoCasePhotos(r);
+    if (!casePhotos.length) return res.status(409).json({ error: 'The case photo could not be read' });
 
-    const { results, engines } = await compareFramesWithCase(
-      casePhoto,
-      files.map((file, i) => ({ id: i, buffer: file.buffer })),
-      { reviewThreshold: MATCH_REVIEW_THRESHOLD },
-    );
+    const { results, engines } = await compareWithCasePhotos(casePhotos, files.map((file, i) => ({ id: i, buffer: file.buffer })), { askBoth: record.smallVideo });
     if (!engines?.aarakshak && !engines?.rekognition) {
       return res.status(503).json({ error: 'No face engine is set up, so the faces could not be compared' });
     }
@@ -3895,14 +3939,15 @@ export default function registerReportRoutes(router, deps) {
       scope: { state: r.state, district: r.district, reportId: r.id },
       metadata: {
         ...record,
-        comparedWith: lead.id,
+        comparedWith: casePhotos.map((p) => p.id),
         counts,
-        // What each picture scored, by its time in the video; no picture is kept.
+        // What each picture scored, by its time in the video, and which case photo gave it; no picture is kept.
         faces: results.map((result, i) => ({
           t: record.times[i] ?? null,
           verdict: result.verdict,
           aarakshak: result.aarakshakScore ?? null,
           rekognition: result.rekognitionScore ?? null,
+          photo: result.photo ?? null,
         })),
       },
     });
@@ -3989,8 +4034,9 @@ export default function registerReportRoutes(router, deps) {
    * desk that sent it has already looked, and no other desk needs telling that
    * a case may have been seen.
    */
-  async function addVideoSighting(req, { id, r, job, file, t, seenAt, verdict, aarakshak, rekognition, closeness = null, point, extras, note, activity, audit, alert, from = {} }) {
-    const lead = leadPhotoOf(r);
+  async function addVideoSighting(req, { id, r, job, file, t, seenAt, verdict, aarakshak, rekognition, closeness = null, casePhoto = null, point, extras, note, activity, audit, alert, from = {} }) {
+    // The case photo the engines matched (compareWithCasePhotos), or the lead photo.
+    const lead = (casePhoto && photosOf(r).find((p) => p.id === casePhoto)) || leadPhotoOf(r);
     const candidate = storedCandidate({
       reportId: r.id,
       score: aarakshak ?? 0,
@@ -4216,15 +4262,12 @@ export default function registerReportRoutes(router, deps) {
     if (facesSent(job) + newPeople > jobFaceBudget) {
       return res.status(409).json({ error: `This check has sent the ${jobFaceBudget} faces one check may send. Check a shorter time.`, code: 'face_budget' });
     }
-    const lead = leadPhotoOf(r);
-    const casePhoto = await Promise.resolve(readPhoto(lead.file)).catch(() => null);
-    if (!casePhoto?.length) return res.status(409).json({ error: 'The case photo could not be read' });
+    const casePhotos = await videoCasePhotos(r);
+    if (!casePhotos.length) return res.status(409).json({ error: 'The case photo could not be read' });
 
-    const { results, engines } = await compareFramesWithCase(
-      casePhoto,
-      pictures.map((picture, i) => ({ id: i, buffer: picture.buffer })),
-      { reviewThreshold: MATCH_REVIEW_THRESHOLD },
-    );
+    // Faces from a small video are put to both engines (compareWithCasePhotos).
+    const smallVideo = String(b.smallVideo || '') === '1';
+    const { results, engines } = await compareWithCasePhotos(casePhotos, pictures.map((picture, i) => ({ id: i, buffer: picture.buffer })), { askBoth: smallVideo });
     if (!engines?.aarakshak && !engines?.rekognition) {
       return res.status(503).json({ error: 'No face engine is set up, so the faces could not be compared' });
     }
@@ -4236,6 +4279,7 @@ export default function registerReportRoutes(router, deps) {
       aarakshak: result.aarakshakScore ?? null,
       rekognition: result.rekognitionScore ?? null,
       engines: result.enginesAnswered || [],
+      photo: result.photo ?? null,
     }));
     // One face per person, with the best of its pictures' answers.
     const rank = (v) => FRAME_VERDICTS.indexOf(v);
@@ -4271,7 +4315,8 @@ export default function registerReportRoutes(router, deps) {
           videoSha256: file.sha256,
           cameraPlace: file.cameraPlace,
           recordedFrom: file.recordedFrom,
-          comparedWith: lead.id,
+          comparedWith: casePhotos.map((p) => p.id),
+          smallVideo,
           counts,
           // What each person was found to be, by their time in the video. The
           // scores stay with the check until it is closed; no picture is kept.
@@ -4411,7 +4456,7 @@ export default function registerReportRoutes(router, deps) {
       } else {
         const when = seenAt ? new Date(seenAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'medium' }) : null;
         const fr = await addVideoSighting(req, {
-          id, r, job, file, t, seenAt, verdict, aarakshak, rekognition, closeness, point, extras: extras.extras,
+          id, r, job, file, t, seenAt, verdict, aarakshak, rekognition, closeness, casePhoto: recorded?.photo ?? null, point, extras: extras.extras,
           note: `Seen on a CCTV camera at ${file.cameraPlace}${when ? `, ${when}` : ''}, ${videoTimeText(t)} into the video${file.name ? ` "${file.name}"` : ''}. An officer looked at the face and the video on Khozo Desktop and marked it as the same person. A lead, not an identification.`,
           activity: 'Marked a face from a CCTV check as the missing person',
           audit: {
