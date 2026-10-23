@@ -119,6 +119,20 @@ function jobProgressChip(j) {
   return `<span class="chip ${esc(j.status)}">${esc(statusWords(j.status))}</span>`;
 }
 
+/** A newer Khozo Desktop, when Khozo says one is out (main.js updates). */
+function updateBanner() {
+  const u = S.state?.update;
+  if (!u) return '';
+  const head = `<strong>${esc(t('update.ready', { version: u.version }))}</strong>${u.notes ? `<br><span class="small">${esc(u.notes)}</span>` : ''}`;
+  let action = '';
+  if (!u.canDownload) action = `<p class="small">${esc(t('update.askNodal'))}</p>`;
+  else if (u.stage === 'available') action = `<p><button class="btn primary" data-act="update-download" id="update-download">${esc(t('update.download'))}</button></p>`;
+  else if (u.stage === 'downloading') action = `<p class="small" id="update-progress">${esc(t('update.downloading', { n: Math.round((u.progress || 0) * 100) }))}</p>`;
+  else if (u.stage === 'ready') action = `<p class="small">${esc(t('update.checked'))}</p><p><button class="btn green" data-act="update-install" id="update-install">${esc(t('update.install'))}</button></p>`;
+  else if (u.stage === 'failed') action = `<p class="error">${esc(u.error || '')}</p><p><button class="btn" data-act="update-download" id="update-download">${esc(t('update.retry'))}</button></p>`;
+  return `<div class="info" role="status" id="update-banner">${head}${action}</div>`;
+}
+
 function renderHome() {
   const model = S.state?.model;
   const cards = S.jobs.map((j) => `
@@ -138,6 +152,7 @@ function renderHome() {
       </div>
     </div>`).join('');
   app.innerHTML = `${header()}<main>
+    ${updateBanner()}
     ${S.state?.canCheck ? `<p><button class="btn primary big" data-act="new">${esc(t('home.new'))}</button></p>` : `<div class="error">${esc(t('home.cannotCheck'))}</div>`}
     <h2>${esc(t('home.title'))}</h2>
     <div class="jobs">${cards || `<p class="quiet">${esc(t('home.empty'))}</p>`}</div>
@@ -593,6 +608,17 @@ const actions = {
   async open(el) { await showJob(el.dataset.id); },
   async pause(el) { await k.pauseJob(el.dataset.id); },
   async resume(el) { await k.startJob(el.dataset.id); },
+  async 'update-download'() {
+    const result = await k.downloadUpdate();
+    if (result?.error) window.alert(result.error);
+    S.state = await k.state();
+    if (S.screen === 'home') render();
+  },
+  async 'update-install'() {
+    if (!window.confirm(t('update.confirm'))) return;
+    const result = await k.installUpdate();
+    if (result?.error) window.alert(result.error);
+  },
   async remove(el) {
     const { unsent = 0 } = (await k.syncNow(el.dataset.id).catch(() => null)) || {};
     if (!window.confirm(unsent ? t('home.deleteUnsent', { n: unsent }) : t('home.deleteConfirm'))) return;
@@ -691,6 +717,12 @@ document.addEventListener('input', (e) => {
   } else if (el.dataset.input === 'from' || el.dataset.input === 'to') {
     S.nc[el.dataset.input] = el.value;
   }
+});
+
+// A newer version is out, or its download moved on: the home screen shows it.
+k.onUpdateChanged(async () => {
+  S.state = await k.state();
+  if (S.screen === 'home') render();
 });
 
 // Khozo ended the sign-in while the app was working: sign in again; the checks are kept.

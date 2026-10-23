@@ -7,6 +7,7 @@
 // frames and clips reach them through the khozo:// scheme, decrypted or made
 // on demand and never written to disk. The officer's sign-in token stays in
 // this process, encrypted by Windows for this user account.
+import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -20,6 +21,7 @@ import { createJobs } from './jobs.js';
 import { canSearchCase, VIDEO_ROLES } from './roles.js';
 import { loadKey, secureFiles } from './secure-store.js';
 import { runSmoke } from './smoke.js';
+import { createUpdates } from './updates.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const API = process.env.KHOZO_API || 'https://khozo.org/api';
@@ -179,6 +181,34 @@ function openSession() {
   jobs.sweep(30);
   jobs.resumeInterrupted();
   syncSoon();
+  watchUpdates();
+}
+
+// A newer Khozo Desktop (updates.js): asked at sign-in, then twice a day.
+let updates = null;
+let updateTimer = null;
+function watchUpdates() {
+  clearInterval(updateTimer);
+  updates = createUpdates({
+    getClient: () => client,
+    currentVersion: app.getVersion(),
+    downloadsDir: path.join(app.getPath('temp'), 'khozo-desktop-updates'),
+    onChange: () => { if (win && !win.isDestroyed()) win.webContents.send('update:changed'); },
+    log,
+    launch: (file) => {
+      // For trying a release before it goes out: fetched and checked, not run.
+      if (process.env.KHOZO_UPDATE_DRY_RUN) {
+        log(`Would install ${file}`);
+        return { dryRun: true };
+      }
+      // The installer replaces this app; the jobs carry on when it opens again.
+      spawn(file, [], { detached: true, stdio: 'ignore' }).unref();
+      setTimeout(() => app.quit(), 500);
+      return { started: true };
+    },
+  });
+  updates.check();
+  updateTimer = setInterval(() => updates?.check(), 12 * 3600 * 1000);
 }
 
 // Decisions and progress Khozo could not take wait on the laptop and go
@@ -202,6 +232,8 @@ function closeSession({ deleteJobs = false } = {}) {
     if (deleteJobs) jobs.removeAll();
   }
   clearInterval(syncTimer);
+  clearInterval(updateTimer);
+  updates = null;
   jobs = null;
   client = null;
   session = null;
@@ -254,6 +286,7 @@ function registerBridge() {
     // Officers see whose model it is, not its internal version (that is in the log).
     model: model ? { label: model.provider || 'Aarakshak' } : null,
     language: settings.language,
+    update: updates?.view() || null,
     api: API,
     dataFolder: app.getPath('userData'),
   }));
@@ -351,6 +384,15 @@ function registerBridge() {
   handle('jobs:start', (id) => needJobs().start(id));
   handle('jobs:pause', (id) => needJobs().pause(id));
   handle('jobs:remove', (id) => { needJobs().remove(id); return { ok: true }; });
+  handle('update:download', async () => {
+    if (!updates) throw new KhozoError('Sign in first', 401);
+    return updates.download();
+  });
+  handle('update:install', () => {
+    if (!updates) throw new KhozoError('Sign in first', 401);
+    return updates.install();
+  });
+
   // Before signing out or deleting a job: send what is waiting, and say what still is.
   handle('jobs:syncNow', async (id = null) => {
     const j = needJobs();

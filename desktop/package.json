@@ -1,7 +1,7 @@
 {
   "name": "khozo-desktop",
   "productName": "Khozo Desktop",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "type": "module",
   "description": "Khozo on the officer's laptop: long CCTV footage checked where it is, only face pictures sent",
@@ -15,10 +15,11 @@
   "scripts": {
     "scan": "node bin/scan.mjs",
     "compare": "node bin/compare.mjs",
-    "test": "node test/smoke.mjs && node test/jobs.mjs",
+    "test": "node test/smoke.mjs && node test/jobs.mjs && node test/updates.mjs",
     "build:app": "node build/build.mjs",
     "start": "node build/build.mjs && electron .",
-    "dist": "node build/build.mjs && electron-builder --win nsis --x64"
+    "dist": "node build/build.mjs && electron-builder --win nsis --x64",
+    "dist:signed": "node build/sign.mjs"
   },
   "dependencies": {
     "ffmpeg-static": "^5.2.0",

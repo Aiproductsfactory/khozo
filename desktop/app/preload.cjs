@@ -20,8 +20,15 @@ contextBridge.exposeInMainWorld('khozo', {
   pauseJob: ask('jobs:pause'),
   removeJob: ask('jobs:remove'),
   syncNow: ask('jobs:syncNow'),
+  downloadUpdate: ask('update:download'),
+  installUpdate: ask('update:install'),
   decide: ask('jobs:decide'),
   clip: ask('jobs:clip'),
+  onUpdateChanged: (fn) => {
+    const listener = () => fn();
+    ipcRenderer.on('update:changed', listener);
+    return () => ipcRenderer.removeListener('update:changed', listener);
+  },
   onSessionEnded: (fn) => {
     const listener = () => fn();
     ipcRenderer.on('session:ended', listener);

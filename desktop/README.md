@@ -69,7 +69,25 @@ KHOZO_FACE_MODEL=<path to the private card> npm run dist
 
 This writes `release/Khozo-Desktop-Setup-<version>.exe`, a per-user install that needs no administrator rights. With `KHOZO_FACE_MODEL` set, Aarakshak's model is inside the installer, so **give the installer out privately (pen drive, private link), never publicly**. Without it, the app sends every face to Khozo, the clearest 600 per video.
 
-The installer is not code-signed yet, so Windows SmartScreen warns on first run ("More info", then "Run anyway").
+Unsigned, Windows SmartScreen warns on first run ("More info", then "Run anyway"). To sign it:
+
+```sh
+KHOZO_FACE_MODEL=<card> KHOZO_SIGN_PFX=<certificate.pfx> KHOZO_SIGN_PASSWORD=<its password> npm run dist:signed
+KHOZO_FACE_MODEL=<card> KHOZO_SIGN_THUMBPRINT=<certificate thumbprint> npm run dist:signed   # a certificate on a USB token
+```
+
+`build/sign.mjs` signs the program, makes the installer from the signed program, signs the installer, and checks both, with Windows' own `Set-AuthenticodeSignature`. SmartScreen stops warning only with a code-signing certificate from a public certificate authority, issued to the organisation that gives the app out; a self-made certificate signs, but Windows does not trust it. `KHOZO_SIGN_TIMESTAMP` sets the time-stamping server (DigiCert's by default; `none` to sign without one).
+
+### Giving out a new version
+
+The app asks Khozo for the newest version at sign-in and twice a day (`GET /api/dashboard/desktop-version`), and shows it on its home screen. Set these on the Worker (`npx wrangler secret put <NAME>`):
+
+- `KHOZO_DESKTOP_LATEST_VERSION`: the new version, for example `0.2.3`.
+- `KHOZO_DESKTOP_LATEST_SHA256`: the installer's SHA-256 (the `.sha256.txt` written beside it). The app installs nothing that does not match it.
+- `KHOZO_DESKTOP_DOWNLOAD_URL` (optional): an `https` link the app can download the installer from. Keep it private: the installer holds Aarakshak's model. Without a link, the app tells the officer to ask their nodal officer for the new version.
+- `KHOZO_DESKTOP_LATEST_NOTES` (optional): one line on what changed.
+
+With a link, the officer presses "Download the new version"; the app fetches it, checks its fingerprint, and on "Close Khozo Desktop and install" runs it. Checks on the laptop are kept and carry on afterwards.
 
 ### Checking a build end to end
 
