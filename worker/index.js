@@ -22,7 +22,7 @@ import {
   clientIp,
   fixedWindowRateLimit,
 } from './src/http/express-compat.js';
-import { createRequestStore, tablesForRequest } from './src/store-sync.js';
+import { createRequestStore, reportIdOf, tablesForRequest } from './src/store-sync.js';
 import { checkDatabase, scheduled as runScheduledChecks } from './src/ops.js';
 import { compareFramesWithCase, detectPerson, matchEngineInfo, probeMatchProviders, rankMatches, rankSightingMatches } from './src/match.js';
 import { createFaceIndex } from '../shared/face-index.js';
@@ -81,6 +81,7 @@ function buildDeps(env, store, ctx) {
     findVideoJob: store.findVideoJob,
     addVideoJob: store.addVideoJob,
     updateVideoJob: store.updateVideoJob,
+    changeVideoJob: store.changeVideoJob,
     listUsers: store.listUsers,
     findUserById: store.findUserById,
     findUserByEmail: store.findUserByEmail,
@@ -152,6 +153,7 @@ function buildDeps(env, store, ctx) {
       // The desktop app's requests a quarter-hour, and the faces one check may send.
       desktopJobLimit: env.KHOZO_DESKTOP_JOB_LIMIT,
       desktopJobFaces: env.KHOZO_DESKTOP_JOB_FACES,
+      desktopDecisionLimit: env.KHOZO_DESKTOP_DECISION_LIMIT,
       directoryLimit: env.KHOZO_DIRECTORY_LIMIT,
       registerLimit: env.KHOZO_REGISTER_LIMIT,
       loginLimit: env.KHOZO_LOGIN_LIMIT,
@@ -248,6 +250,8 @@ export default {
       // The alert inbox poll loads only the accounts table (store-sync.js).
       const requestStore = await createRequestStore(env, ctx, undefined, {
         tables: tablesForRequest(request.method, url.pathname),
+        // A CCTV check request reads only its case's checks.
+        reportId: reportIdOf(url.pathname),
       });
       flush = requestStore.flush;
 

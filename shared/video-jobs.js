@@ -33,11 +33,22 @@ export const DECISIONS = ['same', 'not'];
 
 const text = (value, max) => String(value ?? '').trim().slice(0, max);
 const count = (value) => {
+  // Not given is not nought: a window with no end ("to": null) runs to the end of the video.
+  if (value === null || value === undefined || value === '') return null;
   const n = Number(value);
   return Number.isFinite(n) && n >= 0 ? n : null;
 };
 const round = (n, places = 1) => Math.round(n * 10 ** places) / 10 ** places;
 const isoOrNull = (value) => (value && Number.isFinite(Date.parse(value)) ? String(value).slice(0, 40) : null);
+
+/** A camera's place on the map, `{ lat, lng }` to about 10 cm, or null when either is missing or out of range. */
+export function coordinatesOf(lat, lng) {
+  if (lat === '' || lat == null || lng === '' || lng == null) return null;
+  const a = Number(lat);
+  const b = Number(lng);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || Math.abs(a) > 90 || Math.abs(b) > 180 || (a === 0 && b === 0)) return null;
+  return { lat: Math.round(a * 1e6) / 1e6, lng: Math.round(b * 1e6) / 1e6 };
+}
 
 export const isClientKey = (value) => CLIENT_KEY.test(String(value ?? ''));
 
@@ -92,6 +103,8 @@ export function jobFilesOf(list) {
       seconds: count(f?.seconds),
       sha256: SHA256.test(sha) ? sha : null,
       cameraPlace,
+      // Where the camera is on the map, when the officer gave it: the sighting's map point.
+      ...(coordinatesOf(f?.lat, f?.lng) || { lat: null, lng: null }),
       recordedFrom: isoOrNull(f?.recordedFrom),
       window: from != null || to != null ? { from: from ?? 0, to } : null,
     });
@@ -138,21 +151,93 @@ export function newVideoJob({ id, report, user, body, files, now = new Date().to
 export const batchKeyOf = (fileKey, batch) => `${fileKey}|${batch}`;
 
 /**
- * The patch that records one batch's answers. `faces` are `{ t, verdict,
- * aarakshak, rekognition, engines }` in the order sent. Counts only grow, so
- * a batch recorded once is never counted twice.
+ * Each face a check has had answered, once: the laptop's name for the person
+ * (`key`, the decision's key too), or, from a laptop that sent none, its place
+ * in its batch. A face sent again after "no answer" counts once, with its
+ * latest answer. Map of face key -> `{ fileKey, face }`.
  */
-export function batchPatch(job, key, faces, now = new Date().toISOString()) {
-  const counts = { ...zeroCounts(), ...(job.counts || {}) };
+function answeredFaces(batches) {
+  const out = new Map();
+  const ordered = Object.entries(batches || {}).sort(([, a], [, b]) => String(a.at).localeCompare(String(b.at)));
+  for (const [batchKey, batch] of ordered) {
+    const fileKey = batchKey.split('|')[0];
+    (batch.faces || []).forEach((face, i) => out.set(`${fileKey}|${face.key || `${batchKey}#${i}`}`, { fileKey, face }));
+  }
+  return out;
+}
+
+function tally(faces) {
+  const counts = zeroCounts();
   for (const face of faces) {
     counts.faces += 1;
     if (counts[face.verdict] != null) counts[face.verdict] += 1;
   }
-  return { batches: { ...(job.batches || {}), [key]: { at: now, faces } }, counts, updatedAt: now };
+  return counts;
 }
 
-/** How many faces a check has sent so far. */
+/** A check's counts, overall and for each video, from its batches. */
+export function countsOfBatches(batches) {
+  const answered = [...answeredFaces(batches).values()];
+  const fileCounts = {};
+  for (const { fileKey } of answered) fileCounts[fileKey] ||= null;
+  for (const fileKey of Object.keys(fileCounts)) fileCounts[fileKey] = tally(answered.filter((a) => a.fileKey === fileKey).map((a) => a.face));
+  return { counts: tally(answered.map((a) => a.face)), fileCounts };
+}
+
+/**
+ * The patch that records one batch's answers. `faces` are `{ key, t, verdict,
+ * aarakshak, rekognition, engines }` in the order sent. The counts are worked
+ * out again from every batch, so a batch recorded twice, or a face sent
+ * again, is never counted twice.
+ */
+export function batchPatch(job, key, faces, now = new Date().toISOString()) {
+  const batches = { ...(job.batches || {}), [key]: { at: now, faces } };
+  return { batches, ...countsOfBatches(batches), updatedAt: now };
+}
+
+/** How many faces a check has had compared so far, each face once. */
 export const facesSent = (job) => Number(job?.counts?.faces) || 0;
+
+/** What the engines said about one face of a check, by the laptop's name for it, or by its moment in the video. */
+export function answerFor(job, fileKey, { key = null, t = null } = {}) {
+  let byTime = null;
+  for (const [, { fileKey: fk, face }] of answeredFaces(job.batches)) {
+    if (String(fk) !== String(fileKey)) continue;
+    if (key && face.key === key) return face;
+    if (!byTime && !face.key && t != null && face.t != null && Math.abs(face.t - t) < 0.06) byTime = face;
+  }
+  return byTime;
+}
+
+/**
+ * The sighting a face marked "same person" becomes, named from the check and
+ * the face: sending the decision again, after a lost answer or a failed
+ * write, finds or rewrites the same sighting instead of making a second.
+ */
+export function sightingIdFor(jobId, key) {
+  let a = 0x811c9dc5;
+  let b = 0x01000193;
+  for (const ch of `${jobId}|${key}`) {
+    const c = ch.codePointAt(0);
+    a = Math.imul(a ^ c, 0x01000193) >>> 0;
+    b = Math.imul(b ^ c, 0x5bd1e995) >>> 0;
+  }
+  return `f_v${a.toString(36)}${b.toString(36)}`.slice(0, 18);
+}
+
+/**
+ * A closed check keeps what each face was found to be, for its counts, and
+ * no longer what each engine scored: nothing more is sent to it or decided
+ * on it, so the scores have no more use.
+ */
+export function closedVideoJobPatch(job, now = new Date().toISOString()) {
+  return {
+    status: 'closed',
+    closedAt: now,
+    batches: Object.fromEntries(Object.entries(job.batches || {}).map(([k, b]) => [k, { at: b.at, faces: (b.faces || []).map((f) => ({ key: f.key || null, verdict: f.verdict })) }])),
+    updatedAt: now,
+  };
+}
 
 /**
  * The patch that records how far the laptop got: per video, the seconds read,
@@ -212,6 +297,8 @@ export function videoJobView(job) {
       key: f.key,
       name: f.name,
       cameraPlace: f.cameraPlace,
+      lat: f.lat ?? null,
+      lng: f.lng ?? null,
       recordedFrom: f.recordedFrom,
       seconds: f.seconds,
       window: f.window,
@@ -284,14 +371,13 @@ export function summariseVideoJobs(jobs, { recent = 25 } = {}) {
       row.videos += 1;
       row.hours += (Number(progress.secondsRead) || 0) / 3600;
       row.peopleSeen += Number(progress.peopleSeen) || 0;
-      for (const [key, batch] of Object.entries(job.batches || {})) {
-        if (key.split('|')[0] !== String(file.key)) continue;
-        for (const face of batch.faces || []) {
-          row.faces += 1;
-          if (face.verdict === 'likely') row.likely += 1;
-          if (face.verdict === 'possible') row.possible += 1;
-          if (face.verdict === 'not_agreed') row.notAgreed += 1;
-        }
+      // The video's own counts, kept with the check (the command centre reads checks without their batches).
+      const own = (job.fileCounts || countsOfBatches(job.batches).fileCounts)[String(file.key)];
+      if (own) {
+        row.faces += own.faces || 0;
+        row.likely += own.likely || 0;
+        row.possible += own.possible || 0;
+        row.notAgreed += own.not_agreed || 0;
       }
       for (const d of Object.values(job.decisions || {})) {
         if (String(d?.fileKey) !== String(file.key)) continue;

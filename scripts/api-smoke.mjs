@@ -2157,7 +2157,7 @@ async function videoJobChecks({ superAdmin, sjpu, cwc, parent, fake }) {
     form: caseForm({ childName: 'Desktop Check Smoke', parentPhone: '9876500811' }, facePhotoFile('DESKTOP_TARGET', 'case')),
   });
   const id = target.report.id;
-  const files = [{ key: 0, name: 'gate1.mp4', bytes: 73400320, seconds: 36000, cameraPlace: 'Kalupur railway station, gate 1', recordedFrom: '2026-10-20T14:30:05', from: 3600, to: 10800 }];
+  const files = [{ key: 0, name: 'gate1.mp4', bytes: 73400320, seconds: 36000, cameraPlace: 'Kalupur railway station, gate 1', lat: 23.026, lng: 72.6011, recordedFrom: '2026-10-20T14:30:05', from: 3600, to: 10800 }];
   const start = (token, extra = {}) => request('POST', `/reports/${id}/video-jobs`, {
     token,
     body: { jobKey: 'job_smoke_1', appVersion: '0.1.0', files: JSON.stringify(files), modelName: 'aarakshak-fr', modelVersion: 'test', firstPassLine: 0.25, firstPassTop: 10, ...extra },
@@ -2198,6 +2198,10 @@ async function videoJobChecks({ superAdmin, sjpu, cwc, parent, fake }) {
   const overBudget = await expectStatus(409, () => request('POST', `${route}/faces`, { token: sjpu.token, form: facesForm([...twoFaces(), facePhotoFile('DESKTOP_STRANGER', 'sighting')], { batch: 'b5' }) }), 'faces past the check\'s budget');
   assert(/faces one check may send/.test(overBudget.error || '') && fake.pairs.length === pairsBeforeBudget,
     `a check that would pass its face budget should be refused before anything is compared: ${JSON.stringify(overBudget)}`);
+  // Faces named by the laptop: one sent again after its first answer counts once, with its latest answer.
+  await request('POST', `${route}/faces`, { token: sjpu.token, form: facesForm(twoFaces(), { batch: 'k1', keys: 'p_k1,p_k2' }) });
+  const resent = await request('POST', `${route}/faces`, { token: sjpu.token, form: facesForm([facePhotoFile('DESKTOP_TARGET', 'sighting')], { batch: 'k2', keys: 'p_k1' }) });
+  assert(resent.results?.[0]?.verdict === 'possible', `a face sent again within the budget should be answered: ${JSON.stringify(resent)}`);
 
   // How far the laptop got.
   const progress = await request('POST', `${route}/progress`, {
@@ -2225,17 +2229,20 @@ async function videoJobChecks({ superAdmin, sjpu, cwc, parent, fake }) {
     }),
   });
   const sightingId = same.decision.sightingId;
-  assert(/^f_/.test(sightingId || ''), `"same person" should make a sighting: ${JSON.stringify(same)}`);
+  // Named from the check and the face, so a resend after a failed write finds it again.
+  assert(/^f_v/.test(sightingId || ''), `"same person" should make a sighting named from the check and the face: ${JSON.stringify(same)}`);
   const sameAgain = await request('POST', `${route}/decisions`, {
     token: sjpu.token,
     form: decisionForm([facePhotoFile('DESKTOP_TARGET', 'sighting')], { key: 'p_target', decision: 'same', t: '3700', verdict: 'possible' }),
   });
   assert(sameAgain.repeated === true && sameAgain.decision.sightingId === sightingId, 'the same "same person" sent again should not make a second sighting');
+  const takenBack = await expectStatus(409, () => request('POST', `${route}/decisions`, { token: sjpu.token, form: decisionForm(null, { key: 'p_target', decision: 'not', t: '3700' }) }), '"not this person" for a face already made a sighting');
+  assert(takenBack.code === 'already_sighting', `taking back a sighting should be sent to its review: ${JSON.stringify(takenBack)}`);
   const sightings = (await request('GET', '/reports/found/all', { token: superAdmin.token })).foundReports;
   const sighting = sightings.find((row) => row.id === sightingId);
   assert(sighting && sighting.matchedReportId === id && sighting.status === 'pending_review' && sighting.foundLocation === 'Kalupur railway station, gate 1'
-    && sighting.fromVideo?.times?.[0] === '1:01:40' && (sighting.extraPhotos || []).length === 1,
-    `the sighting should be linked to the case, waiting for review, at the camera, with the moment and the frame: ${JSON.stringify(sighting && { status: sighting.status, matchedReportId: sighting.matchedReportId, foundLocation: sighting.foundLocation, fromVideo: sighting.fromVideo, extraPhotos: sighting.extraPhotos?.length })}`);
+    && sighting.fromVideo?.times?.[0] === '1:01:40' && (sighting.extraPhotos || []).length === 1 && sighting.lat === 23.026 && sighting.lng === 72.6011,
+    `the sighting should be linked to the case, waiting for review, at the camera, with the moment and the frame: ${JSON.stringify(sighting && { status: sighting.status, matchedReportId: sighting.matchedReportId, foundLocation: sighting.foundLocation, fromVideo: sighting.fromVideo, extraPhotos: sighting.extraPhotos?.length, lat: sighting.lat, lng: sighting.lng })}`);
   assert(sightings.filter((row) => row.videoCheck?.jobId === jobId || row.id === sightingId).length === 1, 'one "same person" should make exactly one sighting');
   const caseAfter = (await request('GET', `/reports/${id}`, { token: superAdmin.token })).report;
   assert(caseAfter.status === target.report.status, 'a CCTV check should never mark the case found');
@@ -2243,12 +2250,14 @@ async function videoJobChecks({ superAdmin, sjpu, cwc, parent, fake }) {
   // The case's checks and the command centre's figures.
   const listed = await request('GET', `/reports/${id}/video-jobs`, { token: sjpu.token });
   const view = listed.jobs.find((j) => j.id === jobId);
-  assert(view && view.confirmed === 1 && view.rejected === 1 && view.counts.faces === 2 && view.counts.possible === 1 && view.sightings[0] === sightingId,
+  // Faces: two from b1, and p_k1 and p_k2 (p_k1 sent twice, counted once).
+  assert(view && view.confirmed === 1 && view.rejected === 1 && view.counts.faces === 4 && view.counts.possible === 2 && view.sightings[0] === sightingId
+    && view.videos[0].lat === 23.026,
     `the case's checks should show the answers and decisions: ${JSON.stringify(view)}`);
   await expectStatus(403, () => request('GET', `/reports/${id}/video-jobs`, { token: cwc.token }), 'a CWC desk lists a case\'s CCTV checks');
   const figures = await request('GET', '/dashboard/video-checks', { token: superAdmin.token });
   assert(figures.available === true && figures.totals.checks >= 1 && figures.totals.confirmed >= 1 && figures.totals.rejected >= 1 && figures.totals.hours >= 2
-    && figures.byDistrict.some((d) => d.district === 'Mumbai') && figures.byCamera.some((c) => c.cameraPlace === 'Kalupur railway station, gate 1' && c.faces === 2 && c.confirmed === 1)
+    && figures.byDistrict.some((d) => d.district === 'Mumbai') && figures.byCamera.some((c) => c.cameraPlace === 'Kalupur railway station, gate 1' && c.faces === 4 && c.confirmed === 1)
     && figures.recent.some((j) => j.id === jobId && j.caseName === 'Desktop Check Smoke'),
     `the command centre's figures should count the check: ${JSON.stringify({ totals: figures.totals, byCamera: figures.byCamera })}`);
   await expectStatus(403, () => request('GET', '/dashboard/video-checks', { token: parent.token }), 'a family asks for the CCTV check figures');
@@ -2258,12 +2267,15 @@ async function videoJobChecks({ superAdmin, sjpu, cwc, parent, fake }) {
   for (const action of ['case.video_job_started', 'case.video_job_finished', 'sighting.video_confirmed', 'case.video_face_rejected']) {
     assert(audit.some((row) => row.action === action && (row.metadata?.jobId === jobId)), `a desktop check should be audited: ${action}`);
   }
-  assert(audit.filter((row) => row.action === 'case.video_searched' && row.metadata?.jobId === jobId).length === 1, 'a batch should be audited once, however often it is sent');
+  assert(audit.filter((row) => row.action === 'case.video_searched' && row.metadata?.jobId === jobId && row.metadata?.batch === 'b1').length === 1, 'a batch should be audited once, however often it is sent');
+  assert(audit.filter((row) => row.action === 'case.video_searched' && row.metadata?.jobId === jobId).every((row) => row.metadata.faces.every((f) => !('aarakshak' in f) && !('rekognition' in f))),
+    'a desktop batch\'s audit row should say what each face was found to be, not what each engine scored');
 
   // Closing.
   const closed = await request('POST', `${route}/close`, { token: sjpu.token, body: {} });
   assert(closed.job.status === 'closed', 'a check should close');
   await expectStatus(409, () => request('POST', `${route}/faces`, { token: sjpu.token, form: facesForm(twoFaces(), { batch: 'b9' }) }), 'faces for a closed check');
+  await expectStatus(409, () => request('POST', `${route}/decisions`, { token: sjpu.token, form: decisionForm(null, { key: 'p_late', decision: 'not', t: '3702' }) }), 'a decision for a closed check');
 
   // When the case is anonymised, its checks lose the file names and recording
   // times (which can say where and when a family was); the figures stay.
@@ -2272,7 +2284,7 @@ async function videoJobChecks({ superAdmin, sjpu, cwc, parent, fake }) {
     body: { decision: 'anonymize', approvalReference: 'SMOKE-CCTV-01', approvalType: 'privacy_officer' },
   });
   const [anonymised] = (await request('GET', `/reports/${id}/video-jobs`, { token: sjpu.token })).jobs;
-  assert(anonymised && anonymised.videos[0].name === null && anonymised.videos[0].recordedFrom === null && anonymised.confirmed === 1 && anonymised.counts.faces === 2,
+  assert(anonymised && anonymised.videos[0].name === null && anonymised.videos[0].recordedFrom === null && anonymised.confirmed === 1 && anonymised.counts.faces === 4,
     `an anonymised case's check should keep its figures and lose its file names and times: ${JSON.stringify(anonymised)}`);
   console.log('Desktop CCTV check checks passed');
 }

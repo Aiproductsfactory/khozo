@@ -101,6 +101,7 @@ export default registerReportRoutes(Router(), {
     // The desktop app's requests a quarter-hour, and the faces one check may send.
     desktopJobLimit: process.env.KHOZO_DESKTOP_JOB_LIMIT,
     desktopJobFaces: process.env.KHOZO_DESKTOP_JOB_FACES,
+    desktopDecisionLimit: process.env.KHOZO_DESKTOP_DECISION_LIMIT,
     // The family alert goes through the same gateway as the registration OTP
     // (shared/sms.js); without one, Khozo says so instead of claiming a send.
     smsGatewayUrl: process.env.KHOZO_SMS_GATEWAY_URL,

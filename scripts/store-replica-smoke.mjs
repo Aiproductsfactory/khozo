@@ -12,7 +12,10 @@
 
 import crypto from 'node:crypto';
 
-import { createRequestStore, tablesForRequest } from '../worker/src/store-sync.js';
+import { createRequestStore, reportIdOf, tablesForRequest } from '../worker/src/store-sync.js';
+
+// What a request reads when no rule says otherwise: every table but the CCTV checks.
+const DEFAULT = 'users,reports,foundReports,grievances,activity,audit';
 import registerDashboardRoutes from '../shared/routes/dashboard.js';
 import registerReportRoutes from '../shared/routes/reports.js';
 import { createRouter, handleRequest } from '../worker/src/http/router.js';
@@ -66,6 +69,8 @@ function fakeIo(seed = {}) {
       reads.push(table);
       let rows = tables[table] || [];
       if (/user_id = \$1/.test(sql)) rows = rows.filter((r) => r.userId === params[0]);
+      if (/report_id = \$1/.test(sql)) rows = rows.filter((r) => r.reportId === params[0]);
+      if (/data - 'batches'/.test(sql)) rows = rows.map(({ batches: _b, ...r }) => r);
       return { rows: rows.map((data) => ({ data: clone(data) })) };
     },
     async upsertRecord(_env, table, record) {
@@ -274,8 +279,8 @@ check('no photo is added to a case anonymised meanwhile', late === null && photo
 // sighting and audit row for it was most of the Worker's CPU, and most of the
 // requests the Free plan's 10 ms limit cut off.
 check('the alert inbox poll needs only the accounts', tablesForRequest('GET', '/api/dashboard/notifications').join() === 'users');
-check('marking alerts read still loads everything', tablesForRequest('POST', '/api/dashboard/notifications/read').length === 7);
-check('every other request still loads everything', tablesForRequest('GET', '/api/dashboard/stats').length === 7);
+check('marking alerts read still loads everything but the CCTV checks', tablesForRequest('POST', '/api/dashboard/notifications/read').join() === DEFAULT);
+check('every other request still loads everything but the CCTV checks', tablesForRequest('GET', '/api/dashboard/stats').join() === DEFAULT);
 
 const inboxIo = fakeIo({
   ...seed,
@@ -332,9 +337,9 @@ check('it writes nothing', inboxIo.writes.length === 0);
 const PHOTO_TABLES = 'users,reports,foundReports';
 check('a photo needs only the accounts, the cases and the sightings', tablesForRequest('GET', '/api/reports/photo/f_9').join() === PHOTO_TABLES);
 check('only for reading a photo, and only under /photo/',
-  tablesForRequest('POST', '/api/reports/photo/f_9').length === 7
-  && tablesForRequest('GET', '/api/reports/photos').length === 7
-  && tablesForRequest('GET', '/api/reports/found/all').length === 7);
+  tablesForRequest('POST', '/api/reports/photo/f_9').join() === DEFAULT
+  && tablesForRequest('GET', '/api/reports/photos').join() === DEFAULT
+  && tablesForRequest('GET', '/api/reports/found/all').join() === DEFAULT);
 
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00]);
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
@@ -405,16 +410,39 @@ check('serving photos writes nothing', servingIo.writes.length === 0, `${serving
 const VIDEO_TABLES = 'users,reports,auditTail';
 check('a video search needs the accounts, the cases and the end of the audit chain',
   tablesForRequest('POST', '/api/reports/r_1/video-search').join() === VIDEO_TABLES, tablesForRequest('POST', '/api/reports/r_1/video-search').join());
-check('only that route', tablesForRequest('GET', '/api/reports/r_1/video-search').length === 7 && tablesForRequest('POST', '/api/reports/r_1/rematch').length === 7);
+check('only that route', tablesForRequest('GET', '/api/reports/r_1/video-search').join() === DEFAULT && tablesForRequest('POST', '/api/reports/r_1/rematch').join() === DEFAULT);
 
 // --- a CCTV check from the desktop app: the accounts, the cases, the checks and the end of the audit chain ---
-const JOB_TABLES = 'users,reports,videoJobs,auditTail';
+const JOB_TABLES = 'users,reports,videoJobsOfCase,auditTail';
 check('starting a desktop check, and its faces, progress and close, need the accounts, the cases, the checks and the end of the audit chain',
   ['/api/reports/r_1/video-jobs', '/api/reports/r_1/video-jobs/vj_abc123/faces', '/api/reports/r_1/video-jobs/vj_abc123/progress', '/api/reports/r_1/video-jobs/vj_abc123/close']
     .every((p) => tablesForRequest('POST', p).join() === JOB_TABLES));
-check('a desktop decision, which can make a sighting, loads everything', tablesForRequest('POST', '/api/reports/r_1/video-jobs/vj_abc123/decisions').length === 7);
-check('listing a case\'s checks reads no audit', tablesForRequest('GET', '/api/reports/r_1/video-jobs').join() === 'users,reports,videoJobs');
-check('the command centre\'s CCTV checks page reads the accounts, the cases and the checks', tablesForRequest('GET', '/api/dashboard/video-checks').join() === 'users,reports,videoJobs');
+check('a desktop decision, which can make a sighting, loads everything else and the case\'s checks', tablesForRequest('POST', '/api/reports/r_1/video-jobs/vj_abc123/decisions').join() === `${DEFAULT},videoJobsOfCase`);
+check('listing a case\'s checks reads that case\'s checks and no audit', tablesForRequest('GET', '/api/reports/r_1/video-jobs').join() === 'users,reports,videoJobsOfCase' && reportIdOf('/api/reports/r_1/video-jobs') === 'r_1');
+check('the command centre\'s CCTV checks page reads the checks without their batches', tablesForRequest('GET', '/api/dashboard/video-checks').join() === 'users,reports,videoJobSummaries');
+check('anonymising a case reads its checks whole', tablesForRequest('POST', '/api/dashboard/privacy/retention/report/r_1').includes('videoJobs') && tablesForRequest('POST', '/api/dashboard/privacy/retention-sweep').includes('videoJobs'));
+
+// Two requests to one check at once (faces for two videos): both batches stay.
+{
+  const job = (id, reportId) => ({ id, reportId, status: 'open', batches: {}, decisions: {}, counts: {}, files: [{ key: 0 }, { key: 1 }] });
+  const jobsIo = fakeIo({ users: [{ id: 'u_a', role: 'police' }], reports: [{ id: 'r_1' }, { id: 'r_2' }] });
+  jobsIo.tables.video_jobs = [job('vj_one111', 'r_1'), job('vj_two222', 'r_2')];
+  const faces = { tables: tablesForRequest('POST', '/api/reports/r_1/video-jobs/vj_one111/faces'), reportId: 'r_1' };
+  const first = await createRequestStore({}, null, jobsIo, faces);
+  const second = await createRequestStore({}, null, jobsIo, faces);
+  check('a check request reads only its case\'s checks', first.store.listVideoJobs().length === 1 && first.store.listVideoJobs()[0].id === 'vj_one111');
+  await first.store.changeVideoJob('vj_one111', (current) => ({ batches: { ...current.batches, '0|a': { faces: [1] } } }));
+  await second.store.changeVideoJob('vj_one111', (current) => ({ batches: { ...current.batches, '1|b': { faces: [2] } } }));
+  await first.flush();
+  await second.flush();
+  const stored = jobsIo.tables.video_jobs.find((j) => j.id === 'vj_one111');
+  check('two requests changing one check at once both keep their batch', Object.keys(stored.batches).sort().join() === '0|a,1|b', JSON.stringify(stored.batches));
+  const summaries = await createRequestStore({}, null, jobsIo, { tables: tablesForRequest('GET', '/api/dashboard/video-checks') });
+  check('the command centre reads every check, without batches', summaries.store.listVideoJobs().length === 2 && summaries.store.listVideoJobs().every((j) => !('batches' in j)));
+  let refused = false;
+  try { summaries.store.updateVideoJob('vj_one111', { status: 'closed' }); } catch { refused = true; }
+  check('and cannot write a check back without them', refused);
+}
 
 // A Worker deployed before server/sql/003_video_jobs.sql has run.
 {

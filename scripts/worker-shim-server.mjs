@@ -125,6 +125,7 @@ function buildDeps(env) {
       videoSearchLimit: env.KHOZO_VIDEO_SEARCH_LIMIT,
       desktopJobLimit: env.KHOZO_DESKTOP_JOB_LIMIT,
       desktopJobFaces: env.KHOZO_DESKTOP_JOB_FACES,
+      desktopDecisionLimit: env.KHOZO_DESKTOP_DECISION_LIMIT,
       registerLimit: env.KHOZO_REGISTER_LIMIT,
       loginLimit: env.KHOZO_LOGIN_LIMIT,
       otpLimit: env.KHOZO_OTP_LIMIT,
