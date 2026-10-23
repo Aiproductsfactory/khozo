@@ -31,6 +31,7 @@ import { VIDEO_ROLES, canSearchCase } from '../app/roles.js';
 import { KEYS, TRANSLATIONS } from '../app/renderer/i18n.js';
 import { ffmpegPath } from '../scanner/ffmpeg.js';
 import { KhozoError } from '../scanner/khozo.js';
+import sharp from 'sharp';
 import { POLICE_ROLES } from '../../shared/scope.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -77,7 +78,8 @@ function fakeClient({ keeps = true } = {}) {
   const reach = () => { if (!online) throw new KhozoError('No connection to Khozo (ECONNREFUSED)', 0); };
   const compare = async (caseId, form, job = {}) => {
     const faces = [...form.getAll('photo'), ...form.getAll('extraPhotos')];
-    calls.searches.push({ caseId, ...job, faces: faces.length, camera: form.get('cameraPlace'), times: form.get('times'), firstBytes: Buffer.from(await faces[0].arrayBuffer()).subarray(0, 2).toString('hex') });
+    const first = Buffer.from(await faces[0].arrayBuffer());
+    calls.searches.push({ caseId, ...job, faces: faces.length, camera: form.get('cameraPlace'), times: form.get('times'), firstBytes: first.subarray(0, 2).toString('hex'), side: (await sharp(first).metadata()).width });
     return { results: faces.map((_, index) => ({ index, verdict: index === 0 && calls.searches.length === 1 ? 'likely' : 'unlikely', enginesAnswered: ['aarakshak'] })) };
   };
   return {
@@ -102,9 +104,11 @@ function fakeClient({ keeps = true } = {}) {
       reach();
       if (knobs.decisionRefusal) throw knobs.decisionRefusal;
       const decision = form.get('decision');
+      const photo = form.get('photo');
       calls.decisions.push({
         jobId, key: form.get('key'), decision, fileKey: form.get('fileKey'), t: form.get('t'), seenAt: form.get('seenAt'), verdict: form.get('verdict'),
         photos: form.getAll('photo').length, extras: form.getAll('extraPhotos').length,
+        photoSide: photo ? (await sharp(Buffer.from(await photo.arrayBuffer())).metadata().catch(() => ({}))).width : null,
       });
       return { decision: { decision, sightingId: decision === 'same' ? `f_${calls.decisions.length}` : undefined } };
     },
@@ -354,6 +358,18 @@ console.log('Khozo’s record of a check');
   const jobs6 = createJobs({ root: root6, files, key, startWorker, getClient: () => slow, officer, frameOf });
   jobs6.sweep(30);
   check('the 30-day clean-up keeps a job whose decisions have not reached Khozo', jobs6.list().length === 1);
+
+  // Khozo's limit on decisions: the decision waits and goes later, it is not a refusal.
+  const busy = fakeClient();
+  busy.knobs.decisionRefusal = new KhozoError('Too many requests', 429, { error: 'Too many requests' }, 60);
+  const root7 = path.join(tmp, 'jobs-busy');
+  plantJob(root7, files, 'job_busy');
+  const jobs7 = createJobs({ root: root7, files, key, startWorker, getClient: () => busy, officer, frameOf });
+  const held = { ...(await jobs7.decide('job_busy', '0:s0-1', 'same')) };
+  busy.knobs.decisionRefusal = null;
+  await jobs7.syncAll();
+  const went = jobs7.get('job_busy').toCheck.find((p) => p.key === '0:s0-1').decision;
+  check('a decision held back by Khozo\'s limit waits, then goes', held.saved === false && held.offline === true && !held.refused && went.saved === true);
 }
 
 // ---- a whole job on a clip with faces ----------------------------------------------------
@@ -380,7 +396,22 @@ if (process.env.KHOZO_SMOKE_VIDEO) {
   check('"Same person" becomes a sighting of the case', decision.saved === true && Boolean(decision.sightingId) && client.calls.decisions.at(-1).photos === 1);
   await jobs.decide(id, job.everyone.at(-1).key, 'not');
   check('"Not this person" is sent with no picture', client.calls.decisions.at(-1).decision === 'not' && client.calls.decisions.at(-1).photos === 0 && jobs.get(id).everyone.at(-1).decision.decision === 'not');
+  check('the engines get each face at 240 px, the size they find faces best', client.calls.searches.every((s) => s.side === 240), JSON.stringify(client.calls.searches.map((s) => s.side)));
+  check('"Same person" still sends the picture itself, not the small copy', client.calls.decisions.find((d) => d.decision === 'same')?.photoSide > 240, JSON.stringify(client.calls.decisions.map((d) => d.photoSide)));
   check('each face is sent with the laptop\'s name for the person', client.calls.searches.every((s) => s.keys && s.keys.split(',').length === s.faces && s.keys.split(',').every((k) => /^0:/.test(k))));
+
+  // Khozo's limit on faces: the laptop waits as Khozo asks, then carries on.
+  const slowed = fakeClient();
+  let limitedOnce = false;
+  const plainFaces = slowed.videoJobFaces;
+  slowed.videoJobFaces = async (...args) => {
+    if (!limitedOnce) { limitedOnce = true; throw new KhozoError('Too many requests', 429, { error: 'Too many requests' }, 1); }
+    return plainFaces(...args);
+  };
+  const slowedJobs = createJobs({ root: path.join(tmp, 'jobs-slowed'), files, key, startWorker, getClient: () => slowed, officer: { id: 'u1', name: 'PSI Test' } });
+  const slowedId = slowedJobs.create({ report: { id: 'r_test', childName: 'Test Person' }, files: [{ path: clip, name: path.basename(clip), bytes: fs.statSync(clip).size, duration: 24, width: 1280, height: 720, camera: 'Kalupur railway station, gate 1' }] });
+  const slowedJob = await untilDone(slowedJobs, slowedId);
+  check('when Khozo asks the laptop to slow down, it waits and finishes', limitedOnce && slowedJob.status === 'done' && slowed.calls.searches.length > 0, `${slowedJob.status} ${slowedJob.error || ''}`);
 
   // A check that reaches its face budget finishes with what was answered, and says so.
   const full = fakeClient();

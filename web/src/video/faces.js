@@ -29,6 +29,17 @@ export const MIN_FACE_PX = 36;
 /** The side of a face picture made from a frame, in pixels. */
 export const CROP_SIDE = 360;
 
+/**
+ * The side of the copy of a face picture sent to the face engines to be
+ * compared (the officer, and a sighting, keep the picture itself). Aarakshak
+ * finds faces with YuNet at its 0.6 line, which misses many close or enlarged
+ * faces at 360 to 960 pixels: on two CCTV clips (23 October 2026) it found 13
+ * of 25 faces as they were, 20 of 25 at 240, and the identity scores held
+ * (the person 0.38 -> 0.49, strangers at 0.27 or below). At 240 a face is
+ * about 96 pixels, well above the 40 Rekognition needs.
+ */
+export const COMPARE_SIDE = 240;
+
 /** How much of the frame around the face a picture shows: the face is about 40% of its width. */
 export const CROP_MARGIN = 2.5;
 

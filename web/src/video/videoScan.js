@@ -6,7 +6,7 @@
 // clearest picture of each person. What comes out is a short list of face
 // pictures with the moment each was seen: the only thing that is ever sent.
 import {
-  CROP_SIDE, MIN_FACE_PX, cropBox, createTracker, faceQuality, sampleInterval, sampleTimes, scaleFaces, sharpness,
+  COMPARE_SIDE, CROP_SIDE, MIN_FACE_PX, cropBox, createTracker, faceQuality, sampleInterval, sampleTimes, scaleFaces, sharpness,
 } from './faces.js';
 import { loadDetector } from './detector.js';
 import { msg } from '../i18n.jsx';
@@ -245,6 +245,28 @@ export function releaseTracks(tracks) {
 export function trackFile(track, prefix = 'video') {
   const at = Math.round(Number(track.time) * 10) / 10;
   return new File([track.blob], `${prefix}-${String(at).replace('.', '_')}s.jpg`, { type: 'image/jpeg', lastModified: Date.now() });
+}
+
+/**
+ * The copy of a face picture the face engines are sent to compare: the
+ * picture at COMPARE_SIDE pixels square (faces.js says why). The picture
+ * itself, kept and shown, is not changed; if the copy cannot be made, the
+ * picture goes as it is.
+ */
+export async function comparisonFile(track, prefix = 'face') {
+  const at = Math.round(Number(track.time) * 10) / 10;
+  let blob = track.blob;
+  try {
+    const bitmap = await createImageBitmap(track.blob);
+    const canvas = makeCanvas(COMPARE_SIDE, COMPARE_SIDE);
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(bitmap, 0, 0, COMPARE_SIDE, COMPARE_SIDE);
+    bitmap.close?.();
+    blob = await canvasBlob(canvas, 'image/jpeg', 0.9);
+  } catch { /* the picture as it is */ }
+  return new File([blob], `${prefix}-${String(at).replace('.', '_')}s.jpg`, { type: 'image/jpeg', lastModified: Date.now() });
 }
 
 /**

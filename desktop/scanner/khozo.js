@@ -7,7 +7,9 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import sharp from 'sharp';
 import { VIDEO_SEARCH_BATCH } from '../../shared/video-search.js';
+import { COMPARE_SIDE } from '../../web/src/video/faces.js';
 
 export const DESKTOP_VERSION = '0.0.1';
 
@@ -70,6 +72,8 @@ export function createClient({ api = 'https://khozo.org/api', token = null, fetc
     videoJobProgress: (id, jobId, body) => call('POST', `/reports/${encodeURIComponent(id)}/video-jobs/${encodeURIComponent(jobId)}/progress`, { json: body }),
     videoJobDecision: (id, jobId, form) => call('POST', `/reports/${encodeURIComponent(id)}/video-jobs/${encodeURIComponent(jobId)}/decisions`, { form }),
     closeVideoJob: (id, jobId) => call('POST', `/reports/${encodeURIComponent(id)}/video-jobs/${encodeURIComponent(jobId)}/close`, { json: {} }),
+    /** The newest Khozo Desktop, as Khozo announces it (GET /dashboard/desktop-version). */
+    desktopVersion: () => call('GET', '/dashboard/desktop-version'),
     photo: (id, photoId = null) => call('GET', `/reports/photo/${encodeURIComponent(id)}${photoId ? `?p=${encodeURIComponent(photoId)}` : ''}`, { bytes: true }),
     videoSearch: (id, form) => call('POST', `/reports/${encodeURIComponent(id)}/video-search`, { form }),
   };
@@ -90,10 +94,17 @@ const sleep = (ms, signal) => new Promise((resolve) => {
   signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
 });
 
-/** A face picture as the browser names it: face-12_5s.jpg for a face at 12.5 seconds. */
+/**
+ * A face picture as the browser names it (face-12_5s.jpg for a face at 12.5
+ * seconds), at the size the face engines find faces best
+ * (web/src/video/faces.js COMPARE_SIDE). The picture kept on the laptop, and
+ * sent with "Same person", is not changed.
+ */
 async function faceFile(readPicture, track) {
   const at = Math.round(Number(track.time) * 10) / 10;
-  return new File([await readPicture(track)], `face-${String(at).replace('.', '_')}s.jpg`, { type: 'image/jpeg' });
+  const picture = await readPicture(track);
+  const copy = await sharp(picture).resize(COMPARE_SIDE, COMPARE_SIDE).jpeg({ quality: 90 }).toBuffer().catch(() => picture);
+  return new File([copy], `face-${String(at).replace('.', '_')}s.jpg`, { type: 'image/jpeg' });
 }
 
 /**

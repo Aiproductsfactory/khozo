@@ -7,7 +7,7 @@ import { useBackClose } from '../useBackClose.js';
 import { VIDEO_SEARCH_BATCH, VIDEO_SEARCH_MAX_FACES } from '../../../shared/video-search.js';
 import { formatVideoTime } from './faces.js';
 import { fileSha256 } from './sha256.js';
-import { frameBlob, releaseTracks, scanVideo, trackFile } from './videoScan.js';
+import { comparisonFile, frameBlob, releaseTracks, scanVideo } from './videoScan.js';
 
 /*
  * "Check CCTV video": is this missing person anywhere in this footage?
@@ -140,9 +140,11 @@ export default function VideoCaseSearch({ report, onClose }) {
     for (let i = 0; i < tracks.length; i += VIDEO_SEARCH_BATCH) batches.push(tracks.slice(i, i + VIDEO_SEARCH_BATCH));
     setProgress({ done: 0, total: tracks.length });
 
-    const formFor = (faces, index) => {
+    const formFor = async (faces, index) => {
       const fd = new FormData();
-      faces.forEach((track, i) => fd.append(i === 0 ? 'photo' : 'extraPhotos', trackFile(track, 'face')));
+      // The engines' copies, at the size they find faces best (faces.js COMPARE_SIDE).
+      const pictures = await Promise.all(faces.map((track) => comparisonFile(track, 'face')));
+      pictures.forEach((picture, i) => fd.append(i === 0 ? 'photo' : 'extraPhotos', picture));
       fd.append('searchId', searchId);
       fd.append('videoName', (file.name || '').slice(0, 200));
       fd.append('videoBytes', String(file.size || 0));
@@ -160,12 +162,12 @@ export default function VideoCaseSearch({ report, onClose }) {
     // Every face unanswered means the engines were busy or briefly down:
     // wait, and send them once more.
     const ask = async (faces, index) => {
-      let data = await api.postForm(`/reports/${report.id}/video-search`, formFor(faces, index));
+      let data = await api.postForm(`/reports/${report.id}/video-search`, await formFor(faces, index));
       if ((data.results || []).length && data.results.every((row) => row.verdict === 'no_answer') && !controller.signal.aborted) {
         setBusyEngines(true);
         await new Promise((resolve) => setTimeout(resolve, ENGINE_BUSY_WAIT_MS));
         setBusyEngines(false);
-        if (!controller.signal.aborted) data = await api.postForm(`/reports/${report.id}/video-search`, formFor(faces, index));
+        if (!controller.signal.aborted) data = await api.postForm(`/reports/${report.id}/video-search`, await formFor(faces, index));
       }
       const answered = {};
       for (const row of data.results || []) {
