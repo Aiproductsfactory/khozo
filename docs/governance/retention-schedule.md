@@ -43,6 +43,8 @@ on an allow-list of non-identifying fields (DPIA G1, fixed on the branch
 | 17 | **Database backups** | Everything above | [Per Supabase plan — confirm] | — | Expire on their own schedule | Deleted data stays until backups expire; state the maximum: [N] days |
 | 18 | **Cloudflare Worker logs** | Request details; any errors logged | [Per Cloudflare plan — confirm] | `wrangler.jsonc` `observability` | Expire | [180 days in India if CERT-In's direction applies — legal to confirm: DPIA G17] |
 | 19 | **Face-engine copies** | Images sent for comparison | Not stored by Khozo at the provider | `worker/src/match.js`; `worker/src/rekognition.js` | — | **None** kept by Aarakshak or AWS: confirm in writing (agreement clause 10.2) |
+| 20 | **CCTV checks from Khozo Desktop** | The case, the officer, each video's name, size, fingerprint, camera place and map point, recording start; how far the laptop got; for each face sent, its moment, what it was found to be, and the engines' scores until the check is closed; the officer's decisions | **As long as the case**; scores dropped when the check is closed; file names, recording times and scores dropped when the case is anonymised | `server/sql/003_video_jobs.sql`; `shared/video-jobs.js` `closedVideoJobPatch`, `anonymisedVideoJobPatch` | Anonymised with the case | [Keep with the case] |
+| 21 | **Face pictures on an officer's laptop** (Khozo Desktop) | The faces found in the officer's videos, encrypted | Until the job is deleted, the officer signs out, or 30 days after it was last touched (once Khozo has its decisions) | `desktop/app/jobs.js` `remove`, `sweep`; `desktop/app/secure-store.js` | Deleted from the laptop | [30 days] |
 
 ## What happens at the end
 

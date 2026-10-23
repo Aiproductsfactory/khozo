@@ -316,6 +316,30 @@ you are working on, with footage your unit holds lawfully.
 
 ---
 
+## 16. Long CCTV footage: Khozo Desktop
+
+For footage longer than a few minutes, or from several cameras, use **Khozo Desktop** on a
+police laptop. It is given out by your nodal officer, not downloaded from the internet.
+
+1. **Sign in** with your own Khozo account. Never share it; never sign in for someone else.
+2. **Choose the case.** Only open, verified cases with a photo can be checked.
+3. **Add the videos.** For each, say where the camera is, and paste its Google Maps link if you
+   have it. For a video longer than 30 minutes, give the date and time it starts, as the camera's
+   clock shows it.
+4. **Start.** The laptop reads the videos and sends only the faces most like the person to Khozo.
+   You can pause, close the laptop and carry on later.
+5. **Look at each face** under "Look at these first", and play the video at that moment before
+   you decide. "Same person" makes a sighting of the case, which the case officer reviews.
+   It is a lead, not an identification. "Not this person" sends no picture.
+6. **When you are done**, delete the check on the laptop. Its record stays with the case on
+   khozo.org, so others can see which cameras and hours were read.
+
+If the laptop says a decision has not reached Khozo, connect it to the internet before you sign
+out: signing out deletes everything on the laptop.
+
+A face once marked "Same person" cannot be taken back on the laptop. If it was wrong, review the
+sighting on khozo.org.
+
 ### Annex A — Verification record
 
 | Field | Entry |
