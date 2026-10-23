@@ -147,6 +147,33 @@ live (A3) and the legal advice in the desktop specification (section 16). Police
 | Send | "Send to the case": the face picture and the whole frame | `POST /open-case-checks/:jobId/leads/:leadId` | A police sighting of that case, waiting for its officers' review (Flow C); an officer who cannot open the case is told only "sent" | That case's officers, who are alerted |
 | Audit | One row per face searched, on the officer's place, naming no case; one row per face close to a case, on that case's place | `addAudit` | As the audit log | Audit readers of each place |
 
+### Flow H4 — Answers on the laptop with no internet (Khozo Desktop, `shared/desktop-policy.js` `laptopAnswers`)
+
+**Off** unless `KHOZO_DESKTOP_LAPTOP_ANSWERS` is on, which waits on Aarakshak's agreement that the
+laptop's score may stand until the cloud confirms it (A4, A5) and the data-processing line for
+officers' devices (A6). Only on a laptop that has Aarakshak's model.
+
+| Step | Data | Goes to | Stored | Who can see it |
+|---|---|---|---|---|
+| Keep the case's signatures | The case's face signatures (numbers made from its photos; never the photos) | The officer's laptop | Encrypted in the check's folder for the check's life, so a laptop with no internet can still compare. Deleted when the check is deleted; the laptop tells Khozo when (`templateDeletedAt`), and the check and its court report say so | The officer |
+| Laptop answer | A face the laptop finds close to the case (Aarakshak's 0.35 line, `KHOZO_DESKTOP_LAPTOP_LINE`) while Khozo has not answered | The officer's screen, marked "On this laptop" | Nothing new: Khozo's answer replaces it when the laptop is online. The laptop scores the very 240 px copy Khozo is sent; on 80 faces the two agree within 0.014 (spec T3.1, 23 Oct 2026) | The officer |
+| Decide | As Flow H2; a decision made offline waits on the laptop, encrypted, and goes when it can | As Flow H2 | As Flow H2 | As Flow H2 |
+
+### Flow H5 — Watching a live camera for one case (Khozo Desktop, `desktop/scanner/live.js`, `liveWatch`)
+
+**Off** unless `KHOZO_DESKTOP_LIVE_WATCH` is on, which waits on the legal line on watching a public
+place (L2) and Aarakshak's live-stream support (A10). Police roles, one open case, one camera, until
+a set time (12 hours at most, `KHOZO_DESKTOP_LIVE_WATCH_HOURS`), on a laptop with Aarakshak's model.
+
+| Step | Data | Goes to | Stored | Who can see it |
+|---|---|---|---|---|
+| Start | The case, the camera's place and map point, the watch's end. The stream's address (often holding the camera's password) | `reports.js` `POST /:id/video-jobs` with a live camera; the address stays on the laptop | The watch's record, kept with the case (`live: { until }`); the address encrypted in the laptop's job record only, never sent or logged | Desks that can open the case |
+| Watch | The camera's pictures, a few a second; each face found and compared on the laptop with the case's signatures | The laptop's memory | **Nothing of a passer-by**: a face below the line is forgotten as soon as it is compared. No picture of the stream is recorded | — |
+| A close face | Its picture, and the whole frame with the face marked | The laptop (encrypted); the face's 240 px copy to Khozo, as Flow H2 | On the laptop until the watch is deleted, the officer signs out, or 30 days. On Khozo as Flow H2 | The officer; Khozo's answers as Flow H2 |
+| Alert | "A face close to the case", the camera and the time | The officer at the desk (a Windows notice and a banner) | — | The officer |
+| Decide | As Flow H2 | As Flow H2 | As Flow H2 | As Flow H2 |
+| Audit | `case.live_watch_started` with its end, each face sent (`case.video_searched`), each decision, the close | `addAudit` | As the audit log | Audit readers |
+
 ## 4. Necessity and proportionality
 
 | Question | Answer |
@@ -180,6 +207,8 @@ L = likelihood, S = severity (Low, Medium, High), before the controls.
 | R15 | **Bystanders in CCTV.** Searching a camera recording compares the faces of everyone in it, none of whom is missing, and could be turned to finding someone who is not missing. | M | H | The video stays on the officer's computer; each face is compared with one case's photo only, never searched across cases or kept (`shared/routes/reports.js` `POST /:id/video-search`); police roles only, for open, verified cases; the camera's place is required; every request is audited with the file's fingerprint (`case.video_searched`); at most 300 faces a search, 5 a request, 200 requests a quarter-hour an officer. Khozo Desktop (Flow H2) reads far longer footage, so it allows up to 5,000 faces a check; with Aarakshak's model on the laptop only the faces closest to the case's photo are sent, usually a few dozen a video. The faces found stay encrypted on the officer's laptop until the job is deleted, the officer signs out, or 30 days pass. | Medium. The same gap as R3: nothing stops an officer registering a person who is not missing and then searching footage for them. The monthly audit review must read `case.video_searched` rows against open cases. Faces are sent to Aarakshak and Rekognition under the existing agreements; [confirm both agreements cover faces of people who are not in any case]. |
 
 | R16 | **Searching passers-by across every open case.** A check against open cases (Flow H3) compares each face in a busy place's footage with hundreds of cases: many more chances of a false alarm, and a tool that could be turned to finding anyone in the index. | M | H | Off unless switched on after Aarakshak's permission and legal advice; police roles only; the officer narrows the cases first; a face is shown only above a higher bar than a one-case check (index top five, Aarakshak 0.45 and Rekognition 0.90, "possible" never shown); a case outside the officer's area is never named to them, and the face goes to that case's own officers to look at; each face searched and each face close to a case is audited, the latter on the case's own place; 5,000 faces a check; nothing about the people searched is kept but their moment and answer. | Medium to high until measured. The false-alarm rate per hour of footage is not known until Phase 1's checks are counted (`/app/cctv-checks`) and the solved-case calibration (spec Phase 0) is done. The bar should be set from those numbers before the switch is turned on. |
+
+| R17 | **Watching a public camera for a person** (Flow H5). A live watch looks at everyone who passes, for hours, and could be turned to following someone who is not missing. | M | H | Off unless switched on after the legal line (L2); police roles; one open case and one camera at a time, with an end (12 hours at most) that Khozo enforces; nothing of a passer-by is kept or sent; only faces close to the case are kept, encrypted, and go to Khozo as for a recorded video; the officer is told and decides, and nothing reaches the case until they do; the start, its end, every face sent and every decision are audited on the case. | Medium. As R3: a case for someone who is not missing would let an officer watch for them. The audit review must read `case.live_watch_started` rows against open cases. A camera's stream address can hold its password: kept encrypted on the laptop, never sent or logged. |
 
 ## 6. Controls that exist today
 

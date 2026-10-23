@@ -372,6 +372,25 @@ station or a bus stand, when you are not looking for one person.
 5. Every result is a lead, not an identification. Never detain, question or tell anyone on a
    match alone.
 
+## 18. Watching a live camera (Khozo Desktop)
+
+Only when your nodal officer says it is switched on, and only for one open case.
+
+1. Press **Watch a live camera**. Choose the case, say where the camera is, and paste the camera's
+   stream address from the DVR or camera settings. Say until when to watch (12 hours at most).
+2. The laptop asks the camera first. If it does not answer, check the address and that the laptop
+   can reach the camera.
+3. Keep Khozo Desktop open. When a face close to the person appears, Windows tells you and a
+   banner shows. Press **Look now**, compare the faces and see the full picture, then decide as in
+   section 16.
+4. Nothing from the camera is recorded, and faces of other people are not kept.
+5. Press **Stop watching** when you no longer need it. Delete the watch when you are done.
+
+**With no internet.** Where your nodal officer has switched on laptop answers, faces close to the
+case on the laptop's own check are shown marked **On this laptop**, and a live watch still tells
+you of them. Khozo's answer replaces them when the laptop is online. Decisions wait on the laptop
+and go by themselves.
+
 ### Annex A — Verification record
 
 | Field | Entry |
