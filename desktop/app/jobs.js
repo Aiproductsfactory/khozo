@@ -73,6 +73,11 @@ export function noteFor({ job, file, track, verdict, officer }) {
 
 const keyOf = (fileIndex, trackId) => `${fileIndex}:${trackId}`;
 const tracksOf = (file) => (file.segments || []).flatMap((s) => s.tracks || []);
+const sleep = (ms, signal) => new Promise((resolve) => {
+  if (signal?.aborted) return resolve();
+  const timer = setTimeout(resolve, ms);
+  signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+});
 
 /**
  * The jobs of one officer on this laptop.
@@ -85,9 +90,14 @@ const tracksOf = (file) => (file.segments || []).flatMap((s) => s.tracks || []);
  *   model          { card, detectorPath, detectorScore, name, version } or null
  *   detectorPath   the YuNet file to find faces with (the app's own copy)
  *   officer        { id, name }
+ *   appVersion     recorded with the check on Khozo
+ *   frameOf(file, track) -> JPEG   the whole frame, face marked, sent with "Same person"
  *   onChange(id)   a job changed; the window asks for it again
  */
-export function createJobs({ root, files, key, startWorker, getClient, model = null, detectorPath = null, officer = {}, onChange = () => {}, checkpointMs = 30000, log = () => {} }) {
+export function createJobs({
+  root, files, key, startWorker, getClient, model = null, detectorPath = null, officer = {}, appVersion = null, frameOf = null,
+  onChange = () => {}, checkpointMs = 30000, log = () => {},
+}) {
   const finder = model?.detectorPath || detectorPath || null;
   const jobs = new Map();
   const caseSignatures = new Map(); // job id -> signatures, in memory only
@@ -108,6 +118,8 @@ export function createJobs({ root, files, key, startWorker, getClient, model = n
   const dirOf = (id) => path.join(root, id);
   const fileDir = (id, index) => path.join(dirOf(id), 'files', String(index));
   const save = (job) => {
+    // A job deleted while its last request was still out is not written back.
+    if (jobs.get(job.id) !== job) return;
     job.updatedAt = new Date().toISOString();
     files.writeJson(path.join(dirOf(job.id), JOB_FILE), job);
   };
@@ -115,6 +127,190 @@ export function createJobs({ root, files, key, startWorker, getClient, model = n
     if (persist) save(job);
     onChange(job.id);
   };
+
+  // ---- Khozo's record of the check (POST /reports/:id/video-jobs) ----------------
+  //
+  // Khozo keeps each check: the videos, how far the laptop got, the faces it
+  // sent with the engines' answers, and the officer's decisions. Everything
+  // waits here when Khozo cannot be reached and goes when it can. A Khozo
+  // without these routes (not yet updated) gets the faces through the
+  // browser's route and the "Same person" decisions as case notes.
+
+  /** A recording start as the laptop's datetime-local value, as an ISO time. */
+  const isoOf = (local) => (local && Number.isFinite(Date.parse(local)) ? new Date(Date.parse(local)).toISOString() : null);
+  const seenAtOf = (file, track) => {
+    const start = Date.parse(file.recordedFrom || '');
+    return Number.isFinite(start) ? new Date(start + track.time * 1000).toISOString() : null;
+  };
+
+  /**
+   * The check's id on Khozo, made the first time it is needed; null while
+   * Khozo cannot be reached, or on a Khozo that does not keep checks. A
+   * refusal that waiting will not change (signed out, no access, a closed
+   * case) is thrown.
+   */
+  async function serverJob(job) {
+    if (job.server?.jobId) return job.server.jobId;
+    if (job.server?.available === false) return null;
+    const firstPass = model?.card && job.settings.firstPass;
+    try {
+      const { job: made } = await getClient().startVideoJob(job.caseId, {
+        jobKey: job.id,
+        appVersion,
+        files: JSON.stringify(job.files.map((f, key) => ({
+          key, name: f.name, bytes: f.bytes, seconds: f.duration, sha256: f.sha256 || null,
+          cameraPlace: f.camera, recordedFrom: isoOf(f.recordedFrom), from: f.from, to: f.to,
+        }))),
+        ...(firstPass ? { modelName: model.name, modelVersion: model.version, firstPassLine: job.settings.line, firstPassTop: job.settings.top } : {}),
+      });
+      job.server = { jobId: made.id, available: true };
+      save(job);
+      log(`Check kept on Khozo as ${made.id}`);
+      return made.id;
+    } catch (err) {
+      if ([404, 405, 501].includes(err.status)) {
+        job.server = { available: false };
+        save(job);
+        return null;
+      }
+      if (err.status === 0 || err.status === 429 || err.status >= 500) return null;
+      throw err;
+    }
+  }
+
+  /**
+   * Where the faces go: the check on Khozo, or null for the browser's route
+   * on an older Khozo. Waits, saying so, while Khozo cannot be reached.
+   */
+  async function checkFor(job, signal) {
+    let pause = 30000;
+    for (;;) {
+      const jobId = await serverJob(job);
+      if (jobId || job.server?.available === false || signal.aborted) return jobId;
+      job.waiting = { reason: 'connection', seconds: pause / 1000 };
+      changed(job, false);
+      await sleep(pause, signal);
+      pause = Math.min(pause * 2, 300000);
+    }
+  }
+
+  /** What each video's state is, as Khozo's record of the check says it. */
+  function fileState(f) {
+    if (f.outside) return 'outside';
+    if (f.error) return 'error';
+    if (f.sent) return 'done';
+    if (f.scanned) return 'checking';
+    return f.scanTo ? 'reading' : 'waiting';
+  }
+
+  /** Tells Khozo how far the laptop got; true once it is told. */
+  async function syncProgress(job) {
+    let jobId = null;
+    try { jobId = await serverJob(job); } catch { /* the job itself reports it */ }
+    if (!jobId) {
+      if (job.server?.available !== false) job.sync = { ...(job.sync || {}), progressPending: true };
+      return false;
+    }
+    const status = job.status === 'done' ? 'done' : job.status === 'error' ? 'error' : ['running', 'queued'].includes(job.status) ? 'running' : 'paused';
+    try {
+      await getClient().videoJobProgress(job.caseId, jobId, {
+        status,
+        scanSeconds: Math.round(job.scanSeconds || 0),
+        files: JSON.stringify(job.files.map((f, key) => ({
+          key,
+          secondsRead: Math.max(0, Math.round((f.scanTo ?? f.from ?? 0) - (f.from || 0))),
+          peopleSeen: tracksOf(f).length,
+          facesTooSmall: f.facesTooSmall || 0,
+          state: fileState(f),
+          sha256: f.sha256 || null,
+        }))),
+      });
+      job.sync = { ...(job.sync || {}), progressPending: false, progressAt: new Date().toISOString() };
+      return true;
+    } catch {
+      job.sync = { ...(job.sync || {}), progressPending: true };
+      return false;
+    }
+  }
+
+  // While a video is read, Khozo hears how far it got every few minutes.
+  const progressSent = new Map(); // job id -> when
+  function progressSoon(job, everyMs = 120000) {
+    if (Date.now() - (progressSent.get(job.id) || 0) < everyMs) return;
+    progressSent.set(job.id, Date.now());
+    syncProgress(job).then(() => save(job));
+  }
+
+  /** Sends one decision: to the check on Khozo, or, on an older Khozo, "Same person" as a case note. */
+  const inFlight = new Set(); // `${job id}|${key}` while its decision is out, so it never goes twice at once
+  async function syncDecision(job, k) {
+    const flight = `${job.id}|${k}`;
+    if (inFlight.has(flight)) return;
+    inFlight.add(flight);
+    try {
+      await sendDecision(job, k);
+    } finally {
+      inFlight.delete(flight);
+    }
+  }
+
+  async function sendDecision(job, k) {
+    const d = job.decisions[k];
+    const index = Number(k.split(':')[0]);
+    const trackId = k.slice(k.indexOf(':') + 1);
+    const file = job.files[index];
+    const track = file && tracksOf(file).find((t) => String(t.id) === trackId);
+    if (!d || !track) return;
+    try {
+      const jobId = await serverJob(job);
+      const client = getClient();
+      if (jobId) {
+        const form = new FormData();
+        form.append('key', k);
+        form.append('decision', d.decision);
+        form.append('fileKey', String(index));
+        form.append('t', String(track.time));
+        if (job.answers[k]?.verdict) form.append('verdict', job.answers[k].verdict);
+        if (job.scores[k] != null) form.append('closeness', String(job.scores[k]));
+        const seenAt = seenAtOf(file, track);
+        if (seenAt) form.append('seenAt', seenAt);
+        if (d.decision === 'same') {
+          // The face, and the whole frame with the face marked, for the sighting.
+          // A "not this person" sends no picture of anyone.
+          form.append('photo', new File([files.read(path.join(fileDir(job.id, index), track.picture))], 'face.jpg', { type: 'image/jpeg' }));
+          if (frameOf) {
+            try {
+              form.append('extraPhotos', new File([await frameOf(file, track)], 'frame.jpg', { type: 'image/jpeg' }));
+            } catch { /* the video may have gone with its pen drive: the face alone */ }
+          }
+        }
+        const res = await client.videoJobDecision(job.caseId, jobId, form);
+        Object.assign(d, { saved: true, via: 'check', sightingId: res.decision?.sightingId || null, error: null });
+      } else if (job.server?.available === false) {
+        if (d.decision === 'same') await client.addNote(job.caseId, noteFor({ job, file, track, verdict: job.answers[k]?.verdict, officer }));
+        Object.assign(d, { saved: true, via: d.decision === 'same' ? 'note' : 'laptop', error: null });
+      } else {
+        Object.assign(d, { saved: false, error: 'No connection to Khozo' });
+      }
+    } catch (err) {
+      Object.assign(d, { saved: false, error: err.message });
+    }
+  }
+
+  /** Sends what is waiting: decisions not yet sent, and progress Khozo has not heard. */
+  async function syncPending(job) {
+    let touched = false;
+    for (const [k, d] of Object.entries(job.decisions || {})) {
+      if (d.saved !== false) continue;
+      await syncDecision(job, k);
+      touched = true;
+    }
+    if (job.sync?.progressPending && job.status !== 'running') {
+      await syncProgress(job);
+      touched = true;
+    }
+    if (touched) changed(job);
+  }
 
   function person(job, file, index, track) {
     const k = keyOf(index, track.id);
@@ -155,6 +351,14 @@ export function createJobs({ root, files, key, startWorker, getClient, model = n
       updatedAt: job.updatedAt,
       settings: job.settings,
       model: job.model || null,
+      // Khozo's record of the check: kept there, waiting to go, or an older Khozo that keeps none.
+      sync: {
+        kept: Boolean(job.server?.jobId),
+        olderKhozo: job.server?.available === false,
+        decisionsWaiting: Object.values(job.decisions).filter((d) => d.saved === false).length,
+        progressWaiting: Boolean(job.sync?.progressPending),
+        at: job.sync?.progressAt || null,
+      },
       files: job.files.map((file, index) => {
         const own = people.filter((p) => p.fileIndex === index);
         const span = (file.to ?? file.duration ?? 0) - (file.from || 0);
@@ -224,6 +428,7 @@ export function createJobs({ root, files, key, startWorker, getClient, model = n
         file.scanTo = event.t;
         file.facesTooSmall = (file.facesTooSmallBefore || 0) + event.facesTooSmall;
         changed(job);
+        progressSoon(job);
       }
     });
     segment.tracks = result.tracks;
@@ -285,7 +490,10 @@ export function createJobs({ root, files, key, startWorker, getClient, model = n
     const toSend = candidates.filter((t) => !job.answers[t.id] || job.answers[t.id].verdict === 'no_answer');
     if (toSend.length) {
       file.searchId ||= `vs_${crypto.randomBytes(9).toString('base64url')}`;
+      const jobId = await checkFor(job, signal);
+      if (signal.aborted) return;
       await sendFaces({
+        job: jobId ? { jobId, fileKey: index } : null,
         client: getClient(),
         caseId: job.caseId,
         record: { name: file.name, bytes: file.bytes, duration: file.duration, sha256: file.sha256, tracks, facesTooSmall: file.facesTooSmall },
@@ -315,6 +523,7 @@ export function createJobs({ root, files, key, startWorker, getClient, model = n
   async function run(job) {
     const controller = new AbortController();
     const worker = startWorker();
+    const started = Date.now();
     active = { id: job.id, controller, worker, fileIndex: null };
     job.status = 'running';
     job.error = null;
@@ -352,8 +561,14 @@ export function createJobs({ root, files, key, startWorker, getClient, model = n
     } finally {
       worker.kill();
       job.waiting = null;
+      job.scanSeconds = (job.scanSeconds || 0) + (Date.now() - started) / 1000;
       active = null;
       changed(job);
+      // Khozo hears where the check stopped: finished, paused or stuck.
+      if (jobs.get(job.id) === job) {
+        progressSent.set(job.id, Date.now());
+        syncProgress(job).then(() => changed(job));
+      }
       next();
     }
   }
@@ -428,11 +643,17 @@ export function createJobs({ root, files, key, startWorker, getClient, model = n
       }
     },
 
-    /** Deletes a job and every picture it holds from this laptop. */
+    /** Deletes a job and every picture it holds from this laptop; its record on Khozo is closed and stays with the case. */
     remove(id) {
       if (active?.id === id) {
         active.controller.abort();
         active.worker.kill();
+      }
+      const job = jobs.get(id);
+      if (job?.server?.jobId) {
+        try {
+          getClient()?.closeVideoJob(job.caseId, job.server.jobId).catch(() => {});
+        } catch { /* signed out: Khozo's record stays open, and nothing more is sent to it */ }
       }
       jobs.delete(id);
       caseSignatures.delete(id);
@@ -465,26 +686,32 @@ export function createJobs({ root, files, key, startWorker, getClient, model = n
       }
     },
 
-    /** The officer's decision on one person: "same" adds a note to the case, "not" is kept here. */
+    /**
+     * The officer's decision on one person. "same" becomes a sighting of the
+     * case on Khozo, waiting for the case's review (a note on an older
+     * Khozo); "not" is counted there as a false alarm, with no picture sent.
+     * A decision Khozo could not take waits here and goes with syncAll().
+     */
     async decide(id, key, decision) {
       const job = jobs.get(id);
       if (!job) throw new Error('No such job');
+      if (!['same', 'not'].includes(decision)) throw new Error('Say whether this is the same person');
       const [index, trackId] = [Number(key.split(':')[0]), key.slice(key.indexOf(':') + 1)];
       const file = job.files[index];
-      const track = tracksOf(file).find((t) => String(t.id) === trackId);
+      const track = file && tracksOf(file).find((t) => String(t.id) === trackId);
       if (!track) throw new Error('No such person in this job');
-      job.decisions[key] = { decision, at: new Date().toISOString(), by: officer.name || null };
-      if (decision === 'same') {
-        try {
-          await getClient().addNote(job.caseId, noteFor({ job, file, track, verdict: job.answers[key]?.verdict, officer }));
-          job.decisions[key].saved = true;
-        } catch (err) {
-          job.decisions[key].saved = false;
-          job.decisions[key].error = err.message;
-        }
-      }
+      job.decisions[key] = { decision, at: new Date().toISOString(), by: officer.name || null, saved: false };
+      changed(job);
+      await syncDecision(job, key);
       changed(job);
       return job.decisions[key];
+    },
+
+    /** Sends everything waiting for Khozo: decisions, and where each check stopped. */
+    async syncAll() {
+      for (const job of [...jobs.values()]) {
+        if (jobs.get(job.id) === job) await syncPending(job);
+      }
     },
 
     /** A face picture of a job, decrypted. */

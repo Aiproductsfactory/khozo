@@ -4,6 +4,7 @@
 // (web/src/video/VideoCaseSearch.jsx): five pictures a request, wait and ask
 // once more when no engine answered, one at a time when five were too much.
 // The video itself is never sent; only the face pictures and their moments.
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { VIDEO_SEARCH_BATCH } from '../../shared/video-search.js';
@@ -63,6 +64,12 @@ export function createClient({ api = 'https://khozo.org/api', token = null, fetc
     getCase: async (id) => (await call('GET', `/reports/${encodeURIComponent(id)}`)).report,
     /** A note on the case, as the browser's "Add to case" writes one. */
     addNote: (id, note) => call('POST', `/reports/${encodeURIComponent(id)}/notes`, { json: { note } }),
+    // A check's record on Khozo (shared/routes/reports.js /:id/video-jobs).
+    startVideoJob: (id, body) => call('POST', `/reports/${encodeURIComponent(id)}/video-jobs`, { json: body }),
+    videoJobFaces: (id, jobId, form) => call('POST', `/reports/${encodeURIComponent(id)}/video-jobs/${encodeURIComponent(jobId)}/faces`, { form }),
+    videoJobProgress: (id, jobId, body) => call('POST', `/reports/${encodeURIComponent(id)}/video-jobs/${encodeURIComponent(jobId)}/progress`, { json: body }),
+    videoJobDecision: (id, jobId, form) => call('POST', `/reports/${encodeURIComponent(id)}/video-jobs/${encodeURIComponent(jobId)}/decisions`, { form }),
+    closeVideoJob: (id, jobId) => call('POST', `/reports/${encodeURIComponent(id)}/video-jobs/${encodeURIComponent(jobId)}/close`, { json: {} }),
     photo: (id, photoId = null) => call('GET', `/reports/photo/${encodeURIComponent(id)}${photoId ? `?p=${encodeURIComponent(photoId)}` : ''}`, { bytes: true }),
     videoSearch: (id, form) => call('POST', `/reports/${encodeURIComponent(id)}/video-search`, { form }),
   };
@@ -104,6 +111,10 @@ async function faceFile(readPicture, track) {
 export async function sendFaces({
   client, caseId, record, dir, tracks, camera, recordedFrom = null, searchId,
   readPicture = (track) => fs.readFileSync(path.join(dir, track.picture)),
+  // With a check on Khozo, `{ jobId, fileKey }`: the faces go to that check
+  // (POST /:id/video-jobs/:jobId/faces), each batch named from the faces in it,
+  // so a batch sent again is answered from the record, not compared again.
+  job = null,
   onAnswers = () => {}, onWait = () => {}, busyWaitMs = 15000, signal,
 }) {
   const batches = [];
@@ -133,7 +144,12 @@ export async function sendFaces({
     let pause = 30000;
     for (;;) {
       try {
-        return await client.videoSearch(caseId, await formFor(faces, index));
+        const form = await formFor(faces, index);
+        if (!job) return await client.videoSearch(caseId, form);
+        form.append('fileKey', String(job.fileKey));
+        // The batch's name replaces its number: a field sent twice may arrive as a list.
+        form.set('batch', crypto.createHash('sha1').update(faces.map((t) => t.id).join(',')).digest('hex').slice(0, 24));
+        return await client.videoJobFaces(caseId, job.jobId, form);
       } catch (err) {
         if (signal?.aborted) throw err;
         if (err.status === 429) {

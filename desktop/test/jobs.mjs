@@ -6,7 +6,12 @@
  *   encrypted;
  * - a job paused part-way carries on from where it stopped;
  * - the time window in clock time, and the note "Same person" adds to a case;
- * - the role list matches Khozo's, and every screen word is in Hindi and Gujarati.
+ * - the role list matches Khozo's, and every screen word is in Hindi and Gujarati;
+ * - Khozo's record of a check: made once, told where the check stopped, the
+ *   officer's decisions sent (the face and the frame for "Same person", no
+ *   picture for "Not this person"), kept on the laptop while Khozo cannot be
+ *   reached and sent once when it can, closed when the job is deleted; and on
+ *   a Khozo without check records, "Same person" as a case note.
  *
  * With KHOZO_SMOKE_VIDEO set to a clip with faces (the demo clip), a whole
  * job is also run through Khozo's answers and an officer's decision.
@@ -25,6 +30,7 @@ import { loadKey, open, secureFiles, seal } from '../app/secure-store.js';
 import { VIDEO_ROLES, canSearchCase } from '../app/roles.js';
 import { KEYS, TRANSLATIONS } from '../app/renderer/i18n.js';
 import { ffmpegPath } from '../scanner/ffmpeg.js';
+import { KhozoError } from '../scanner/khozo.js';
 import { POLICE_ROLES } from '../../shared/scope.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -58,20 +64,77 @@ function startWorker() {
   };
 }
 
-/** A stand-in for Khozo: the first face of each request is "likely", the rest "unlikely". */
-function fakeClient() {
-  const calls = { searches: [], notes: [] };
+/**
+ * A stand-in for Khozo: the first face of each request is "likely", the rest
+ * "unlikely". `keeps: false` is a Khozo without check records (not yet
+ * updated); `online = false` is a laptop that cannot reach Khozo.
+ */
+function fakeClient({ keeps = true } = {}) {
+  const calls = { searches: [], notes: [], started: [], progress: [], decisions: [], closed: [] };
+  let online = true;
+  const reach = () => { if (!online) throw new KhozoError('No connection to Khozo (ECONNREFUSED)', 0); };
+  const compare = async (caseId, form, job = {}) => {
+    const faces = [...form.getAll('photo'), ...form.getAll('extraPhotos')];
+    calls.searches.push({ caseId, ...job, faces: faces.length, camera: form.get('cameraPlace'), times: form.get('times'), firstBytes: Buffer.from(await faces[0].arrayBuffer()).subarray(0, 2).toString('hex') });
+    return { results: faces.map((_, index) => ({ index, verdict: index === 0 && calls.searches.length === 1 ? 'likely' : 'unlikely', enginesAnswered: ['aarakshak'] })) };
+  };
   return {
     calls,
+    set online(value) { online = value; },
     getCase: async (id) => ({ id, childName: 'Test Person', status: 'missing', extraPhotos: [] }),
     photo: async () => { throw new Error('no photo'); },
-    videoSearch: async (caseId, form) => {
-      const faces = [...form.getAll('photo'), ...form.getAll('extraPhotos')];
-      calls.searches.push({ caseId, faces: faces.length, camera: form.get('cameraPlace'), times: form.get('times'), firstBytes: Buffer.from(await faces[0].arrayBuffer()).subarray(0, 2).toString('hex') });
-      return { results: faces.map((_, index) => ({ index, verdict: index === 0 && calls.searches.length === 1 ? 'likely' : 'unlikely', enginesAnswered: ['aarakshak'] })) };
+    videoSearch: async (caseId, form) => { reach(); return compare(caseId, form); },
+    addNote: async (caseId, note) => { reach(); calls.notes.push({ caseId, note }); return { ok: true }; },
+    startVideoJob: async (caseId, body) => {
+      reach();
+      if (!keeps) throw new KhozoError('Not found', 404);
+      calls.started.push({ caseId, body });
+      return { job: { id: `vj_${body.jobKey}` } };
     },
-    addNote: async (caseId, note) => { calls.notes.push({ caseId, note }); return { ok: true }; },
+    videoJobFaces: async (caseId, jobId, form) => { reach(); return compare(caseId, form, { jobId, fileKey: form.get('fileKey'), batch: form.get('batch') }); },
+    videoJobProgress: async (caseId, jobId, body) => { reach(); calls.progress.push({ jobId, ...body }); return { job: {} }; },
+    videoJobDecision: async (caseId, jobId, form) => {
+      reach();
+      const decision = form.get('decision');
+      calls.decisions.push({
+        jobId, key: form.get('key'), decision, fileKey: form.get('fileKey'), t: form.get('t'), seenAt: form.get('seenAt'), verdict: form.get('verdict'),
+        photos: form.getAll('photo').length, extras: form.getAll('extraPhotos').length,
+      });
+      return { decision: { decision, sightingId: decision === 'same' ? `f_${calls.decisions.length}` : undefined } };
+    },
+    closeVideoJob: async (caseId, jobId) => { reach(); calls.closed.push(jobId); return { job: {} }; },
   };
+}
+
+const JPEG = Buffer.concat([Buffer.from('ffd8ffe0', 'hex'), crypto.randomBytes(200), Buffer.from('ffd9', 'hex')]);
+
+/** A finished job written straight to disk, as one the laptop read earlier: two people, both answered by Khozo. */
+function plantJob(root, files, id) {
+  const job = {
+    id, caseId: 'r_test', caseName: 'Test Person', caseFir: '', officer: { id: 'u1', name: 'PSI Test' },
+    createdAt: new Date().toISOString(), status: 'done', window: null,
+    settings: { fps: 2, maxSide: 960, line: 0.25, top: 10, firstPass: false },
+    files: [{
+      path: path.join(tmp, 'gone.mp4'), name: 'gate1.mp4', bytes: 73400320, duration: 60, width: 1280, height: 720,
+      camera: 'Kalupur railway station, gate 1', recordedFrom: '2026-10-20T14:30:05', from: 0, to: null, outside: false,
+      segments: [{ index: 0, from: 0, to: 60, done: true, tracks: [
+        { id: 's0-1', time: 11.5, firstTime: 10, lastTime: 13, quality: 0.9, picture: 'p1.jpg' },
+        { id: 's0-2', time: 30, firstTime: 29, lastTime: 31, quality: 0.8, picture: 'p2.jpg' },
+      ] }],
+      scanned: true, scored: false, sent: true, scanTo: 60, sha256: 'c'.repeat(64),
+    }],
+    scores: {},
+    answers: { '0:s0-1': { verdict: 'likely', engines: ['aarakshak', 'rekognition'] }, '0:s0-2': { verdict: 'possible', engines: ['aarakshak'] } },
+    decisions: {},
+  };
+  files.writeJson(path.join(root, id, 'job.bin'), job);
+  for (const picture of ['p1.jpg', 'p2.jpg']) files.write(path.join(root, id, 'files', '0', picture), JPEG);
+}
+
+async function until(test, ms = 10000) {
+  const start = Date.now();
+  while (!test() && Date.now() - start < ms) await sleep(50);
+  return test();
 }
 
 async function untilDone(jobs, id, ms = 180000) {
@@ -167,12 +230,64 @@ spawnSync(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi'
   await sleep(300);
   const resumed = await untilDone(jobs, id2);
   check('a paused job carries on and finishes', resumed.status === 'done' && resumed.files[0].progress === 1, `${resumed.status} ${resumed.error || ''}`);
+  const told = await until(() => client.calls.progress.some((p) => p.jobId === `vj_${id}` && p.status === 'done'));
+  const said = told && JSON.parse(client.calls.progress.find((p) => p.jobId === `vj_${id}` && p.status === 'done').files)[0];
+  check('Khozo is told where a finished check stopped', told && said.secondsRead === 40 && said.state === 'done' && /^[0-9a-f]{64}$/.test(said.sha256 || ''), JSON.stringify(said));
+  check('each job makes its check on Khozo once', client.calls.started.filter((c) => c.body.jobKey === id).length === 1 && client.calls.started.filter((c) => c.body.jobKey === id2).length === 1);
 
   // Opened again, as after a restart.
   const again = createJobs({ root, files, key, startWorker, getClient: () => client, officer: { id: 'u1', name: 'PSI Test' } });
   check('jobs are read back after a restart', again.list().length === 2);
   again.remove(id);
   check('deleting a job removes its folder', !fs.existsSync(path.join(root, id)) && again.list().length === 1);
+  check('deleting a job closes its check on Khozo', client.calls.closed.includes(`vj_${id}`));
+}
+
+// ---- Khozo's record of a check -----------------------------------------------------------
+
+console.log('Khozo’s record of a check');
+{
+  const key = crypto.randomBytes(32);
+  const files = secureFiles(key);
+  const officer = { id: 'u1', name: 'PSI Test' };
+  const frames = [];
+  const frameOf = async (file, track) => { frames.push(track.time); return JPEG; };
+
+  const client = fakeClient();
+  const root = path.join(tmp, 'jobs-sync');
+  plantJob(root, files, 'job_sync_a');
+  plantJob(root, files, 'job_sync_b');
+  const jobs = createJobs({ root, files, key, startWorker, getClient: () => client, officer, appVersion: '0.1.0', frameOf });
+
+  const same = await jobs.decide('job_sync_a', '0:s0-1', 'same');
+  const made = client.calls.started.find((c) => c.body.jobKey === 'job_sync_a');
+  const madeFiles = made ? JSON.parse(made.body.files) : [];
+  check('the check is made on Khozo with the videos, the cameras and the app', client.calls.started.length === 1 && made.body.appVersion === '0.1.0' && madeFiles[0]?.cameraPlace === 'Kalupur railway station, gate 1' && madeFiles[0]?.recordedFrom === new Date(Date.parse('2026-10-20T14:30:05')).toISOString(), JSON.stringify(made?.body));
+  const sent = client.calls.decisions[0];
+  check('"Same person" sends the face, the whole frame and the moment', sent?.decision === 'same' && sent.photos === 1 && sent.extras === 1 && frames[0] === 11.5 && sent.fileKey === '0' && sent.t === '11.5' && sent.verdict === 'likely' && sent.seenAt === new Date(Date.parse('2026-10-20T14:30:05') + 11500).toISOString(), JSON.stringify(sent));
+  check('Khozo’s sighting is kept with the decision', same.saved === true && same.via === 'check' && same.sightingId === 'f_1' && jobs.get('job_sync_a').sync.kept === true && client.calls.notes.length === 0);
+  await jobs.decide('job_sync_a', '0:s0-2', 'not');
+  const not = client.calls.decisions[1];
+  check('"Not this person" is sent with no picture', not?.decision === 'not' && not.photos === 0 && not.extras === 0 && frames.length === 1);
+
+  client.online = false;
+  const waiting = await jobs.decide('job_sync_b', '0:s0-1', 'same');
+  check('a decision Khozo cannot take waits on the laptop', waiting.saved === false && jobs.get('job_sync_b').sync.decisionsWaiting === 1 && client.calls.decisions.length === 2);
+  client.online = true;
+  await Promise.all([jobs.syncAll(), jobs.syncAll()]);
+  const later = jobs.get('job_sync_b').everyone.find((p) => p.key === '0:s0-1').decision;
+  check('… and goes once when Khozo can be reached', later.saved === true && Boolean(later.sightingId) && client.calls.decisions.filter((d) => d.jobId === 'vj_job_sync_b').length === 1 && jobs.get('job_sync_b').sync.decisionsWaiting === 0);
+  const reread = createJobs({ root, files, key, startWorker, getClient: () => client, officer });
+  check('the check’s id on Khozo is kept with the job', reread.get('job_sync_a').sync.kept === true);
+
+  const older = fakeClient({ keeps: false });
+  const root2 = path.join(tmp, 'jobs-older');
+  plantJob(root2, files, 'job_older');
+  const jobs2 = createJobs({ root: root2, files, key, startWorker, getClient: () => older, officer, frameOf });
+  const noted = await jobs2.decide('job_older', '0:s0-1', 'same');
+  check('on a Khozo without check records, "Same person" is a case note', noted.saved === true && noted.via === 'note' && older.calls.notes.length === 1 && older.calls.notes[0].note.includes('Kalupur railway station, gate 1') && jobs2.get('job_older').sync.olderKhozo === true);
+  await jobs2.decide('job_older', '0:s0-2', 'not');
+  check('… and "Not this person" stays on the laptop', older.calls.notes.length === 1 && older.calls.decisions.length === 0);
 }
 
 // ---- a whole job on a clip with faces ----------------------------------------------------
@@ -188,6 +303,7 @@ if (process.env.KHOZO_SMOKE_VIDEO) {
   const id = jobs.create({ report: { id: 'r_test', childName: 'Test Person' }, files: [{ path: clip, name: path.basename(clip), bytes: fs.statSync(clip).size, duration: 24, width: 1280, height: 720, camera: 'Kalupur railway station, gate 1', recordedFrom: '2026-10-20T14:30:05' }] });
   const job = await untilDone(jobs, id);
   check('people are found and sent to Khozo', job.status === 'done' && job.counts.people > 0 && client.calls.searches.length > 0, `${job.status} ${job.counts.people} people`);
+  check('the faces go to the check on Khozo, each batch named', client.calls.searches.every((s) => s.jobId === `vj_${id}` && s.fileKey === '0' && /^[0-9a-f]{24}$/.test(s.batch || '')));
   check('only face pictures are sent, five at most a request, with the camera', client.calls.searches.every((s) => s.faces <= 5 && s.firstBytes === 'ffd8' && s.camera === 'Kalupur railway station, gate 1'));
   check('Khozo’s answer is on the person, in clock time', job.toCheck.length === 1 && job.toCheck[0].verdict === 'likely' && /2:30|14:30/.test(job.toCheck[0].clock || ''), JSON.stringify(job.toCheck[0]));
   const someone = job.everyone[0];
@@ -195,9 +311,9 @@ if (process.env.KHOZO_SMOKE_VIDEO) {
   const onDisk = fs.readFileSync(path.join(root, id, 'files', '0', rel));
   check('face pictures on disk are encrypted, and open as JPEG', onDisk.subarray(0, 2).toString('hex') !== 'ffd8' && jobs.picture(id, 0, rel).subarray(0, 2).toString('hex') === 'ffd8');
   const decision = await jobs.decide(id, job.toCheck[0].key, 'same');
-  check('"Same person" adds a note to the case', decision.saved === true && client.calls.notes.length === 1 && client.calls.notes[0].note.includes('Kalupur railway station, gate 1'));
+  check('"Same person" becomes a sighting of the case', decision.saved === true && Boolean(decision.sightingId) && client.calls.decisions.at(-1).photos === 1);
   await jobs.decide(id, job.everyone.at(-1).key, 'not');
-  check('"Not this person" is kept on the laptop only', client.calls.notes.length === 1 && jobs.get(id).everyone.at(-1).decision.decision === 'not');
+  check('"Not this person" is sent with no picture', client.calls.decisions.at(-1).decision === 'not' && client.calls.decisions.at(-1).photos === 0 && jobs.get(id).everyone.at(-1).decision.decision === 'not');
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });

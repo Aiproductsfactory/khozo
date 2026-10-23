@@ -316,6 +316,15 @@ function waitingNote(job) {
   return `<div class="info" role="status">${esc(t(`wait.${job.waiting.reason}`, { time }))}</div>`;
 }
 
+/** Whether Khozo has this check's record, and what is still waiting to go to it. */
+function syncNote(job) {
+  const sync = job.sync || {};
+  if (sync.olderKhozo) return `<p class="small quiet">${esc(t('sync.older'))}</p>`;
+  if (sync.decisionsWaiting) return `<div class="info" role="status">${esc(t('sync.waiting', { n: sync.decisionsWaiting }))}</div>`;
+  if (sync.kept) return `<p class="small quiet">✓ ${esc(t('sync.kept'))}</p>`;
+  return '';
+}
+
 /** The part of a job's page that does not change while it runs: built once, so the case photo never flickers. */
 function renderJobHead(job) {
   return `
@@ -355,6 +364,7 @@ function renderJobLive(job) {
   return `
     ${error ? `<div class="error" role="alert">${esc(error)}</div>` : ''}
     ${waitingNote(job)}
+    ${syncNote(job)}
     ${job.notice ? `<div class="info">${esc(t(`notice.${job.notice}`, { n: 600 }))}</div>` : ''}
     <h3>${esc(t('job.files'))}</h3>
     <div class="card files-progress">${files}</div>
@@ -367,7 +377,7 @@ function personCard(job, p) {
   if (decision?.decision === 'same') {
     decided = decision.saved === false
       ? `<p class="error">${esc(t('person.addFailed', { error: decision.error || '' }))}</p>`
-      : `<p class="decided same">✓ ${esc(t('person.added'))}</p>`;
+      : `<p class="decided same">✓ ${esc(t(decision.via === 'note' ? 'person.added' : 'person.sighting'))}</p>`;
   } else if (decision?.decision === 'not') {
     decided = `<p class="decided not">${esc(t('person.markedNot'))}</p>`;
   }

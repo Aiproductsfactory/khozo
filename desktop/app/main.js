@@ -161,11 +161,29 @@ function openSession() {
     model,
     detectorPath: YUNET,
     officer: session.user,
+    appVersion: app.getVersion(),
+    frameOf,
     onChange: jobChanged,
     log,
   });
   jobs.sweep(30);
   jobs.resumeInterrupted();
+  syncSoon();
+}
+
+// Decisions and progress Khozo could not take wait on the laptop and go
+// when it can: at sign-in, then every few minutes.
+let syncTimer = null;
+let syncing = false;
+function syncSoon() {
+  clearInterval(syncTimer);
+  const sync = async () => {
+    if (!jobs || syncing) return;
+    syncing = true;
+    try { await jobs.syncAll(); } catch (err) { log(`Sending to Khozo failed: ${err.message}`); } finally { syncing = false; }
+  };
+  sync();
+  syncTimer = setInterval(sync, 5 * 60 * 1000);
 }
 
 function closeSession({ deleteJobs = false } = {}) {
@@ -173,6 +191,7 @@ function closeSession({ deleteJobs = false } = {}) {
     for (const j of jobs.list()) if (j.status === 'running' || j.status === 'queued') jobs.pause(j.id);
     if (deleteJobs) jobs.removeAll();
   }
+  clearInterval(syncTimer);
   jobs = null;
   client = null;
   session = null;
