@@ -162,9 +162,14 @@ export function CheckCard({ job, showCase = true }) {
           {t('The officer marked {confirmed} as the person and {rejected} as not the person.', { confirmed: job.confirmed, rejected: job.rejected })}
         </p>
       )}
-      {job.sightings?.length > 0 && (
+      {(job.sightings?.length > 0 || !showCase) && (
         <div className="flex flex-wrap gap-1.5">
-          {job.sightings.map((id, i) => (
+          {!showCase && (
+            <Link to={`/app/cctv-checks/report?case=${encodeURIComponent(job.reportId)}&job=${encodeURIComponent(job.id)}`} className="rounded-lg bg-white px-2 py-1 text-xs font-semibold text-ink ring-1 ring-black/15 hover:bg-gray-50">
+              {t('Report for a court')}
+            </Link>
+          )}
+          {(job.sightings || []).map((id, i) => (
             <Link key={id} to={`/app/sightings?id=${encodeURIComponent(id)}`} title={id} className="rounded-lg bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-800 ring-1 ring-emerald-600/20 hover:bg-emerald-100">
               {t('Open sighting {n}', { n: i + 1 })}
             </Link>
