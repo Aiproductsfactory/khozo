@@ -29,6 +29,7 @@ import {
   readPhotoBlob,
   deletePhotoBlob,
   photoBlobStats,
+  ensureVideoJobsTable,
 } from './db.js';
 
 export function photoMimeType(filename) {
@@ -76,7 +77,7 @@ function auditHash(row, prevHash = row.prevHash || null) {
 const norm = (v) => String(v || '').trim().toLowerCase();
 
 /** Real Postgres access. Tests substitute this to run without a database. */
-const POSTGRES = { query, upsertRecord, upsertMany, readVersioned, updateIfVersion, savePhotoBlob, readPhotoBlob, deletePhotoBlob, photoBlobStats };
+const POSTGRES = { query, upsertRecord, upsertMany, readVersioned, updateIfVersion, savePhotoBlob, readPhotoBlob, deletePhotoBlob, photoBlobStats, ensureVideoJobsTable };
 
 /** The tables a replica holds whole, and how each is read. */
 const HYDRATED = {
@@ -127,6 +128,8 @@ const AUDIT_TAIL_SQL = 'select data from public.audit order by ts desc limit 64'
  */
 const PARTIAL = [
   { method: 'GET', path: '/api/dashboard/notifications', tables: ['users'] },
+  // Khozo Desktop asking whether a newer version is out: only who is asking.
+  { method: 'GET', path: '/api/dashboard/desktop-version', tables: ['users'] },
   // The officer app registering its phone for alerts, and the test alert.
   { method: 'POST', path: '/api/dashboard/push-token', tables: ['users'] },
   { method: 'POST', path: '/api/dashboard/push-token/remove', tables: ['users'] },
@@ -148,6 +151,7 @@ const PARTIAL = [
   { method: 'POST', pattern: /^\/api\/reports\/[^/]+\/video-jobs(\/[^/]+\/(faces|progress|close))?$/, tables: ['users', 'reports', VIDEO_JOBS_OF_CASE, AUDIT_TAIL] },
   { method: 'POST', pattern: /^\/api\/reports\/[^/]+\/video-jobs\/[^/]+\/decisions$/, tables: [...DEFAULT_TABLES, VIDEO_JOBS_OF_CASE] },
   { method: 'GET', pattern: /^\/api\/reports\/[^/]+\/video-jobs$/, tables: ['users', 'reports', VIDEO_JOBS_OF_CASE] },
+  { method: 'GET', pattern: /^\/api\/reports\/[^/]+\/video-jobs\/[^/]+\/report$/, tables: ['users', 'reports', VIDEO_JOBS_OF_CASE, AUDIT_TAIL] },
   // The command centre's CCTV checks page: the checks of the cases the desk can see, without their batches.
   { method: 'GET', path: '/api/dashboard/video-checks', tables: ['users', 'reports', VIDEO_JOB_SUMMARIES] },
   // Anonymising a case also anonymises its checks (shared/retention.js).
@@ -200,6 +204,9 @@ export async function createRequestStore(env, ctx, io = POSTGRES, { tables: requ
       .catch((err) => {
         if (!(name === 'videoJobs' || VIDEO_JOB_VIEWS[name]) || err?.code !== '42P01') throw err; // 42P01: no such table
         missing.add('videoJobs');
+        // Made in the background for the next request (db.js ensureVideoJobsTable).
+        const made = io.ensureVideoJobsTable?.(env, ctx);
+        if (made && ctx?.waitUntil) ctx.waitUntil(made);
         return [];
       }))
   );

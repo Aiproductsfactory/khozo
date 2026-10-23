@@ -398,6 +398,51 @@ export function summariseVideoJobs(jobs, { recent = 25 } = {}) {
 }
 
 /**
+ * A CCTV check's report, for a court or an enquiry (spec F19): the case, the
+ * officer, each video with its fingerprint, camera, map point and recording
+ * start, how much of it was read and what the engines found, and each of the
+ * officer's decisions with its moment. No face picture is in it. Signed by
+ * the route that sends it.
+ */
+export function videoJobReport(job, report, now = new Date().toISOString()) {
+  const counts = job.fileCounts || countsOfBatches(job.batches).fileCounts;
+  const files = new Map((job.files || []).map((f) => [String(f.key), f]));
+  const clockOf = (file, t) => {
+    const start = Date.parse(file?.recordedFrom || '');
+    return Number.isFinite(start) && t != null ? new Date(start + t * 1000).toISOString() : null;
+  };
+  const decisions = Object.entries(job.decisions || {})
+    .map(([key, d]) => {
+      const file = files.get(String(d.fileKey));
+      return {
+        key, decision: d.decision, cameraPlace: file?.cameraPlace || null, videoTime: d.t != null ? videoTimeText(d.t) : null,
+        seenAt: clockOf(file, d.t), verdict: d.verdict || null, markedBy: d.byName || null, markedAt: d.at || null, sightingId: d.sightingId || null,
+      };
+    })
+    .sort((a, b) => String(a.seenAt || a.videoTime).localeCompare(String(b.seenAt || b.videoTime)));
+  const view = videoJobView(job);
+  return {
+    title: 'Khozo CCTV check report',
+    generatedAt: now,
+    case: { id: report.id, name: report.childName || report.name || null, fir: report.firNo || null, state: report.state || null, district: report.district || null },
+    check: {
+      id: job.id, status: job.status, progressStatus: job.progress?.status || null, startedAt: job.createdAt, closedAt: job.closedAt || null,
+      officer: job.createdByName || null, role: job.createdByRole || null, officerPlace: job.officerPlace || null,
+      app: job.appVersion || null, model: job.model?.name || null, firstPassLine: job.firstPass?.line ?? null, scanSeconds: job.progress?.scanSeconds ?? null,
+    },
+    videos: (job.files || []).map((f) => ({
+      name: f.name, sha256: f.sha256 || null, cameraPlace: f.cameraPlace, lat: f.lat ?? null, lng: f.lng ?? null,
+      recordedFrom: f.recordedFrom || null, seconds: f.seconds ?? null, window: f.window || null,
+      secondsRead: job.progress?.files?.[String(f.key)]?.secondsRead ?? null, peopleSeen: job.progress?.files?.[String(f.key)]?.peopleSeen ?? null,
+      faces: counts?.[String(f.key)] || zeroCounts(),
+    })),
+    totals: { hours: view.hours, peopleSeen: view.peopleSeen, faces: view.counts, markedSame: view.confirmed, markedNot: view.rejected },
+    decisions,
+    note: 'Every result is a lead, not an identification. A face marked as the person is a sighting waiting for the case officer\'s review.',
+  };
+}
+
+/**
  * A check of an anonymised case: the figures stay for the command centre's
  * counts, the file names and recording times (which can say where and when a
  * family was) go.

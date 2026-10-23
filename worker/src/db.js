@@ -224,3 +224,56 @@ export async function photoBlobStats(env, ctx) {
   );
   return { count: rows[0].count, totalBytes: Number(rows[0].total_bytes) };
 }
+
+/**
+ * The CCTV checks' table (server/sql/003_video_jobs.sql), made by the Worker
+ * itself when it is missing: a deploy whose migration was forgotten would
+ * otherwise leave Khozo Desktop's checks switched off without a word. The
+ * same statements as the SQL file, kept in step by scripts/store-replica-smoke.mjs.
+ */
+export const VIDEO_JOBS_DDL = `
+create table if not exists public.video_jobs (
+  id   text primary key,
+  data jsonb not null default '{}'::jsonb
+);
+
+alter table public.video_jobs
+  add column if not exists report_id     text,
+  add column if not exists created_by_id text,
+  add column if not exists status        text,
+  add column if not exists created_at    timestamptz default now();
+
+update public.video_jobs set
+  report_id     = coalesce(report_id,     data->>'reportId'),
+  created_by_id = coalesce(created_by_id, data->>'createdById'),
+  status        = coalesce(status,        data->>'status')
+where report_id is null or created_by_id is null or status is null;
+
+create index if not exists video_jobs_report_idx  on public.video_jobs (report_id);
+create index if not exists video_jobs_creator_idx on public.video_jobs (created_by_id);
+
+create unique index if not exists video_jobs_job_key_idx on public.video_jobs (report_id, created_by_id, (data->>'jobKey'));
+
+alter table public.video_jobs enable row level security;
+`;
+
+let videoJobsTable = null; // this isolate's answer, once known
+/**
+ * Makes the CCTV checks' table if it is not there. Resolves to whether it is
+ * there now; a refusal (a database user without the right to make tables) is
+ * logged, and the check routes stay off as before.
+ */
+export function ensureVideoJobsTable(env, ctx) {
+  videoJobsTable ||= (async () => {
+    const { rows } = await query(env, "select to_regclass('public.video_jobs') is not null as present", [], ctx);
+    if (rows?.[0]?.present) return true;
+    await query(env, VIDEO_JOBS_DDL, undefined, ctx);
+    console.warn('[db] made public.video_jobs (server/sql/003_video_jobs.sql had not been run)');
+    return true;
+  })().catch((err) => {
+    videoJobsTable = null;
+    console.error('[db] could not make public.video_jobs:', err?.message || err);
+    return false;
+  });
+  return videoJobsTable;
+}

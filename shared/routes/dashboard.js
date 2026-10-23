@@ -11,7 +11,7 @@ import bcrypt from 'bcryptjs';
 import { nanoid } from 'nanoid';
 
 import {
-  sameDistrict, sameDistrictPlace, sameState, sameStatePlace,
+  POLICE_ROLES, sameDistrict, sameDistrictPlace, sameState, sameStatePlace,
   scopeActivity, scopeAudit, scopeFoundReports, scopeReports, scopeLabel,
 } from '../scope.js';
 import { canonicalPlace } from '../geo/index.js';
@@ -39,6 +39,7 @@ import { photoNeedCounts } from '../photo-need.js';
 import { dismissalApproval } from '../sighting-misuse.js';
 import { anonymiseCase, anonymiseSighting, runRetentionSweep } from '../retention.js';
 import { summariseVideoJobs } from '../video-jobs.js';
+import { signExport, stable } from '../export-signing.js';
 import { campaignSourceOf } from '../campaign-source.js';
 import { MAX_PUSH_DEVICES, STATION_ROLES, alertPhones, isPushToken, pushTokensOf, stationAlertWords, stationDeskOf } from '../station-alerts.js';
 import { BULK_MAX_ROWS, activationLink, isControlRoomWord, isEmail, isPhone, newActivation, parseLocation, roleFromSheet, sheetPhone } from '../bulk-accounts.js';
@@ -907,39 +908,9 @@ export default function registerDashboardRoutes(router, deps) {
     };
   }
   
-  function stable(value) {
-    if (Array.isArray(value)) return value.map(stable);
-    if (value && typeof value === 'object') {
-      return Object.keys(value)
-        .sort()
-        .reduce((acc, key) => {
-          acc[key] = stable(value[key]);
-          return acc;
-        }, {});
-    }
-    return value;
-  }
-  
-  function signedExport(payload, type) {
-    const algorithm = 'sha256-hmac';
-    const keyId = settings.exportSigning?.keyId || 'demo-local';
-    const key = settings.exportSigning?.key || 'khozo-demo-export-signing-key';
-    const canonical = JSON.stringify(stable(payload));
-    const digest = crypto.createHash('sha256').update(canonical).digest('hex');
-    const value = crypto.createHmac('sha256', key).update(`${type}.${digest}`).digest('hex');
-    return {
-      ...payload,
-      signature: {
-        type,
-        algorithm,
-        keyId,
-        digest,
-        value,
-        generatedAt: new Date().toISOString(),
-      },
-    };
-  }
-  
+  // Signed as every export is (shared/export-signing.js).
+  const signedExport = (payload, type) => signExport(payload, type, settings.exportSigning);
+
   function sameHex(a, b) {
     if (!/^[a-f0-9]+$/i.test(String(a || '')) || !/^[a-f0-9]+$/i.test(String(b || ''))) return false;
     const aa = Buffer.from(String(a), 'hex');
@@ -955,7 +926,7 @@ export default function registerDashboardRoutes(router, deps) {
     if (!signature || typeof signature !== 'object') return { ok: false, reason: 'missing_signature' };
   
     const type = signature.type;
-    if (!['audit_export', 'privacy_export', 'mis_export', 'case_handoff_export', 'public_abuse_export'].includes(type)) return { ok: false, type: type || null, reason: 'unsupported_type' };
+    if (!['audit_export', 'privacy_export', 'mis_export', 'case_handoff_export', 'public_abuse_export', 'cctv_check_report'].includes(type)) return { ok: false, type: type || null, reason: 'unsupported_type' };
     if (signature.algorithm !== 'sha256-hmac') return { ok: false, type, reason: 'unsupported_algorithm' };
   
     const key = settings.exportSigning?.key || 'khozo-demo-export-signing-key';
@@ -2136,6 +2107,27 @@ export default function registerDashboardRoutes(router, deps) {
    * district, camera and officer (shared/video-jobs.js). Only the checks of
    * cases the viewer can see; `days` limits them to the last so many days.
    */
+  /**
+   * The newest Khozo Desktop (spec F23), so the app can tell its officer and
+   * fetch it: its version, what changed, the installer's SHA-256 (the app
+   * installs nothing that does not match) and where to get it. Set by the
+   * operator (KHOZO_DESKTOP_LATEST_*, docs/OPERATIONS.md). The installer holds
+   * Aarakshak's model, so where it is kept is the operator's private choice,
+   * and the link goes to police roles only.
+   */
+  router.get('/desktop-version', requireRole(...POLICE_ROLES), (req, res) => {
+    const latest = settings.desktopLatest || {};
+    const version = /^\d+\.\d+\.\d+$/.test(String(latest.version || '')) ? String(latest.version) : null;
+    const url = String(latest.downloadUrl || '');
+    res.json({
+      version,
+      notes: version ? String(latest.notes || '').slice(0, 500) : '',
+      sha256: version && /^[a-f0-9]{64}$/i.test(String(latest.sha256 || '')) ? String(latest.sha256).toLowerCase() : null,
+      // https, or plain http on this computer only (for testing a release before it goes out).
+      downloadUrl: version && (/^https:\/\//.test(url) || /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//.test(url)) ? url : null,
+    });
+  });
+
   router.get('/video-checks', requireRole('super_admin', 'admin', 'state_nodal', 'crime_bureau', 'police', 'sjpu', 'ahtu', 'dcrb'), (req, res) => {
     const days = Number(req.query?.days) > 0 ? Math.min(3650, Number(req.query.days)) : null;
     if (typeof listVideoJobs !== 'function') return res.json({ ...summariseVideoJobs([]), available: false, days });

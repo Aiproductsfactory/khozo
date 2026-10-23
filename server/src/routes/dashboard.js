@@ -45,6 +45,13 @@ export default registerDashboardRoutes(Router(), {
     smsGatewayUrl: process.env.KHOZO_SMS_GATEWAY_URL,
     smsApiKey: process.env.KHOZO_SMS_API_KEY,
     expoAccessToken: process.env.EXPO_ACCESS_TOKEN,
+    // The newest Khozo Desktop, for the app to offer (GET /api/dashboard/desktop-version).
+    desktopLatest: {
+      version: process.env.KHOZO_DESKTOP_LATEST_VERSION,
+      notes: process.env.KHOZO_DESKTOP_LATEST_NOTES,
+      sha256: process.env.KHOZO_DESKTOP_LATEST_SHA256,
+      downloadUrl: process.env.KHOZO_DESKTOP_DOWNLOAD_URL,
+    },
     // Set explicitly, or derived from the JWT secret; never a constant from
     // this repository (shared/privacy.js).
     exportSigning: privacySecrets(process.env).exportSigning,

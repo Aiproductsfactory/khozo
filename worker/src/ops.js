@@ -133,6 +133,7 @@ const LABELS = {
   silentMatching: 'Sighting photos not being compared',
   backup: 'Nightly backup failed',
   retention: 'Nightly retention job failed',
+  videoJobsTable: 'CCTV checks from Khozo Desktop are off: run node scripts/migrate.mjs',
 };
 
 /**
@@ -389,6 +390,8 @@ export async function runStationEscalations(env, ctx, { now = Date.now(), create
 /** Cloudflare cron entry point; see "triggers" in wrangler.jsonc. */
 export async function scheduled(event, env, ctx) {
   const results = (await runHealthChecks(env, ctx)).checks;
+  // The CCTV checks' table, made if a deploy came without its migration (db.js).
+  results.videoJobsTable = { ok: await db.ensureVideoJobsTable(env, ctx) };
   // Never left out by a failing health check: an unanswered sighting matters more.
   results.stationAlerts = await runStationEscalations(env, ctx).catch((err) => ({ ok: false, detail: String(err?.message || err) }));
   if (event?.cron === '30 20 * * *') {

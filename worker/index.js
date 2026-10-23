@@ -154,6 +154,13 @@ function buildDeps(env, store, ctx) {
       desktopJobLimit: env.KHOZO_DESKTOP_JOB_LIMIT,
       desktopJobFaces: env.KHOZO_DESKTOP_JOB_FACES,
       desktopDecisionLimit: env.KHOZO_DESKTOP_DECISION_LIMIT,
+      // The newest Khozo Desktop, for the app to offer (GET /api/dashboard/desktop-version).
+      desktopLatest: {
+        version: env.KHOZO_DESKTOP_LATEST_VERSION,
+        notes: env.KHOZO_DESKTOP_LATEST_NOTES,
+        sha256: env.KHOZO_DESKTOP_LATEST_SHA256,
+        downloadUrl: env.KHOZO_DESKTOP_DOWNLOAD_URL,
+      },
       directoryLimit: env.KHOZO_DIRECTORY_LIMIT,
       registerLimit: env.KHOZO_REGISTER_LIMIT,
       loginLimit: env.KHOZO_LOGIN_LIMIT,

@@ -2262,9 +2262,20 @@ async function videoJobChecks({ superAdmin, sjpu, cwc, parent, fake }) {
     `the command centre's figures should count the check: ${JSON.stringify({ totals: figures.totals, byCamera: figures.byCamera })}`);
   await expectStatus(403, () => request('GET', '/dashboard/video-checks', { token: parent.token }), 'a family asks for the CCTV check figures');
 
+  // The check's report for a court: signed, and a changed copy fails the check.
+  const signed = await request('GET', `${route}/report`, { token: sjpu.token });
+  assert(signed.case?.id === id && signed.videos?.[0]?.sha256 === 'd'.repeat(64) && signed.videos[0].cameraPlace === 'Kalupur railway station, gate 1'
+    && signed.decisions.some((d) => d.decision === 'same' && d.sightingId === sightingId) && signed.signature?.type === 'cctv_check_report',
+    `a check's report should hold its videos, fingerprints and decisions, signed: ${JSON.stringify(signed).slice(0, 300)}`);
+  const verified = await request('POST', '/dashboard/export/verify', { token: superAdmin.token, body: signed });
+  assert(verified.ok === true && verified.type === 'cctv_check_report', `a check's report should pass Khozo's export check: ${JSON.stringify(verified)}`);
+  const changed = await request('POST', '/dashboard/export/verify', { token: superAdmin.token, body: { ...signed, decisions: [] } });
+  assert(changed.ok === false, 'a changed copy of a check\'s report should fail the export check');
+  await expectStatus(403, () => request('GET', `${route}/report`, { token: cwc.token }), 'a CWC desk asks for a CCTV check\'s report');
+
   // Everything is audited, and a batch only once.
   const audit = (await request('GET', '/dashboard/audit', { token: superAdmin.token })).audit;
-  for (const action of ['case.video_job_started', 'case.video_job_finished', 'sighting.video_confirmed', 'case.video_face_rejected']) {
+  for (const action of ['case.video_job_started', 'case.video_job_finished', 'sighting.video_confirmed', 'case.video_face_rejected', 'case.video_job_report']) {
     assert(audit.some((row) => row.action === action && (row.metadata?.jobId === jobId)), `a desktop check should be audited: ${action}`);
   }
   assert(audit.filter((row) => row.action === 'case.video_searched' && row.metadata?.jobId === jobId && row.metadata?.batch === 'b1').length === 1, 'a batch should be audited once, however often it is sent');
@@ -2276,6 +2287,26 @@ async function videoJobChecks({ superAdmin, sjpu, cwc, parent, fake }) {
   assert(closed.job.status === 'closed', 'a check should close');
   await expectStatus(409, () => request('POST', `${route}/faces`, { token: sjpu.token, form: facesForm(twoFaces(), { batch: 'b9' }) }), 'faces for a closed check');
   await expectStatus(409, () => request('POST', `${route}/decisions`, { token: sjpu.token, form: decisionForm(null, { key: 'p_late', decision: 'not', t: '3702' }) }), 'a decision for a closed check');
+
+  // An officer's decisions have their own limit (KHOZO_DESKTOP_DECISION_LIMIT=12 here).
+  let limited = null;
+  for (let i = 0; i < 20 && !limited; i += 1) {
+    try {
+      await request('POST', `${route}/decisions`, { token: sjpu.token, form: decisionForm(null, { key: `p_flood${i}`, decision: 'not', t: '3703' }) });
+    } catch (err) {
+      if (err.status === 429) limited = i;
+      else if (err.status !== 409) throw err;
+    }
+  }
+  assert(limited != null && limited <= 12, `an officer sending decisions past the limit should be told to slow down (429), got ${limited}`);
+  const facesAfter = await expectStatus(409, () => request('POST', `${route}/faces`, { token: sjpu.token, form: facesForm(twoFaces(), { batch: 'b10' }) }), 'faces after the decision limit (a separate limit)');
+  assert(facesAfter.error === 'This check is closed', 'the decision limit should not hold up the faces route');
+
+  // The newest desktop app, for police roles only, with no link that is not https.
+  const latest = await request('GET', '/dashboard/desktop-version', { token: sjpu.token });
+  assert(latest.version === '9.9.9' && latest.sha256 === 'ab'.repeat(32) && latest.downloadUrl === null,
+    `the desktop app should hear of the newest version, without an unsafe link: ${JSON.stringify(latest)}`);
+  await expectStatus(403, () => request('GET', '/dashboard/desktop-version', { token: parent.token }), 'a family asks for the desktop app');
 
   // When the case is anonymised, its checks lose the file names and recording
   // times (which can say where and when a family was); the figures stay.
@@ -2379,8 +2410,14 @@ async function run() {
       KHOZO_CASE_STATUS_LIMIT: '2',
       KHOZO_SIGHTING_STATUS_LIMIT: '2',
       KHOZO_GRIEVANCE_STATUS_LIMIT: '2',
-      // A small face budget for one desktop check, so the suite can reach it.
+      // A small face budget for one desktop check, and a small limit on an
+      // officer's decisions, so the suite can reach both.
       KHOZO_DESKTOP_JOB_FACES: '4',
+      KHOZO_DESKTOP_DECISION_LIMIT: '12',
+      // A newer desktop app on offer; its link is not https, so it is not passed on.
+      KHOZO_DESKTOP_LATEST_VERSION: '9.9.9',
+      KHOZO_DESKTOP_LATEST_SHA256: 'ab'.repeat(32),
+      KHOZO_DESKTOP_DOWNLOAD_URL: 'http://example.com/Khozo-Desktop-Setup-9.9.9.exe',
       // Face comparison goes to the stand-in above, never to a real provider:
       // Aarakshak is pointed at it, and Rekognition is left unconfigured.
       AARAKSHAK_API_URL: fakeAarakshak.url,

@@ -11,8 +11,10 @@
  */
 
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 
 import { createRequestStore, reportIdOf, tablesForRequest } from '../worker/src/store-sync.js';
+import { VIDEO_JOBS_DDL } from '../worker/src/db.js';
 
 // What a request reads when no rule says otherwise: every table but the CCTV checks.
 const DEFAULT = 'users,reports,foundReports,grievances,activity,audit';
@@ -420,6 +422,7 @@ check('starting a desktop check, and its faces, progress and close, need the acc
 check('a desktop decision, which can make a sighting, loads everything else and the case\'s checks', tablesForRequest('POST', '/api/reports/r_1/video-jobs/vj_abc123/decisions').join() === `${DEFAULT},videoJobsOfCase`);
 check('listing a case\'s checks reads that case\'s checks and no audit', tablesForRequest('GET', '/api/reports/r_1/video-jobs').join() === 'users,reports,videoJobsOfCase' && reportIdOf('/api/reports/r_1/video-jobs') === 'r_1');
 check('the command centre\'s CCTV checks page reads the checks without their batches', tablesForRequest('GET', '/api/dashboard/video-checks').join() === 'users,reports,videoJobSummaries');
+check('the desktop app asking for its newest version reads only the accounts', tablesForRequest('GET', '/api/dashboard/desktop-version').join() === 'users');
 check('anonymising a case reads its checks whole', tablesForRequest('POST', '/api/dashboard/privacy/retention/report/r_1').includes('videoJobs') && tablesForRequest('POST', '/api/dashboard/privacy/retention-sweep').includes('videoJobs'));
 
 // Two requests to one check at once (faces for two videos): both batches stay.
@@ -456,6 +459,16 @@ check('anonymising a case reads its checks whole', tablesForRequest('POST', '/ap
   try { early = await createRequestStore({}, null, before); } catch (err) { early = { error: err.message }; }
   check('without the checks\' table, every other request is still answered', Boolean(early?.store) && early.store.listUsers?.().length === 1, early?.error);
   check('… and the CCTV check routes are switched off, not answered from an empty table', early?.store && early.store.listVideoJobs === null && early.store.addVideoJob === null);
+  // … and the table is made in the background, for the next request.
+  const made = [];
+  const waited = [];
+  before.ensureVideoJobsTable = async () => { made.push(1); return true; };
+  await createRequestStore({}, { waitUntil: (p) => waited.push(p) }, before);
+  check('a missing checks\' table is made in the background for the next request', made.length === 1 && waited.length === 1);
+  // The Worker's copy of the table is the SQL file's, statement for statement.
+  const statements = (sql) => sql.split('\n').filter((l) => !l.trim().startsWith('--')).join(' ').replace(/\s+/g, ' ').split(';').map((x) => x.trim()).filter(Boolean);
+  const fromFile = statements(fs.readFileSync(new URL('../server/sql/003_video_jobs.sql', import.meta.url), 'utf8'));
+  check('the Worker makes the checks\' table exactly as server/sql/003_video_jobs.sql does', JSON.stringify(statements(VIDEO_JOBS_DDL)) === JSON.stringify(fromFile), `${statements(VIDEO_JOBS_DDL).length} vs ${fromFile.length} statements`);
   const broken = fakeIo();
   broken.query = async () => { throw Object.assign(new Error('connection refused'), { code: 'ECONNREFUSED' }); };
   let failedLoud = false;

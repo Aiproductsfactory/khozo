@@ -173,8 +173,9 @@ import { stripImageMetadata } from '../photo-strip.js';
 import { FRAME_VERDICTS, VIDEO_SEARCH_BATCH, VIDEO_SEARCH_FIELDS, videoFrameTimesOf, videoSearchRecord } from '../video-search.js';
 import {
   DECISIONS, DEFAULT_JOB_FACE_BUDGET, VIDEO_JOB_ID, answerFor, batchKeyOf, batchPatch, closedVideoJobPatch, coordinatesOf, decisionPatch,
-  facesSent, isClientKey, jobFilesOf, listFromText, newVideoJob, progressPatch, sightingIdFor, videoJobView, videoTimeText,
+  facesSent, isClientKey, jobFilesOf, listFromText, newVideoJob, progressPatch, sightingIdFor, videoJobReport, videoJobView, videoTimeText,
 } from '../video-jobs.js';
+import { signExport } from '../export-signing.js';
 
 export default function registerReportRoutes(router, deps) {
   const {
@@ -4113,6 +4114,30 @@ export default function registerReportRoutes(router, deps) {
       counts,
       engines,
     });
+  });
+
+  /**
+   * A check's report for a court or an enquiry (spec F19), signed with
+   * Khozo's export key so a copy can be checked (POST /api/dashboard/export/verify).
+   * For anyone who can open the case; the report is audited.
+   */
+  router.get('/:id/video-jobs/:jobId/report', protectedRoute, requireRole(...POLICE_ROLES), (req, res) => {
+    const found = videoJobOf(req, res);
+    if (!found) return;
+    const { r, job } = found;
+    const report = signExport(videoJobReport(job, r), 'cctv_check_report', settings.exportSigning);
+    addAudit({
+      actorId: req.user.id,
+      actorName: req.user.name,
+      actorRole: req.user.role,
+      action: 'case.video_job_report',
+      targetType: 'report',
+      targetId: r.id,
+      summary: `Made the report of CCTV check ${job.id} for case ${r.id}`,
+      scope: { state: r.state, district: r.district, reportId: r.id },
+      metadata: { jobId: job.id, digest: report.signature.digest },
+    });
+    res.json(report);
   });
 
   /** How far the laptop got: seconds read, people seen, each video's state, the check's own. */
