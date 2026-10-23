@@ -2202,6 +2202,19 @@ async function videoJobChecks({ superAdmin, sjpu, cwc, parent, fake }) {
   await request('POST', `${route}/faces`, { token: sjpu.token, form: facesForm(twoFaces(), { batch: 'k1', keys: 'p_k1,p_k2' }) });
   const resent = await request('POST', `${route}/faces`, { token: sjpu.token, form: facesForm([facePhotoFile('DESKTOP_TARGET', 'sighting')], { batch: 'k2', keys: 'p_k1' }) });
   assert(resent.results?.[0]?.verdict === 'possible', `a face sent again within the budget should be answered: ${JSON.stringify(resent)}`);
+  // Several pictures of one person (the laptop sends up to three): one face, with the best of their
+  // answers (the last picture here is a stranger's), and nothing more of the budget, which is full.
+  const threeOfOne = () => facesForm(
+    [facePhotoFile('DESKTOP_STRANGER', 'sighting'), facePhotoFile('DESKTOP_TARGET', 'sighting'), facePhotoFile('DESKTOP_STRANGER', 'sighting')],
+    { batch: 'k3', keys: 'p_k1,p_k1,p_k1' },
+  );
+  const several = await request('POST', `${route}/faces`, { token: sjpu.token, form: threeOfOne() });
+  const severalJob = (await request('GET', `/reports/${id}/video-jobs`, { token: sjpu.token })).jobs.find((j) => j.id === jobId);
+  assert(several.results?.map((r) => r.verdict).join() === 'unlikely,possible,unlikely' && severalJob?.counts.faces === 4 && severalJob.counts.possible === 2,
+    `several pictures of one person should be one face with the best answer, within the budget: ${JSON.stringify({ results: several.results, counts: severalJob?.counts })}`);
+  const severalAgain = await request('POST', `${route}/faces`, { token: sjpu.token, form: threeOfOne() });
+  assert(severalAgain.repeated === true && severalAgain.results.map((r) => r.verdict).join() === 'possible,possible,possible',
+    `the same pictures sent again should each get their person's answer: ${JSON.stringify(severalAgain)}`);
 
   // How far the laptop got.
   const progress = await request('POST', `${route}/progress`, {
