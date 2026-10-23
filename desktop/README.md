@@ -29,10 +29,12 @@ The desktop is a separate package so that the Worker build never downloads Elect
 **For the officer:**
 
 1. Sign in with their Khozo account. Only police roles can check CCTV, as on khozo.org.
-2. Choose the case, which must be open.
-3. Add the videos (files or a folder). For each, say where the camera is and, if known, when its recording starts.
+2. Choose the case, which must be open. A found child's case can be chosen too: the footage then shows where the child came from, and with whom.
+3. Add the videos (files or a folder). For each, say where the camera is and, if known, when its recording starts. "Use this place for all videos" fills the rest from the first, for a batch of clips from one place.
 4. Optionally choose the part of the day, for example 10:00 to 12:00 on the camera clock.
 5. Start.
+
+**Footage against open cases** (only when Khozo has `KHOZO_DESKTOP_OPEN_CASES` on; see `shared/open-case-checks.js`): for footage from a busy place with no one case. The officer narrows the open cases (sex, age today, district, when missing) and the screen says how many will be searched. Each person's clearest face is searched on Khozo, one at a time: the index's closest cases among those chosen, then both face engines; a face is shown only when the case is among the five closest, Aarakshak scores it at least 0.45 and AWS at least 0.90. Results are grouped by case. A case the officer can open comes with its photo; a case outside their area is not named, and "Send to that case's officers" passes the face to the officers who can look at it. No case photo or face template is on the laptop for this.
 
 **While a check runs:**
 
@@ -44,7 +46,10 @@ The desktop is a separate package so that the Worker build never downloads Elect
 
 - **Look at these first:** the faces Khozo marks likely, possibly, or where the two checks disagree.
 - **Everyone seen:** every person in 15-minute slices.
-- For each face the officer can **play from here** (a 20-second clip made on the spot from their own file), **see the full picture**, mark **Same person** (adds a note to the case, as the browser's "Add to case" does) or **Not this person** (kept on the laptop).
+- For each face the officer can **play from here** (a 20-second clip made on the spot from their own file), **see the full picture**, mark **Same person** (a sighting of the case on Khozo, with the face and the whole frame, waiting for the case officer's review; a note on a Khozo not yet updated) or **Not this person** (counted on Khozo, with no picture).
+- **Seen within 10 seconds:** under a face marked as the person, the other people on that camera within ten seconds of the moment. Shown only; nobody is searched for.
+- An **old case photo** (a case missing two years or more) is said on the check's page: matches will be weak, so look through "Everyone seen" too.
+- On khozo.org, the case page shows the **route**: every moment sent to the case from any laptop, in time order, the cameras drawn from their map points, and each check's decisions with who made them and on which laptop.
 
 **What stays on the laptop, and how:**
 

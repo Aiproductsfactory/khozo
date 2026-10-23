@@ -10,6 +10,7 @@
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, powerSaveBlocker, protocol, safeStorage, shell, utilityProcess } from 'electron';
@@ -142,7 +143,8 @@ function jobChanged(id) {
   const job = jobs?.get(id);
   if (job && lastStatus.get(id) === 'running' && job.status === 'done' && Notification.isSupported()) {
     const n = job.counts.likely + job.counts.possible;
-    new Notification({ title: 'Khozo Desktop', body: `${job.caseName || job.caseId}: ${n ? `${n} face${n === 1 ? '' : 's'} to look at` : 'the check is finished'}` }).show();
+    const name = job.mode === 'open_cases' ? 'Check against open cases' : job.caseName || job.caseId;
+    new Notification({ title: 'Khozo Desktop', body: `${name}: ${n ? `${n} face${n === 1 ? '' : 's'} to look at` : 'the check is finished'}` }).show();
   }
   if (job) lastStatus.set(id, job.status);
   // At most a few updates a second reach the window.
@@ -166,6 +168,8 @@ function openSession() {
     detectorPath: YUNET,
     officer: session.user,
     appVersion: app.getVersion(),
+    // The laptop's own name: checks from two laptops on one case are told apart by it.
+    device: os.hostname().slice(0, 80),
     frameOf,
     onChange: jobChanged,
     // Khozo no longer takes this sign-in (it expired, or the password changed):
@@ -355,10 +359,31 @@ function registerBridge() {
   handle('jobs:list', () => needJobs().list());
   handle('jobs:get', (id) => needJobs().get(id));
 
-  handle('jobs:create', async ({ caseId, files: chosen, window = null, settings: options = {} }) => {
+  // Whether this Khozo checks footage against open cases, and how many cases a narrowing searches.
+  handle('openCases:count', async (filters = {}) => {
+    if (!client) throw new KhozoError('Sign in first', 401);
+    try {
+      return await client.openCaseCount(filters);
+    } catch (err) {
+      // A Khozo without the route (not yet updated): the button is not shown.
+      if (err.status === 404 || err.status === 405 || err.status === 501) return { enabled: false, reason: 'older' };
+      throw err;
+    }
+  });
+
+  handle('jobs:create', async ({ mode = 'case', caseId, filters = {}, files: chosen, window = null, settings: options = {} }) => {
     const j = needJobs();
-    const report = await client.getCase(caseId);
-    if (!canSearchCase(report)) throw new Error('This case cannot be checked: it is found, closed, or still waiting to be verified.');
+    const openCases = mode === 'open_cases';
+    let report = null;
+    let searched = null;
+    if (openCases) {
+      searched = await client.openCaseCount(filters);
+      if (!searched.enabled) throw new Error(searched.error || 'Checking footage against open cases is not switched on in Khozo.');
+      if (!searched.cases) throw new Error('No open case fits this choice. Choose fewer limits.');
+    } else {
+      report = await client.getCase(caseId);
+      if (!canSearchCase(report)) throw new Error('This case cannot be checked: it is found, closed, or still waiting to be verified.');
+    }
     const good = (chosen || []).filter((f) => f.path && !f.error && String(f.camera || '').trim().length >= 3);
     if (!good.length) throw new Error('Add at least one video and say where its camera is.');
     // Without the start, nothing seen in a long recording has a date and time.
@@ -370,6 +395,7 @@ function registerBridge() {
     };
     const id = j.create({
       report,
+      openCases: openCases ? { filters: searched.filters || filters, casesSearched: searched.cases, area: searched.area || null } : null,
       files: good.map((f) => ({ ...f, camera: String(f.camera).trim().slice(0, 200), ...where(f), recordedFrom: f.recordedFrom || null })),
       window,
       settings: {
@@ -377,7 +403,7 @@ function registerBridge() {
         maxSide: options.farFaces ? 1920 : 960,
       },
     });
-    log(`Job created with ${good.length} video(s)`);
+    log(`Job created with ${good.length} video(s)${openCases ? ` against ${searched.cases} open cases` : ''}`);
     return { id };
   });
 
@@ -400,6 +426,7 @@ function registerBridge() {
     return { unsent: j.unsent(id) };
   });
   handle('jobs:decide', ({ id, key: k, decision }) => needJobs().decide(id, k, decision === 'same' ? 'same' : 'not'));
+  handle('jobs:decideLead', ({ id, leadId, decision }) => needJobs().decideLead(id, leadId, decision === 'same' ? 'same' : 'not'));
 
   handle('jobs:clip', async ({ id, key: k }) => {
     const found = needJobs().personOf(id, k);

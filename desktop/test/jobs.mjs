@@ -71,7 +71,7 @@ function startWorker() {
  * updated); `online = false` is a laptop that cannot reach Khozo.
  */
 function fakeClient({ keeps = true } = {}) {
-  const calls = { searches: [], notes: [], started: [], progress: [], decisions: [], closed: [] };
+  const calls = { searches: [], notes: [], started: [], progress: [], decisions: [], closed: [], openStarted: [], openFaces: [], leads: [], openProgress: [], openClosed: [], caseReads: 0 };
   let online = true;
   // Set by a test: what Khozo answers a decision with, and how a start is refused.
   const knobs = { decisionRefusal: null, startRefusal: null, startDelayMs: 0 };
@@ -86,7 +86,7 @@ function fakeClient({ keeps = true } = {}) {
     calls,
     knobs,
     set online(value) { online = value; },
-    getCase: async (id) => ({ id, childName: 'Test Person', status: 'missing', extraPhotos: [] }),
+    getCase: async (id) => { calls.caseReads += 1; return { id, childName: 'Test Person', status: 'missing', extraPhotos: [] }; },
     photo: async () => { throw new Error('no photo'); },
     videoSearch: async (caseId, form) => { reach(); return compare(caseId, form); },
     addNote: async (caseId, note) => { reach(); calls.notes.push({ caseId, note }); return { ok: true }; },
@@ -113,6 +113,29 @@ function fakeClient({ keeps = true } = {}) {
       return { decision: { decision, sightingId: decision === 'same' ? `f_${calls.decisions.length}` : undefined } };
     },
     closeVideoJob: async (caseId, jobId) => { reach(); calls.closed.push(jobId); return { job: {} }; },
+    // Checks against open cases: the first face sent is close to a case the officer can open.
+    openCaseCount: async () => { reach(); return { enabled: true, cases: 240, area: { kind: 'state', state: 'Gujarat' } }; },
+    startOpenCaseCheck: async (body) => {
+      reach();
+      if (!keeps) throw new KhozoError('No route for POST /api/reports/open-case-checks', 404, { error: 'No route for POST /api/reports/open-case-checks' });
+      calls.openStarted.push({ body });
+      return { job: { id: `vj_${body.jobKey}` } };
+    },
+    openCaseFace: async (jobId, form) => {
+      reach();
+      const photo = Buffer.from(await form.get('photo').arrayBuffer());
+      calls.openFaces.push({ jobId, key: form.get('key'), fileKey: form.get('fileKey'), t: form.get('t'), side: (await sharp(photo).metadata()).width });
+      const first = calls.openFaces.length === 1;
+      return { verdict: first ? 'likely' : 'unlikely', leads: first ? [{ id: 'ld_in1', fileKey: 0, faceKey: form.get('key'), t: Number(form.get('t')), status: 'open', inScope: true, rank: 1, aarakshak: 0.8, rekognition: 0.97, case: { id: 'r_in', name: 'Asha' } }] : [] };
+    },
+    openCaseLead: async (jobId, leadId, form) => {
+      reach();
+      const decision = form.get('decision');
+      calls.leads.push({ jobId, leadId, decision, seenAt: form.get('seenAt'), photos: form.getAll('photo').length, extras: form.getAll('extraPhotos').length });
+      return { lead: { id: leadId, status: decision === 'same' ? 'sent' : 'not', ...(decision === 'same' && leadId === 'ld_in1' ? { sightingId: 'f_open_1' } : {}) } };
+    },
+    openCaseProgress: async (jobId, body) => { reach(); calls.openProgress.push({ jobId, ...body }); return { job: {} }; },
+    closeOpenCaseCheck: async (jobId) => { reach(); calls.openClosed.push(jobId); return { job: {} }; },
   };
 }
 
@@ -372,6 +395,110 @@ console.log('Khozo’s record of a check');
   check('a decision held back by Khozo\'s limit waits, then goes', held.saved === false && held.offline === true && !held.refused && went.saved === true);
 }
 
+// ---- a check against open cases ------------------------------------------------------------
+
+/** A finished check against open cases, as the laptop read it: three people, two of them close to a case. */
+function plantOpenJob(root, files, id) {
+  const job = {
+    id, mode: 'open_cases', caseId: null, caseName: '', caseFir: '',
+    openCases: { filters: { sex: 'female', ageFrom: 6, ageTo: 17 }, casesSearched: 240, area: { kind: 'state', state: 'Gujarat', district: null } },
+    photoYears: null, officer: { id: 'u1', name: 'PSI Test' },
+    createdAt: new Date().toISOString(), status: 'done', window: null,
+    settings: { fps: 2, maxSide: 960, line: 0.25, top: 10, firstPass: false },
+    files: [{
+      path: path.join(tmp, 'gone.mp4'), name: 'platform1.mp4', bytes: 73400320, duration: 60, width: 1280, height: 720,
+      camera: 'Kalupur railway station, platform 1', recordedFrom: '2026-10-20T14:30:05', from: 0, to: null, outside: false,
+      segments: [{ index: 0, from: 0, to: 60, done: true, tracks: [
+        { id: 's0-1', time: 11.5, firstTime: 10, lastTime: 13, quality: 0.9, picture: 'p1.jpg' },
+        { id: 's0-2', time: 30, firstTime: 29, lastTime: 31, quality: 0.8, picture: 'p2.jpg' },
+        { id: 's0-3', time: 15, firstTime: 14, lastTime: 16, quality: 0.7, picture: 'p3.jpg' },
+      ] }],
+      scanned: true, scored: false, sent: true, scanTo: 60, sha256: 'c'.repeat(64),
+    }],
+    scores: {},
+    answers: {
+      '0:s0-1': { verdict: 'likely', leads: [{ id: 'ld_in1', fileKey: 0, faceKey: '0:s0-1', t: 11.5, status: 'open', inScope: true, rank: 1, aarakshak: 0.81, rekognition: 0.98, case: { id: 'r_in', name: 'Asha', ageNow: 12, district: 'Ahmedabad' } }] },
+      '0:s0-2': { verdict: 'likely', leads: [{ id: 'ld_out1', fileKey: 0, faceKey: '0:s0-2', t: 30, status: 'open', inScope: false, caseKey: 'oc_far' }] },
+      '0:s0-3': { verdict: 'likely', leads: [{ id: 'ld_out2', fileKey: 0, faceKey: '0:s0-3', t: 15, status: 'open', inScope: false, caseKey: 'oc_far' }] },
+    },
+    decisions: {},
+  };
+  files.writeJson(path.join(root, id, 'job.bin'), job);
+  for (const picture of ['p1.jpg', 'p2.jpg', 'p3.jpg']) files.write(path.join(root, id, 'files', '0', picture), JPEG);
+}
+
+console.log('A check against open cases');
+{
+  const key = crypto.randomBytes(32);
+  const files = secureFiles(key);
+  const officer = { id: 'u1', name: 'PSI Test' };
+  const frameOf = async () => JPEG;
+  const client = fakeClient();
+  const root = path.join(tmp, 'jobs-open');
+  plantOpenJob(root, files, 'job_open_a');
+  const jobs = createJobs({ root, files, key, startWorker, getClient: () => client, officer, appVersion: '0.3.0', device: 'TEST-LAPTOP', frameOf });
+
+  const view = jobs.get('job_open_a');
+  check('the faces are grouped by case, a case the officer can open first', view.mode === 'open_cases' && view.groups.length === 2 && view.groups[0].inScope && view.groups[0].caseId === 'r_in' && view.groups[0].case.name === 'Asha' && view.counts.leads === 3);
+  check('two faces close to one case outside the area are shown together', view.groups[1].leads.map((l) => l.id).join() === 'ld_out2,ld_out1');
+  check('a case outside the officer\'s area comes with nothing that says which', view.groups[1].inScope === false && view.groups[1].caseId === null && view.groups[1].case === null && !JSON.stringify(view.groups[1]).includes('r_in'));
+
+  const sent = await jobs.decideLead('job_open_a', 'ld_in1', 'same');
+  const start = client.calls.openStarted[0];
+  check('the check is made on Khozo with the narrowing, the videos and this laptop, and no case', client.calls.openStarted.length === 1 && start.body.sex === 'female' && start.body.ageFrom === 6 && start.body.device === 'TEST-LAPTOP'
+    && JSON.parse(start.body.files)[0].cameraPlace === 'Kalupur railway station, platform 1' && !('caseId' in start.body) && client.calls.started.length === 0, JSON.stringify(start?.body));
+  const lead = client.calls.leads[0];
+  check('"Same person: send to the case" sends the face, the whole frame and the moment', lead?.leadId === 'ld_in1' && lead.decision === 'same' && lead.photos === 1 && lead.extras === 1 && lead.seenAt === new Date(Date.parse('2026-10-20T14:30:05') + 11500).toISOString(), JSON.stringify(lead));
+  check('… and Khozo\'s sighting is kept with it', sent.saved === true && sent.sightingId === 'f_open_1');
+  const together = jobs.get('job_open_a').groups[0].leads[0].person.together;
+  check('seen together: the person 3.5 seconds away is shown, the one 18.5 seconds away is not', together?.length === 1 && together[0].key === '0:s0-3', JSON.stringify(together));
+
+  client.online = false;
+  const waiting = await jobs.decideLead('job_open_a', 'ld_out1', 'same');
+  check('sending to a case outside the area waits on the laptop while Khozo cannot be reached', waiting.saved === false && waiting.offline === true && jobs.unsent('job_open_a') === 1);
+  client.online = true;
+  await Promise.all([jobs.syncAll(), jobs.syncAll()]);
+  const went = jobs.get('job_open_a').groups[1].leads.find((l) => l.id === 'ld_out1').decision;
+  check('… and goes once when it can, with only "sent" back', went.saved === true && went.sightingId === null && client.calls.leads.filter((l) => l.leadId === 'ld_out1').length === 1);
+  check('a face sent cannot be marked otherwise from here', jobs.get('job_open_a').groups[1].leads.find((l) => l.id === 'ld_out1').decision.decision === 'same');
+
+  plantOpenJob(root, files, 'job_open_b');
+  const reread = createJobs({ root, files, key, startWorker, getClient: () => client, officer, device: 'TEST-LAPTOP', frameOf });
+  await reread.decideLead('job_open_b', 'ld_out1', 'not');
+  check('"Do not send" sends no picture of anyone', client.calls.leads.at(-1).decision === 'not' && client.calls.leads.at(-1).photos === 0);
+  let unknown = null;
+  try { await reread.decideLead('job_open_b', 'ld_nope', 'same'); } catch (err) { unknown = err.message; }
+  check('a lead that is not in the check is refused', /No such face/.test(unknown || ''));
+
+  const job = files.readJson(path.join(root, 'job_open_b', 'job.bin'));
+  job.sync = { progressPending: true };
+  files.writeJson(path.join(root, 'job_open_b', 'job.bin'), job);
+  const third = createJobs({ root, files, key, startWorker, getClient: () => client, officer, device: 'TEST-LAPTOP', frameOf });
+  await third.syncAll();
+  check('where a check against open cases stopped goes to its own record on Khozo', client.calls.openProgress.some((p) => p.jobId === 'vj_job_open_b' && p.status === 'done') && client.calls.progress.length === 0);
+  third.remove('job_open_b');
+  third.remove('job_open_a');
+  await until(() => client.calls.openClosed.includes('vj_job_open_b') && client.calls.openClosed.includes('vj_job_open_a'));
+  check('deleting it closes it on Khozo', client.calls.openClosed.includes('vj_job_open_b') && client.calls.closed.length === 0);
+  check('two checks deleted one after the other are both closed at once, not one at the next sync', client.calls.openClosed.includes('vj_job_open_a'));
+
+  // A Khozo that does not check against open cases: the officer is told, nothing falls back to a case.
+  const older = fakeClient({ keeps: false });
+  const root2 = path.join(tmp, 'jobs-open-older');
+  plantOpenJob(root2, files, 'job_open_older');
+  const jobs2 = createJobs({ root: root2, files, key, startWorker, getClient: () => older, officer, frameOf });
+  const refused = await jobs2.decideLead('job_open_older', 'ld_in1', 'same');
+  check('on a Khozo without checks against open cases, the officer is told and nothing is sent elsewhere', refused.refused === true && /cannot check footage against open cases/.test(refused.error) && older.calls.notes.length === 0 && older.calls.leads.length === 0);
+
+  // Scenario 8: how old the case photo is, from when the person went missing.
+  const root3 = path.join(tmp, 'jobs-old-photo');
+  const jobs3 = createJobs({ root: root3, files, key, startWorker, getClient: () => client, officer });
+  const threeYears = new Date(Date.now() - 3.2 * 365.25 * 86400000).toISOString().slice(0, 10);
+  const oldId = jobs3.create({ report: { id: 'r_test', childName: 'Test Person', dateOfMissing: threeYears }, window: { mode: 'video', from: '1:00:00' }, files: [{ path: video, name: 'test.mp4', bytes: 1, duration: 40, width: 640, height: 360, camera: 'Test camera' }] });
+  const oldJob = await untilDone(jobs3, oldId);
+  check('scenario 8: a case missing for three years says its photo is at least three years old', oldJob.photoYears === 3, String(oldJob.photoYears));
+}
+
 // ---- a whole job on a clip with faces ----------------------------------------------------
 
 if (process.env.KHOZO_SMOKE_VIDEO) {
@@ -420,6 +547,15 @@ if (process.env.KHOZO_SMOKE_VIDEO) {
   const fullId = fullJobs.create({ report: { id: 'r_test', childName: 'Test Person' }, files: [{ path: clip, name: path.basename(clip), bytes: fs.statSync(clip).size, duration: 24, width: 1280, height: 720, camera: 'Kalupur railway station, gate 1' }] });
   const fullJob = await untilDone(fullJobs, fullId);
   check('a check that reaches its face budget finishes and says so, instead of failing', fullJob.status === 'done' && fullJob.notice === 'face_budget', `${fullJob.status} ${fullJob.notice} ${fullJob.error || ''}`);
+
+  // A check of the clip against open cases: each person searched on Khozo, one a request.
+  const openClient = fakeClient();
+  const openJobs = createJobs({ root: path.join(tmp, 'jobs-open-clip'), files, key, startWorker, getClient: () => openClient, officer: { id: 'u1', name: 'PSI Test' }, device: 'TEST-LAPTOP' });
+  const openId = openJobs.create({ openCases: { filters: {}, casesSearched: 240 }, files: [{ path: clip, name: path.basename(clip), bytes: fs.statSync(clip).size, duration: 24, width: 1280, height: 720, camera: 'Kalupur railway station, gate 1', recordedFrom: '2026-10-20T14:30:05' }] });
+  const openJob = await untilDone(openJobs, openId);
+  check('a check against open cases sends each person, one a request, at 240 px', openJob.status === 'done' && openClient.calls.openFaces.length === openJob.counts.people && openClient.calls.openFaces.every((f) => f.side === 240 && /^0:/.test(f.key) && f.fileKey === '0'), `${openJob.status} ${openJob.error || ''} ${openClient.calls.openFaces.length} of ${openJob.counts.people}`);
+  check('no case is read on the laptop for it', openClient.calls.caseReads === 0 && openJob.model === null);
+  check('its one lead is shown under its case', openJob.groups.length === 1 && openJob.groups[0].caseId === 'r_in');
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });

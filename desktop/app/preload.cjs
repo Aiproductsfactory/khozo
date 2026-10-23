@@ -23,6 +23,8 @@ contextBridge.exposeInMainWorld('khozo', {
   downloadUpdate: ask('update:download'),
   installUpdate: ask('update:install'),
   decide: ask('jobs:decide'),
+  decideLead: ask('jobs:decideLead'),
+  openCaseCount: ask('openCases:count'),
   clip: ask('jobs:clip'),
   onUpdateChanged: (fn) => {
     const listener = () => fn();

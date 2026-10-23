@@ -22,6 +22,8 @@ const S = {
   shown: {},
   nc: null,
   resultsSig: '',
+  // Whether this Khozo checks footage against open cases (asked once a visit to the home screen).
+  openCases: null,
 };
 
 // ---- small helpers ---------------------------------------------------------------
@@ -133,14 +135,29 @@ function updateBanner() {
   return `<div class="info" role="status" id="update-banner">${head}${action}</div>`;
 }
 
+/** A check against open cases has no case photo: a plain tile stands in for it. */
+const openTile = (side = 64) => `<div class="thumb open-tile" style="width:${side}px;height:${side}px" aria-hidden="true">⌕</div>`;
+
+/** What a check against open cases was narrowed to, in words. */
+function filtersText(f = {}) {
+  return [
+    f.sex ? t(`open.sex.${f.sex}`) : '',
+    f.ageFrom != null || f.ageTo != null ? t('open.sumAge', { from: f.ageFrom ?? 0, to: f.ageTo ?? '…' }) : '',
+    f.district || '',
+    f.missingFrom || f.missingTo ? t('open.sumMissing', { from: f.missingFrom || '…', to: f.missingTo || '…' }) : '',
+  ].filter(Boolean).join(' · ');
+}
+
 function renderHome() {
   const model = S.state?.model;
   const cards = S.jobs.map((j) => `
     <div class="card">
-      <img class="thumb" src="${casePhoto(j.caseId)}" alt="">
+      ${j.mode === 'open_cases' ? openTile() : `<img class="thumb" src="${casePhoto(j.caseId)}" alt="">`}
       <div class="grow">
-        <div class="row"><strong>${esc(j.caseName || t('job.case', { id: j.caseId }))}</strong> ${jobProgressChip(j)}</div>
-        <p class="small quiet">${esc(t('job.case', { id: j.caseId }))}${j.caseFir ? ` · ${esc(t('job.fir', { fir: j.caseFir }))}` : ''} · ${esc(new Date(j.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }))}</p>
+        <div class="row"><strong>${esc(j.mode === 'open_cases' ? t('open.title') : j.caseName || t('job.case', { id: j.caseId }))}</strong> ${jobProgressChip(j)}</div>
+        <p class="small quiet">${j.mode === 'open_cases'
+    ? esc(t('open.searched', { n: j.openCases?.casesSearched ?? 0 }))
+    : `${esc(t('job.case', { id: j.caseId }))}${j.caseFir ? ` · ${esc(t('job.fir', { fir: j.caseFir }))}` : ''}`} · ${esc(new Date(j.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }))}</p>
         <p class="small">${esc(t('counts.people', { n: j.counts.people }))} · <strong>${esc(t('counts.toLook', { n: j.counts.likely + j.counts.possible }))}</strong></p>
         ${j.status === 'running' ? `<div class="bar"><div style="width:${Math.round(j.progress * 100)}%"></div></div>` : ''}
       </div>
@@ -153,7 +170,9 @@ function renderHome() {
     </div>`).join('');
   app.innerHTML = `${header()}<main>
     ${updateBanner()}
-    ${S.state?.canCheck ? `<p><button class="btn primary big" data-act="new">${esc(t('home.new'))}</button></p>` : `<div class="error">${esc(t('home.cannotCheck'))}</div>`}
+    ${S.state?.canCheck ? `<p class="row"><button class="btn primary big" data-act="new">${esc(t('home.new'))}</button>
+      ${S.openCases?.enabled ? `<button class="btn big" data-act="new-open" id="new-open">${esc(t('home.openCases'))}</button>` : ''}</p>
+      ${S.openCases?.enabled ? `<p class="small quiet">${esc(t('home.openCasesNote'))}</p>` : ''}` : `<div class="error">${esc(t('home.cannotCheck'))}</div>`}
     <h2>${esc(t('home.title'))}</h2>
     <div class="jobs">${cards || `<p class="quiet">${esc(t('home.empty'))}</p>`}</div>
     <div class="footer">
@@ -166,10 +185,66 @@ function renderHome() {
 // ---- a new check ----------------------------------------------------------------
 
 function newCheck(caseId = null) {
-  S.nc = { q: '', cases: null, caseId, files: [], part: false, from: '', to: '', fps: 2, far: false, error: '', busy: false };
+  S.nc = { mode: 'case', q: '', cases: null, caseId, files: [], part: false, from: '', to: '', fps: 2, far: false, error: '', busy: false };
   S.screen = 'new';
   render();
   searchCases('');
+}
+
+/** A check of footage against open cases: no case, the officer narrows the cases instead (spec F15). */
+function newOpenCheck() {
+  S.nc = {
+    mode: 'open_cases', filters: { sex: '', ageFrom: '', ageTo: '', district: '', missingFrom: '', missingTo: '' }, count: null,
+    files: [], part: false, from: '', to: '', fps: 2, far: false, error: '', busy: false,
+  };
+  S.screen = 'new';
+  render();
+  countCases();
+}
+
+let countTimer = null;
+/** How many open cases the narrowing searches, as Khozo counts them. */
+async function countCases() {
+  const asked = JSON.stringify(S.nc.filters);
+  const result = await k.openCaseCount(S.nc.filters);
+  if (S.screen !== 'new' || S.nc.mode !== 'open_cases' || JSON.stringify(S.nc.filters) !== asked) return;
+  S.nc.count = result;
+  renderCount();
+}
+
+function renderCount() {
+  const box = document.getElementById('case-count');
+  if (!box) return;
+  const c = S.nc.count;
+  if (!c) {
+    box.innerHTML = `<p class="quiet">${esc(t('new.loading'))}</p>`;
+    return;
+  }
+  if (c.error && !('enabled' in c)) {
+    box.innerHTML = `<div class="error">${esc(errorText(c))}</div>`;
+    return;
+  }
+  if (!c.enabled) {
+    box.innerHTML = `<div class="error">${esc(c.error || t('open.off'))}</div>`;
+    return;
+  }
+  const place = c.area?.kind === 'country' ? t('open.area.country') : c.area?.kind === 'district' ? t('open.area.district', { place: c.area.district || '' }) : t('open.area.state', { place: c.area?.state || '' });
+  box.innerHTML = `<div class="info" role="status"><strong id="case-count-n">${esc(c.cases ? t('open.count', { n: c.cases }) : t('open.countNone'))}</strong>
+    <br><span class="small">${esc(place)}${c.notInIndex ? ` ${esc(t('open.notInIndex', { n: c.notInIndex }))}` : ''}</span></div>`;
+}
+
+function renderFilters() {
+  const f = S.nc.filters;
+  const sex = ['', 'female', 'male'].map((v) => `<option value="${v}"${f.sex === v ? ' selected' : ''}>${esc(t(`open.sex.${v || 'any'}`))}</option>`).join('');
+  return `<div class="filters">
+    <label>${esc(t('open.sex'))}<select class="field" data-input="f-sex">${sex}</select></label>
+    <label>${esc(t('open.age'))}<span class="row"><input type="number" min="0" max="120" data-input="f-ageFrom" value="${esc(f.ageFrom)}" placeholder="${esc(t('open.ageFrom'))}" aria-label="${esc(t('open.ageFrom'))}" style="width:90px">
+      <span>–</span><input type="number" min="0" max="120" data-input="f-ageTo" value="${esc(f.ageTo)}" placeholder="${esc(t('open.ageTo'))}" aria-label="${esc(t('open.ageTo'))}" style="width:90px"></span></label>
+    <label>${esc(t('open.district'))}<input type="text" data-input="f-district" value="${esc(f.district)}"></label>
+    <label>${esc(t('open.missing'))}<span class="row"><input type="date" data-input="f-missingFrom" value="${esc(f.missingFrom)}" aria-label="${esc(t('open.missingFrom'))}">
+      <span>–</span><input type="date" data-input="f-missingTo" value="${esc(f.missingTo)}" aria-label="${esc(t('open.missingTo'))}"></span></label>
+  </div>
+  <div id="case-count" style="margin-top:10px"></div>`;
 }
 
 let searchTimer = null;
@@ -240,7 +315,8 @@ function renderFiles() {
       <td>${f.error ? '' : esc(videoTime(f.duration))}</td>
       <td>${f.error ? '' : `<input type="text" data-input="camera" data-i="${i}" value="${esc(f.camera || '')}" placeholder="${esc(t('new.cameraHint'))}" aria-label="${esc(t('new.camera'))}">
         <input type="text" data-input="where" data-i="${i}" value="${esc(f.where || '')}" placeholder="${esc(t('new.whereHint'))}" aria-label="${esc(t('new.where'))}" style="margin-top:6px">
-        <span class="small quiet" id="where-note-${i}">${esc(whereNote(f))}</span>`}</td>
+        <span class="small quiet" id="where-note-${i}">${esc(whereNote(f))}</span>
+        ${i === 0 && S.nc.files.filter((x) => !x.error).length > 1 ? `<br><button class="btn small" data-act="camera-all" data-i="0" id="camera-all">${esc(t('new.cameraAll'))}</button>` : ''}`}</td>
       <td>${f.error ? '' : `<input type="datetime-local" step="1" data-input="recordedFrom" data-i="${i}" value="${esc(f.recordedFrom || '')}" aria-label="${esc(t('new.starts'))}">`}</td>
       <td><button class="btn danger" data-act="remove-file" data-i="${i}">${esc(t('new.remove'))}</button></td>
     </tr>`).join('')}</tbody></table>`;
@@ -254,14 +330,16 @@ function renderPartHint() {
 
 function renderNew() {
   const nc = S.nc;
+  const open = nc.mode === 'open_cases';
   app.innerHTML = `${header()}<main>
     <p><button class="btn" data-act="home">← ${esc(t('job.back'))}</button></p>
-    <h1>${esc(t('new.title'))}</h1>
+    <h1>${esc(open ? t('open.title') : t('new.title'))}</h1>
+    ${open ? `<p class="quiet">${esc(t('home.openCasesNote'))}</p>` : ''}
     <div class="error${nc.error ? '' : ' hidden'}" id="new-error" role="alert">${esc(nc.error)}</div>
 
-    <h2 class="step"><span class="n">1</span>${esc(t('new.step1'))}</h2>
-    <input type="search" id="case-search" placeholder="${esc(t('new.search'))}" aria-label="${esc(t('new.search'))}" value="${esc(nc.q)}">
-    <div class="cases" id="cases" style="margin-top:10px"></div>
+    <h2 class="step"><span class="n">1</span>${esc(open ? t('open.step1') : t('new.step1'))}</h2>
+    ${open ? renderFilters() : `<input type="search" id="case-search" placeholder="${esc(t('new.search'))}" aria-label="${esc(t('new.search'))}" value="${esc(nc.q)}">
+    <div class="cases" id="cases" style="margin-top:10px"></div>`}
 
     <h2 class="step"><span class="n">2</span>${esc(t('new.step2'))}</h2>
     <div class="row"><button class="btn" data-act="add-files">${esc(t('new.addFiles'))}</button><button class="btn" data-act="add-folder">${esc(t('new.addFolder'))}</button></div>
@@ -285,10 +363,11 @@ function renderNew() {
       <label class="row" style="font-weight:400"><input type="checkbox" data-input="far"${nc.far ? ' checked' : ''}> ${esc(t('new.far'))}</label>
     </details>
 
-    <p class="note">${esc(t('job.lead'))}</p>
+    <p class="note">${esc(open ? t('open.lead') : t('job.lead'))}</p>
     <p class="row"><button class="btn green big" data-act="start" id="start-button">${esc(t('new.start'))}</button><button class="btn" data-act="home">${esc(t('new.cancel'))}</button></p>
   </main>`;
-  renderCases();
+  if (open) renderCount();
+  else renderCases();
   renderFiles();
   renderPartHint();
 }
@@ -304,7 +383,10 @@ async function addFiles(folder) {
 async function startCheck() {
   const nc = S.nc;
   const usable = nc.files.filter((f) => !f.error);
-  const problem = !nc.caseId ? t('new.needCase')
+  const open = nc.mode === 'open_cases';
+  const problem = open && nc.count && !nc.count.enabled ? nc.count.error || t('open.off')
+    : open && !nc.count?.cases ? t('open.countNone')
+      : !open && !nc.caseId ? t('new.needCase')
     : !usable.length ? t('new.needFiles')
       : usable.some((f) => String(f.camera || '').trim().length < 3) ? t('new.needCamera')
         : usable.some((f) => (f.duration || 0) > LONG_VIDEO_SECONDS && !f.recordedFrom) ? t('new.needStart')
@@ -320,7 +402,7 @@ async function startCheck() {
   const button = document.getElementById('start-button');
   button.disabled = true;
   const result = await k.createJob({
-    caseId: nc.caseId,
+    ...(open ? { mode: 'open_cases', filters: nc.filters } : { caseId: nc.caseId }),
     files: usable.map((f) => ({ path: f.path, name: f.name, bytes: f.bytes, duration: f.duration, width: f.width, height: f.height, codec: f.codec, camera: f.camera, lat: f.lat ?? null, lng: f.lng ?? null, recordedFrom: f.recordedFrom || null })),
     window: nc.part && (nc.from || nc.to) ? { mode: filesHaveStarts() ? 'clock' : 'video', from: nc.from, to: nc.to } : null,
     settings: { fps: nc.fps, farFaces: nc.far },
@@ -372,6 +454,21 @@ function syncNote(job) {
 
 /** The part of a job's page that does not change while it runs: built once, so the case photo never flickers. */
 function renderJobHead(job) {
+  if (job.mode === 'open_cases') {
+    const narrowed = filtersText(job.openCases?.filters);
+    return `
+    <p><button class="btn" data-act="home">← ${esc(t('job.back'))}</button></p>
+    <div class="row" style="align-items:flex-start">
+      ${openTile(88)}
+      <div style="flex:1">
+        <h1>${esc(t('open.title'))}</h1>
+        <p class="quiet">${esc(t('open.searched', { n: job.openCases?.casesSearched ?? 0 }))}${narrowed ? ` · ${esc(narrowed)}` : ''}</p>
+        <p id="job-chip"></p>
+      </div>
+      <div class="row" id="job-buttons"></div>
+    </div>
+    <div id="job-live"></div>`;
+  }
   return `
     <p><button class="btn" data-act="home">← ${esc(t('job.back'))}</button></p>
     <div class="row" style="align-items:flex-start">
@@ -411,9 +508,81 @@ function renderJobLive(job) {
     ${waitingNote(job)}
     ${syncNote(job)}
     ${job.notice ? `<div class="info">${esc(t(`notice.${job.notice}`, { n: 600 }))}</div>` : ''}
+    ${job.photoYears >= 2 ? `<div class="info" id="old-photo">${esc(t('notice.old_photo', { n: job.photoYears }))}</div>` : ''}
     <h3>${esc(t('job.files'))}</h3>
     <div class="card files-progress">${files}</div>
-    <p class="note">${esc(t('job.lead'))}</p>`;
+    <p class="note">${esc(job.mode === 'open_cases' ? t('open.lead') : t('job.lead'))}</p>`;
+}
+
+/**
+ * Seen together (spec F14): the people on the same camera within ten
+ * seconds of a confirmed moment. Shown only: nobody here is searched for.
+ */
+function togetherBlock(p) {
+  if (!p.together?.length) return '';
+  return `<details class="together"><summary>${esc(t('together.title', { n: p.together.length }))}</summary>
+    <p class="small quiet">${esc(t('together.note'))}</p>
+    <div class="grid">${p.together.map((o) => `<button class="face" data-act="play" data-key="${esc(o.key)}">
+      <img src="${esc(o.picture)}" alt="" loading="lazy"><div class="t">${esc(o.clock || videoTime(o.time))}</div></button>`).join('')}</div>
+  </details>`;
+}
+
+/** One face close to an open case, with the officer's word on it. */
+function leadCard(group, lead) {
+  const p = lead.person;
+  const d = lead.decision;
+  const when = p.clock ? `${p.clock} (${t('person.into', { t: videoTime(p.time) })})` : t('person.into', { t: videoTime(p.time) });
+  let decided = '';
+  if (d?.decision === 'same') {
+    decided = d.saved === false && !d.error ? `<p class="quiet" role="status">${esc(t('person.sending'))}</p>`
+      : d.saved === false && d.offline ? `<p class="quiet" role="status">${esc(t('person.waitingToSend'))}</p>`
+        : d.saved === false ? `<p class="error">${esc(t('open.sendFailed', { error: d.error }))}</p>`
+          : `<p class="decided same">✓ ${esc(t(group.inScope ? 'open.sent' : 'open.sentOutside'))}</p>`;
+  } else if (d?.decision === 'not') {
+    decided = `<p class="decided not">${esc(t(group.inScope ? 'person.markedNot' : 'open.notSent'))}</p>`;
+  }
+  const scores = group.inScope && lead.aarakshak != null
+    ? `<details class="small quiet"><summary>${esc(t('person.details'))}</summary>${esc(t('open.scores', { a: Number(lead.aarakshak).toFixed(2), r: Number(lead.rekognition).toFixed(2), rank: lead.rank }))}</details>`
+    : '';
+  return `<article class="hit likely" data-lead="${esc(lead.id)}">
+    <div class="pair">
+      ${group.inScope ? `<figure><img src="${casePhoto(group.caseId)}" alt=""><figcaption>${esc(t('person.caseFace'))}</figcaption></figure>` : ''}
+      <figure><img src="${esc(p.picture)}" alt="" loading="lazy"><figcaption>${esc(t('person.videoFace'))}</figcaption></figure>
+    </div>
+    <div style="flex:1">
+      <p>${esc(t('person.seen', { camera: p.camera, when }))}</p>
+      ${scores}
+      <div class="row" style="margin-top:10px">
+        <button class="btn primary" data-act="play" data-key="${esc(p.key)}">▶ ${esc(t('person.play'))}</button>
+        <button class="btn" data-act="frame" data-key="${esc(p.key)}">${esc(t('person.frame'))}</button>
+        ${d?.decision === 'same' && d.saved !== false ? '' : `<button class="btn green" data-act="lead-same" data-lead="${esc(lead.id)}" data-outside="${group.inScope ? '' : '1'}">${esc(t(group.inScope ? 'open.send' : 'open.sendOutside'))}</button>`}
+        ${d?.decision ? '' : `<button class="btn" data-act="lead-not" data-lead="${esc(lead.id)}">${esc(t(group.inScope ? 'person.not' : 'open.dontSend'))}</button>`}
+      </div>
+      ${decided}
+      ${togetherBlock(p)}
+    </div>
+  </article>`;
+}
+
+/** A check against open cases: its faces, grouped by case (spec F17). */
+function renderGroups(job) {
+  if (!job.groups?.length) {
+    const finished = job.status === 'done';
+    return `<p class="quiet">${esc(finished ? t('open.noneFound') : t('open.noneYet'))}</p>
+      ${finished ? `<p><button class="btn" data-act="tab" data-tab="everyone">${esc(t('job.seeEveryone'))}</button></p>` : ''}`;
+  }
+  return job.groups.map((g) => (g.inScope
+    ? `<section class="card group">
+        <div class="row"><img class="thumb" src="${casePhoto(g.caseId)}" alt="">
+          <div><strong>${esc(g.case?.name || t('job.case', { id: g.caseId }))}</strong><br>
+          <span class="small quiet">${esc([t('job.case', { id: g.caseId }), g.case?.ageNow != null ? t('open.ageNow', { n: g.case.ageNow }) : '', g.case?.gender, g.case?.district].filter(Boolean).join(' · '))}</span></div></div>
+        ${g.leads.map((l) => leadCard(g, l)).join('')}
+      </section>`
+    : `<section class="card group outside">
+        <p><strong>${esc(t('open.outsideTitle'))}</strong></p>
+        <p class="small">${esc(t('open.outside'))}</p>
+        ${g.leads.map((l) => leadCard(g, l)).join('')}
+      </section>`)).join('');
 }
 
 function personCard(job, p) {
@@ -447,14 +616,18 @@ function personCard(job, p) {
         ${decision?.decision ? '' : `<button class="btn" data-act="not" data-key="${esc(p.key)}">${esc(t('person.not'))}</button>`}
       </div>
       ${decided}
+      ${togetherBlock(p)}
     </div>
   </article>`;
 }
 
 function renderFirst(job) {
+  if (job.mode === 'open_cases') return renderGroups(job);
   if (job.toCheck.length) return job.toCheck.map((p) => personCard(job, p)).join('');
   const finished = job.status === 'done';
-  return `<p class="quiet">${esc(finished ? t('job.noneFound') : t('job.noneYet'))}</p>`;
+  // Scenario 8: no close face, perhaps an old photo or a poor camera. Everyone seen is the way through.
+  return `<p class="quiet">${esc(finished ? t('job.noneFound') : t('job.noneYet'))}</p>
+    ${finished ? `<p><button class="btn" data-act="tab" data-tab="everyone">${esc(t('job.seeEveryone'))}</button></p>` : ''}`;
 }
 
 function renderEveryone(job) {
@@ -507,11 +680,12 @@ function renderJob(full) {
   document.getElementById('job-live').innerHTML = renderJobLive(job);
   const first = document.getElementById('tab-first');
   const everyone = document.getElementById('tab-everyone');
-  first.textContent = t('job.tabFirst', { n: job.toCheck.length });
+  first.textContent = t('job.tabFirst', { n: job.mode === 'open_cases' ? (job.groups || []).reduce((n, g) => n + g.leads.length, 0) : job.toCheck.length });
   everyone.textContent = t('job.tabEveryone', { n: job.everyone.length });
   first.classList.toggle('on', S.tab === 'first');
   everyone.classList.toggle('on', S.tab === 'everyone');
-  const sig = JSON.stringify([S.tab, S.camera, S.shown, job.status, job.toCheck.map((p) => [p.key, p.verdict, p.decision?.decision, p.decision?.saved, p.decision?.error, p.decision?.via]), job.everyone.length, S.state?.language]);
+  const sig = JSON.stringify([S.tab, S.camera, S.shown, job.status, job.toCheck.map((p) => [p.key, p.verdict, p.decision?.decision, p.decision?.saved, p.decision?.error, p.decision?.via, p.together?.length]),
+    (job.groups || []).map((g) => g.leads.map((l) => [l.id, l.decision?.decision, l.decision?.saved, l.decision?.error, l.decision?.offline, l.person.together?.length])), job.everyone.length, S.state?.language]);
   if (sig !== S.resultsSig) {
     S.resultsSig = sig;
     document.getElementById('results').innerHTML = S.tab === 'first' ? renderFirst(job) : renderEveryone(job);
@@ -530,9 +704,17 @@ function personByKey(key) {
   return S.job?.everyone.find((p) => p.key === key) || null;
 }
 
+/** The case photo to show beside a face: the job's case, or in a check against open cases the case the face is close to, if the officer can open it. */
+function casePhotoFor(p) {
+  if (S.job?.mode !== 'open_cases') return casePhoto(S.job.caseId);
+  const lead = (p.leads || []).find((l) => l.inScope && l.case?.id);
+  return lead ? casePhoto(lead.case.id) : null;
+}
+
 async function openPerson(key) {
   const p = personByKey(key);
   if (!p) return;
+  const photo = casePhotoFor(p);
   modal.innerHTML = `<div class="modal" data-act="close-modal"><div class="box" role="dialog" aria-modal="true">
     <div class="head"><strong class="grow">${esc(t('person.seen', { camera: p.camera, when: p.clock || t('person.into', { t: videoTime(p.time) }) }))}</strong>
       <button class="btn" data-act="close-modal">${esc(t('player.close'))}</button></div>
@@ -540,7 +722,7 @@ async function openPerson(key) {
     <div class="row" style="align-items:flex-start">
       <div id="clip-box"></div>
       <div class="pair" style="flex-direction:column">
-        <figure><img src="${casePhoto(S.job.caseId)}" alt=""><figcaption>${esc(t('person.caseFace'))}</figcaption></figure>
+        ${photo ? `<figure><img src="${photo}" alt=""><figcaption>${esc(t('person.caseFace'))}</figcaption></figure>` : ''}
         <figure><img src="${esc(p.picture)}" alt=""><figcaption>${esc(t('person.videoFace'))}</figcaption></figure>
       </div>
     </div>
@@ -586,6 +768,20 @@ async function reload() {
     await loadJobs();
   }
   render();
+  if (S.state.user && S.screen === 'home' && S.state.canCheck) askOpenCases();
+}
+
+/**
+ * Whether this Khozo checks footage against open cases: the home screen
+ * offers it only then. Asked after the screen is drawn, so a slow connection
+ * never holds it up; the button appears when Khozo answers.
+ */
+async function askOpenCases() {
+  const result = await k.openCaseCount({}).catch(() => null);
+  const enabled = Boolean(result && !result.error && result.enabled);
+  const changed = enabled !== Boolean(S.openCases?.enabled);
+  S.openCases = result && !result.error ? result : null;
+  if (changed && S.screen === 'home') render();
 }
 
 const actions = {
@@ -603,8 +799,32 @@ const actions = {
     S.job = null;
     await loadJobs();
     render();
+    if (S.state?.canCheck) askOpenCases();
   },
   new() { newCheck(); },
+  'new-open'() { newOpenCheck(); },
+  'camera-all'(el) {
+    const from = S.nc.files[Number(el.dataset.i)];
+    if (!from) return;
+    for (const f of S.nc.files) {
+      if (f === from || f.error) continue;
+      Object.assign(f, { camera: from.camera, where: from.where, lat: from.lat ?? null, lng: from.lng ?? null });
+    }
+    renderFiles();
+  },
+  async 'lead-same'(el) {
+    if (!window.confirm(t(el.dataset.outside ? 'open.sendOutsideConfirm' : 'open.sendConfirm'))) return;
+    el.disabled = true;
+    await k.decideLead({ id: S.job.id, leadId: el.dataset.lead, decision: 'same' });
+    S.job = await k.getJob(S.job.id);
+    renderJob(false);
+  },
+  async 'lead-not'(el) {
+    el.disabled = true;
+    await k.decideLead({ id: S.job.id, leadId: el.dataset.lead, decision: 'not' });
+    S.job = await k.getJob(S.job.id);
+    renderJob(false);
+  },
   async open(el) { await showJob(el.dataset.id); },
   async pause(el) { await k.pauseJob(el.dataset.id); },
   async resume(el) { await k.startJob(el.dataset.id); },
@@ -693,6 +913,11 @@ document.addEventListener('change', async (e) => {
   } else if (el.dataset.input === 'part') {
     S.nc.part = el.checked;
     document.getElementById('part-times').classList.toggle('hidden', !el.checked);
+  } else if (el.dataset.input === 'f-sex') {
+    S.nc.filters.sex = el.value;
+    S.nc.count = null;
+    renderCount();
+    countCases();
   } else if (el.dataset.input === 'fps') {
     S.nc.fps = Number(el.value);
   } else if (el.dataset.input === 'far') {
@@ -716,6 +941,10 @@ document.addEventListener('input', (e) => {
     if (note) note.textContent = whereNote(f);
   } else if (el.dataset.input === 'from' || el.dataset.input === 'to') {
     S.nc[el.dataset.input] = el.value;
+  } else if (['f-ageFrom', 'f-ageTo', 'f-district', 'f-missingFrom', 'f-missingTo'].includes(el.dataset.input)) {
+    S.nc.filters[el.dataset.input.slice(2)] = el.value.trim();
+    clearTimeout(countTimer);
+    countTimer = setTimeout(countCases, 400);
   }
 });
 
@@ -748,6 +977,7 @@ k.onJobChanged(async (id) => {
 window.__khozo = {
   reload,
   newCheck,
+  newOpenCheck,
   showJob,
   tab: (name) => { S.tab = name; renderJob(false); },
   openPerson,

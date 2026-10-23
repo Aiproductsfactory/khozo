@@ -72,6 +72,17 @@ export function createClient({ api = 'https://khozo.org/api', token = null, fetc
     videoJobProgress: (id, jobId, body) => call('POST', `/reports/${encodeURIComponent(id)}/video-jobs/${encodeURIComponent(jobId)}/progress`, { json: body }),
     videoJobDecision: (id, jobId, form) => call('POST', `/reports/${encodeURIComponent(id)}/video-jobs/${encodeURIComponent(jobId)}/decisions`, { form }),
     closeVideoJob: (id, jobId) => call('POST', `/reports/${encodeURIComponent(id)}/video-jobs/${encodeURIComponent(jobId)}/close`, { json: {} }),
+    // A check of footage against open cases (shared/routes/reports.js /open-case-checks).
+    /** Whether checks against open cases run on this Khozo, and how many cases a narrowing searches. */
+    openCaseCount: (filters = {}) => {
+      const query = new URLSearchParams(Object.entries(filters).filter(([, v]) => v !== '' && v != null).map(([k, v]) => [k, String(v)])).toString();
+      return call('GET', `/reports/open-case-checks/cases${query ? `?${query}` : ''}`);
+    },
+    startOpenCaseCheck: (body) => call('POST', '/reports/open-case-checks', { json: body }),
+    openCaseFace: (jobId, form) => call('POST', `/reports/open-case-checks/${encodeURIComponent(jobId)}/faces`, { form }),
+    openCaseLead: (jobId, leadId, form) => call('POST', `/reports/open-case-checks/${encodeURIComponent(jobId)}/leads/${encodeURIComponent(leadId)}`, { form }),
+    openCaseProgress: (jobId, body) => call('POST', `/reports/open-case-checks/${encodeURIComponent(jobId)}/progress`, { json: body }),
+    closeOpenCaseCheck: (jobId) => call('POST', `/reports/open-case-checks/${encodeURIComponent(jobId)}/close`, { json: {} }),
     /** The newest Khozo Desktop, as Khozo announces it (GET /dashboard/desktop-version). */
     desktopVersion: () => call('GET', '/dashboard/desktop-version'),
     photo: (id, photoId = null) => call('GET', `/reports/photo/${encodeURIComponent(id)}${photoId ? `?p=${encodeURIComponent(photoId)}` : ''}`, { bytes: true }),
@@ -105,6 +116,66 @@ async function faceFile(readPicture, track) {
   const picture = await readPicture(track);
   const copy = await sharp(picture).resize(COMPARE_SIDE, COMPARE_SIDE).jpeg({ quality: 90 }).toBuffer().catch(() => picture);
   return new File([copy], `face-${String(at).replace('.', '_')}s.jpg`, { type: 'image/jpeg' });
+}
+
+/** Whether Khozo broke on a request (no words of its own), rather than refused it. */
+const isFault = (err) => [500, 502, 503, 504].includes(err.status) && !err.data?.error;
+
+/**
+ * Sends the people of one scanned file to be searched among the open cases
+ * (a check against open cases), one at a time, each under the laptop's name
+ * for the person, and calls `onAnswer(id, { verdict, leads })` after each. A
+ * face sent again is answered from Khozo's record. Waits through Khozo's
+ * limit and lost connections (`onWait` says why); when five faces in a row
+ * get no answer, the engines are taken to be busy and it waits a while. A
+ * face with no answer stays "not checked yet", to send again next run.
+ * Stops with a KhozoError when Khozo refuses for a reason waiting will not
+ * change (signed out, the face budget, a closed check).
+ */
+export async function sendOpenCaseFaces({
+  client, jobId, fileKey, tracks, readPicture, onAnswer = () => {}, onWait = () => {}, busyWaitMs = 15000, signal,
+}) {
+  async function ask(track) {
+    let pause = 30000;
+    for (;;) {
+      try {
+        const form = new FormData();
+        form.append('photo', await faceFile(readPicture, track));
+        form.append('fileKey', String(fileKey));
+        form.append('key', track.id);
+        form.append('t', Number(track.time).toFixed(1));
+        const data = await client.openCaseFace(jobId, form);
+        return { verdict: data.verdict || 'no_answer', leads: Array.isArray(data.leads) ? data.leads : [] };
+      } catch (err) {
+        if (signal?.aborted) throw err;
+        if (err.status === 429) {
+          const seconds = err.retryAfter || 60;
+          onWait({ reason: 'limit', seconds });
+          await sleep(seconds * 1000, signal);
+        } else if (err.status === 0) {
+          onWait({ reason: 'connection', seconds: pause / 1000 });
+          await sleep(pause, signal);
+          pause = Math.min(pause * 2, 300000);
+        } else if (isFault(err)) {
+          return { verdict: 'no_answer', leads: [] };
+        } else throw err;
+      }
+    }
+  }
+
+  let unanswered = 0;
+  for (const track of tracks) {
+    if (signal?.aborted) break;
+    const answer = await ask(track);
+    if (signal?.aborted) break;
+    onAnswer(track.id, answer);
+    unanswered = answer.verdict === 'no_answer' ? unanswered + 1 : 0;
+    if (unanswered >= 5) {
+      unanswered = 0;
+      onWait({ reason: 'engines', seconds: busyWaitMs / 1000 });
+      await sleep(busyWaitMs, signal);
+    }
+  }
 }
 
 /**
@@ -148,8 +219,6 @@ export async function sendFaces({
     form.append('times', faces.map((track) => Number(track.time).toFixed(1)).join(','));
     return form;
   };
-  const isFault = (err) => [500, 502, 503, 504].includes(err.status) && !err.data?.error;
-
   // One request, waited through Khozo's limit and lost connections.
   async function post(faces, index) {
     let pause = 30000;
