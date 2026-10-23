@@ -2,7 +2,7 @@
 //
 // The same method as the browser's video check (web/src/video/videoScan.js):
 // look at the video a few times a second, find the faces, follow each person
-// from one look to the next, and keep one clear picture of each. The
+// from one look to the next, and keep a few clear pictures of each. The
 // differences are what a laptop allows: FFmpeg reads any DVR export straight
 // through, only the chosen window is read, and a ten-hour file is fine.
 //
@@ -18,6 +18,16 @@ import { frameAt, probe, readFrames, sha256File } from './ffmpeg.js';
 
 /** The largest face picture made, in pixels on a side (as the browser). */
 export const CROP_MAX = 960;
+/**
+ * How many pictures of each person are kept, the clearest first and at least
+ * a second apart. A small, blurred face is matched far better from the best
+ * of several moments than from any one: on an office camera with faces 20 px
+ * wide (23 Oct 2026), a person's clearest single picture scored -0.09 against
+ * their own photo and the best of five 0.36, with strangers unchanged. The
+ * laptop scores every kept picture and keeps the best; Khozo is sent the
+ * closest few and keeps the best answer.
+ */
+export const KEEP_PICTURES = 5;
 
 /** A frame's RGBA pixels as a sharp image. */
 const image = (rgba, width, height) => sharp(rgba, { raw: { width, height, channels: 4 } });
@@ -75,6 +85,7 @@ export function parseTime(value) {
  *   outDir     where face pictures go (`faces/t<id>.jpg`)
  *   savePicture(relativePath, jpeg)   writes a face picture; by default into
  *              outDir as it is (the desktop app encrypts it instead)
+ *   deletePicture(relativePath)   removes one a clearer picture replaced
  *   idPrefix   put before every track id ("s2-" gives "s2-17"), so that the
  *              parts of a file read after a stop never reuse an id
  *   detector   from loadDetector()
@@ -86,11 +97,12 @@ export function parseTime(value) {
  *
  * Resolves to the file's record: what it holds, the window read, the counts,
  * and `tracks`, one per person seen, earliest first, each with the moment of
- * its clearest picture and that picture's file.
+ * its clearest picture, that picture's file, and `pictures`, up to
+ * KEEP_PICTURES of them, clearest first.
  */
 export async function scanFile(file, {
   from = 0, to = null, fps = 2, maxSide = 960, minFace = MIN_FACE_PX, scoreMin, outDir, detector, onProgress, signal,
-  savePicture = null, idPrefix = '', onCheckpoint = null, checkpointMs = 30000,
+  savePicture = null, deletePicture = null, idPrefix = '', onCheckpoint = null, checkpointMs = 30000, keepPictures = KEEP_PICTURES,
 } = {}) {
   const info = await probe(file);
   const { width, height } = info;
@@ -108,10 +120,13 @@ export async function scanFile(file, {
     fs.mkdirSync(path.join(outDir, 'faces'), { recursive: true });
     save = (relative, jpeg) => fs.writeFileSync(path.join(outDir, relative), jpeg);
   }
+  const remove = deletePicture || ((relative) => fs.rmSync(path.join(outDir, relative), { force: true }));
   const idOf = (id) => (idPrefix ? `${idPrefix}${id}` : id);
   const fingerprint = sha256File(file);
   const tracker = createTracker({ maxGap: Math.max(3, (3 / fps)) });
-  const pictures = new Map(); // track id -> { file, quality }
+  const pictures = new Map(); // track id -> { file, quality, landmarks }: the clearest picture
+  const kept = new Map(); // track id -> [{ file, quality, landmarks, time }], clearest first, at most keepPictures
+  let saved = 0;
   let looks = 0;
   let tooSmall = 0;
   let faceCount = 0;
@@ -131,6 +146,7 @@ export async function scanFile(file, {
       face: { x: Math.round(track.face.x), y: Math.round(track.face.y), w: Math.round(track.face.w), h: Math.round(track.face.h), score: Math.round(track.face.score * 1000) / 1000 },
       picture: pictures.get(track.id).file,
       landmarks: pictures.get(track.id).landmarks,
+      pictures: (kept.get(track.id) || []).map((p) => ({ file: p.file, time: p.time, quality: p.quality, landmarks: p.landmarks })),
     }))
     .sort((a, b) => a.time - b.time);
 
@@ -146,11 +162,22 @@ export async function scanFile(file, {
       usable.push({ ...face, quality: faceQuality(face, faceSharpness(det, detW, detH, inDet)) });
     }
     for (const { track, better } of tracker.add(t, usable)) {
-      if (!better) continue;
-      const { jpeg, landmarks } = await cropPicture(rgba, width, height, track.best);
-      const relative = path.join('faces', `${idPrefix}t${track.id}.jpg`);
+      const face = track.last;
+      const list = kept.get(track.id) || [];
+      // The clearest keepPictures of the person so far, whatever their spacing: on the office
+      // camera the frames that matched best were a quarter-second apart, and keeping them a
+      // second apart lost the match (0.36 became 0.31).
+      const room = list.length < keepPictures || face.quality > list.at(-1).quality;
+      if (!better && !room) continue;
+      const { jpeg, landmarks } = await cropPicture(rgba, width, height, face);
+      saved += 1;
+      const relative = path.join('faces', `${idPrefix}t${track.id}-${saved}.jpg`);
       await save(relative, jpeg);
-      pictures.set(track.id, { file: relative, quality: track.best.quality, landmarks });
+      list.push({ file: relative, quality: face.quality, landmarks, time: t });
+      list.sort((a, b) => b.quality - a.quality);
+      while (list.length > keepPictures) await remove(list.pop().file);
+      kept.set(track.id, list);
+      if (better) pictures.set(track.id, { file: relative, quality: face.quality, landmarks });
     }
     if (onProgress && looks % 10 === 0) onProgress({ t, from: start, to: end, looks, people: pictures.size });
     if (onCheckpoint && Date.now() - lastCheckpoint >= checkpointMs) {

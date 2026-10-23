@@ -9,7 +9,7 @@
 //               then { id, ok: true, result } or { id, ok: false, error }.
 import path from 'node:path';
 import { loadDetector } from '../scanner/detector.js';
-import { closeness, pictureSignature, trackSignature } from '../scanner/local-match.js';
+import { closestOf, pictureSignature, trackSignatures } from '../scanner/local-match.js';
 import { loadRecognizer } from '../scanner/recognizer.js';
 import { scanFile } from '../scanner/scan.js';
 import { watchStream } from '../scanner/live.js';
@@ -63,6 +63,7 @@ const tasks = {
         fs.mkdirSync(path.dirname(file), { recursive: true });
         fs.writeFileSync(file, seal(k, jpeg));
       },
+      deletePicture: (relative) => fs.rmSync(path.join(task.fileDir, relative), { force: true }),
       checkpointMs: task.checkpointMs ?? 30000,
       onProgress: (p) => send({ id, event: 'progress', ...p }),
       onCheckpoint: (c) => send({ id, event: 'checkpoint', ...c }),
@@ -137,17 +138,23 @@ const tasks = {
     const k = key(task);
     const caseSigs = task.caseSignatures.map((s) => ({ signature: Float32Array.from(s.signature) }));
     const scores = {};
+    // Which of a person's pictures scored best: the one the officer sees and Khozo is sent first.
+    const best = {};
     let done = 0;
     for (const track of task.tracks) {
-      const signature = await trackSignature({
+      const signatures = await trackSignatures({
         track, detector: found, recognizer: r,
-        readPicture: (t) => open(k, fs.readFileSync(path.join(task.fileDir, t.picture))),
-      }).catch(() => null);
-      if (signature) scores[track.key] = closeness(signature, caseSigs);
+        readPicture: (t, file = t.picture) => open(k, fs.readFileSync(path.join(task.fileDir, file))),
+      }).catch(() => []);
+      const closest = closestOf(signatures, caseSigs);
+      if (closest.score != null) {
+        scores[track.key] = closest.score;
+        best[track.key] = closest.file;
+      }
       done += 1;
       if (done % 25 === 0) send({ id, event: 'progress', stage: 'signatures', done, total: task.tracks.length });
     }
-    return { scores };
+    return { scores, best };
   },
 };
 

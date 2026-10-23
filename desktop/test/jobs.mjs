@@ -30,7 +30,7 @@ import { loadKey, open, secureFiles, seal } from '../app/secure-store.js';
 import { VIDEO_ROLES, canSearchCase } from '../app/roles.js';
 import { KEYS, TRANSLATIONS } from '../app/renderer/i18n.js';
 import { ffmpegPath } from '../scanner/ffmpeg.js';
-import { KhozoError } from '../scanner/khozo.js';
+import { KhozoError, sendFaces } from '../scanner/khozo.js';
 import { isStreamAddress, safeAddress } from '../scanner/live.js';
 import { readModelCard } from '../scanner/recognizer.js';
 import { loadDetector } from '../scanner/detector.js';
@@ -219,6 +219,22 @@ console.log('Parts');
     officer: { name: 'PSI Test' },
   });
   check('the case note says where, when, what the engines said and who looked', note.includes('Kalupur railway station, gate 1') && note.includes('0:11') && note.includes('both agree') && note.includes('c'.repeat(64)) && note.includes('PSI Test') && note.includes('lead, not an identification') && note.length <= 1000, note);
+
+  // Several pictures of one person go to Khozo under the person's one name, and the best answer wins.
+  {
+    const client = fakeClient();
+    const tiny = await sharp({ create: { width: 48, height: 48, channels: 3, background: '#888' } }).jpeg().toBuffer();
+    const answers = await sendFaces({
+      client, caseId: 'r_test', job: { jobId: 'vj_x', fileKey: 0 },
+      record: { name: 'v.mp4', bytes: 1, duration: 9, sha256: 'c'.repeat(64), tracks: [], facesTooSmall: 0 },
+      tracks: [{ id: '0:a', time: 1, quality: 0.9, picture: 'a1.jpg', pictures: [{ file: 'a1.jpg' }, { file: 'a2.jpg' }, { file: 'a3.jpg' }] }, { id: '0:b', time: 2, quality: 0.8, picture: 'b1.jpg' }],
+      picturesOf: (t) => (t.pictures ? t.pictures.map((p) => p.file) : [t.picture]),
+      readPicture: async () => tiny, camera: 'Test camera', searchId: 'vs_test',
+    });
+    const first = client.calls.searches[0];
+    check('several pictures of one person go to Khozo under the person’s one name', client.calls.searches.length === 1 && first.faces === 4 && first.keys === '0:a,0:a,0:a,0:b', JSON.stringify(first));
+    check('… and the person’s answer is the best of their pictures', answers['0:a']?.verdict === 'likely' && answers['0:b']?.verdict === 'unlikely', JSON.stringify(answers));
+  }
 
   check('the desktop’s police roles are Khozo’s', JSON.stringify([...VIDEO_ROLES].sort()) === JSON.stringify([...POLICE_ROLES].sort()));
   check('found, closed and unverified cases are not offered', !canSearchCase({ status: 'found' }) && !canSearchCase({ status: 'closed' }) && !canSearchCase({ status: 'missing', intakeStatus: 'pending_verification' }) && canSearchCase({ status: 'missing' }));

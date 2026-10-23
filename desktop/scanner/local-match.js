@@ -74,6 +74,32 @@ export async function trackSignature({ dir, track, detector, recognizer, readPic
   return pictureSignature(await comparisonCopy(picture), { detector, recognizer, points: pointsOnCopy(track.landmarks, width) });
 }
 
+/**
+ * Signatures of every kept picture of a person (scan.js keeps up to five),
+ * `[{ file, signature }]`; a picture no face is found in is left out.
+ */
+export async function trackSignatures({ dir, track, detector, recognizer, readPicture = null }) {
+  const out = [];
+  const list = track.pictures?.length ? track.pictures : [{ file: track.picture, landmarks: track.landmarks }];
+  for (const p of list) {
+    const picture = readPicture ? await readPicture(track, p.file) : path.join(dir, p.file);
+    const { width } = await sharp(picture).metadata();
+    const signature = await pictureSignature(await comparisonCopy(picture), { detector, recognizer, points: pointsOnCopy(p.landmarks, width) }).catch(() => null);
+    if (signature) out.push({ file: p.file, signature });
+  }
+  return out;
+}
+
+/** How close a person is to the case over all their pictures: the best score, and the picture that gave it. */
+export function closestOf(signatures, caseSigs) {
+  let best = { score: null, file: null };
+  for (const { file, signature } of signatures) {
+    const score = closeness(signature, caseSigs);
+    if (best.score == null || score > best.score) best = { score, file };
+  }
+  return best;
+}
+
 /** How close a person is to the case: the best cosine over the case's photos. */
 export function closeness(signature, caseSigs) {
   let best = -1;

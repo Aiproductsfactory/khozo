@@ -35,7 +35,7 @@ import { formatVideoTime } from '../../web/src/video/faces.js';
 import { createClient, KhozoError, sendFaces, signInFromEnv } from '../scanner/khozo.js';
 import { loadDetector } from '../scanner/detector.js';
 import { loadRecognizer } from '../scanner/recognizer.js';
-import { caseSignatures, chooseToSend, closeness, trackSignature } from '../scanner/local-match.js';
+import { caseSignatures, chooseToSend, closestOf, trackSignatures } from '../scanner/local-match.js';
 import { clockTime, peopleOf, reviewPage, toCheckFirst, VERDICT_WORDS } from '../scanner/review.js';
 
 const USAGE = 'Usage: node desktop/bin/compare.mjs <scan folder> --case <case id> --camera "<where the camera is>" [--recorded-from <start>] [--api <url>] [--line 0.25] [--top 10] [--max-faces <n>] [--gpu] [--no-send]';
@@ -151,8 +151,12 @@ async function main() {
       for (const track of record.tracks) {
         if (controller.signal.aborted) break;
         if (fileRun.scores[track.id] == null) {
-          const signature = await trackSignature({ dir: record.outDir, track, detector, recognizer });
-          if (signature) fileRun.scores[track.id] = closeness(signature, caseSigs);
+          // Every kept picture of the person; the best score counts, and that picture goes first.
+          const closest = closestOf(await trackSignatures({ dir: record.outDir, track, detector, recognizer }), caseSigs);
+          if (closest.score != null) {
+            fileRun.scores[track.id] = closest.score;
+            (fileRun.best ||= {})[track.id] = closest.file;
+          }
         }
         done += 1;
         if (done % 50 === 0) process.stdout.write(`\r  compared ${done} of ${record.tracks.length} on this laptop   `);
@@ -177,6 +181,10 @@ async function main() {
       record,
       dir: record.outDir,
       tracks: toSend,
+      // With the first pass, up to three pictures of each person, the best-scoring first.
+      picturesOf: (t) => (fileRun.best?.[t.id]
+        ? [fileRun.best[t.id], ...(t.pictures || []).map((p) => p.file).filter((f) => f !== fileRun.best[t.id])].slice(0, 3)
+        : [t.picture]),
       camera,
       recordedFrom: fileRun.recordedFrom,
       searchId: fileRun.searchId,

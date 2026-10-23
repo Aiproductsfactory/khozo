@@ -38,7 +38,7 @@ The desktop is a separate package so that the Worker build never downloads Elect
 
 **While a check runs:**
 
-- It reads the videos one by one, runs the first pass with Aarakshak's model if it is installed, and sends the closest faces to Khozo.
+- It reads the videos one by one, keeping up to five clear pictures of each person, runs the first pass with Aarakshak's model if it is installed (every picture scored, the best counts), and sends the closest people to Khozo, up to three pictures each under one name; Khozo keeps the best answer. This matters on small, blurred faces: on an office camera with faces 20 px wide, one volunteer's clearest single picture scored −0.09 against their own photo and the best of five 0.36, so the check found them (23 Oct 2026). Strangers' scores did not rise.
 - It saves its progress every 30 seconds. A check stopped by a pause, a crash or a power cut carries on from there.
 - The laptop stays awake.
 
@@ -51,6 +51,7 @@ The desktop is a separate package so that the Worker build never downloads Elect
 - An **old case photo** (a case missing two years or more) is said on the check's page: matches will be weak, so look through "Everyone seen" too.
 - **Answers with no internet** (only when Khozo has `KHOZO_DESKTOP_LAPTOP_ANSWERS` on): the laptop keeps the case's face signatures, encrypted, for the check's life, and a face it finds close shows as "On this laptop" until Khozo answers. The laptop signs the very 240 px copy Khozo is sent (`scanner/compare-copy.js`): on 80 faces the laptop and Aarakshak's own code agree within 0.014.
 - **Watching a live camera** (only when Khozo has `KHOZO_DESKTOP_LIVE_WATCH` on): one case, one camera's stream address (RTSP, HTTP, UDP), until a set time. Each face is compared on the laptop as it is seen; only faces close to the case are kept, encrypted, with their whole frame, and sent to Khozo; the officer at the desk gets a Windows notice and a banner. Nothing of the stream is recorded. In tests a planted person reached the desk about two seconds after appearing on camera (`scanner/live.js`).
+- **Evidence**: "Same person" sends the face picture and the whole frame with the face boxed to Khozo as a sighting of the case, for the case officer's review. The check's signed court report (case page, "Report for a court") shows both pictures beside each decision; "Not this person" keeps no picture.
 - On khozo.org, the case page shows the **route**: every moment sent to the case from any laptop, in time order, the cameras drawn from their map points, and each check's decisions with who made them and on which laptop.
 
 **What stays on the laptop, and how:**

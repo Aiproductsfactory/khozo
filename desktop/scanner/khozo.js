@@ -7,7 +7,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { VIDEO_SEARCH_BATCH } from '../../shared/video-search.js';
+import { FRAME_VERDICTS, VIDEO_SEARCH_BATCH } from '../../shared/video-search.js';
 import { comparisonCopy } from './compare-copy.js';
 
 export const DESKTOP_VERSION = '0.0.1';
@@ -110,9 +110,9 @@ const sleep = (ms, signal) => new Promise((resolve) => {
  * (web/src/video/faces.js COMPARE_SIDE). The picture kept on the laptop, and
  * sent with "Same person", is not changed.
  */
-async function faceFile(readPicture, track) {
+async function faceFile(readPicture, track, file = track.picture) {
   const at = Math.round(Number(track.time) * 10) / 10;
-  const picture = await readPicture(track);
+  const picture = await readPicture(track, file);
   // The copy the laptop's own first pass signed too (local-match.js), so both look at the same picture.
   const copy = await comparisonCopy(picture).catch(() => picture);
   return new File([copy], `face-${String(at).replace('.', '_')}s.jpg`, { type: 'image/jpeg' });
@@ -183,8 +183,11 @@ export async function sendOpenCaseFaces({
  * time, and resolves to their answers by track id: `{ verdict, engines }`.
  *
  * `record` is the file's entry in the scan's manifest and `dir` its folder;
- * `readPicture(track)` reads a face picture instead (the desktop app keeps
- * them encrypted). `onAnswers(answers)` is called after every request, so the
+ * `readPicture(track, file)` reads a face picture instead (the desktop app
+ * keeps them encrypted). `picturesOf(track)` names the pictures of a person
+ * to send (one by default; the app sends up to three, the one its first pass
+ * scored best first), all under the person's one name, and the person's
+ * answer is the best of them. `onAnswers(answers)` is called after every request, so the
  * caller can save them and a stopped run picks up where it stopped. Waits,
  * rather than giving up, when Khozo's limit is reached or the connection drops
  * (`onWait` says why); stops with a KhozoError when Khozo refuses for a reason
@@ -192,18 +195,22 @@ export async function sendOpenCaseFaces({
  */
 export async function sendFaces({
   client, caseId, record, dir, tracks, camera, recordedFrom = null, searchId,
-  readPicture = (track) => fs.readFileSync(path.join(dir, track.picture)),
+  readPicture = (track, file = track.picture) => fs.readFileSync(path.join(dir, file)),
+  picturesOf = (track) => [track.picture],
   // With a check on Khozo, `{ jobId, fileKey }`: the faces go to that check
   // (POST /:id/video-jobs/:jobId/faces), each batch named from the faces in it,
   // so a batch sent again is answered from the record, not compared again.
   job = null,
   onAnswers = () => {}, onWait = () => {}, busyWaitMs = 15000, signal,
 }) {
+  // Each picture to send, with its person: up to VIDEO_SEARCH_BATCH a request.
+  const items = tracks.flatMap((track) => picturesOf(track).map((file) => ({ track, file })));
   const batches = [];
-  for (let i = 0; i < tracks.length; i += VIDEO_SEARCH_BATCH) batches.push(tracks.slice(i, i + VIDEO_SEARCH_BATCH));
+  for (let i = 0; i < items.length; i += VIDEO_SEARCH_BATCH) batches.push(items.slice(i, i + VIDEO_SEARCH_BATCH));
+  const rank = (verdict) => { const i = FRAME_VERDICTS.indexOf(verdict); return i < 0 ? FRAME_VERDICTS.length : i; };
   const formFor = async (faces, index) => {
     const form = new FormData();
-    const files = await Promise.all(faces.map((track) => faceFile(readPicture, track)));
+    const files = await Promise.all(faces.map(({ track, file }) => faceFile(readPicture, track, file)));
     files.forEach((file, i) => form.append(i === 0 ? 'photo' : 'extraPhotos', file));
     form.append('searchId', searchId);
     form.append('videoName', String(record.name || '').slice(0, 200));
@@ -216,7 +223,7 @@ export async function sendFaces({
     form.append('batches', String(batches.length));
     form.append('facesFound', String(record.tracks?.length ?? faces.length));
     form.append('facesTooSmall', String(record.facesTooSmall || 0));
-    form.append('times', faces.map((track) => Number(track.time).toFixed(1)).join(','));
+    form.append('times', faces.map(({ track }) => Number(track.time).toFixed(1)).join(','));
     return form;
   };
   // One request, waited through Khozo's limit and lost connections.
@@ -228,9 +235,9 @@ export async function sendFaces({
         if (!job) return await client.videoSearch(caseId, form);
         form.append('fileKey', String(job.fileKey));
         // The laptop's name for each person: what the officer's decision on them is sent under.
-        form.append('keys', faces.map((t) => t.id).join(','));
+        form.append('keys', faces.map(({ track }) => track.id).join(','));
         // The batch's name replaces its number: a field sent twice may arrive as a list.
-        form.set('batch', crypto.createHash('sha1').update(faces.map((t) => t.id).join(',')).digest('hex').slice(0, 24));
+        form.set('batch', crypto.createHash('sha1').update(faces.map(({ track, file }) => `${track.id}|${file}`).join(',')).digest('hex').slice(0, 24));
         return await client.videoJobFaces(caseId, job.jobId, form);
       } catch (err) {
         if (signal?.aborted) throw err;
@@ -256,10 +263,14 @@ export async function sendFaces({
       await sleep(busyWaitMs, signal);
       if (!signal?.aborted) data = await post(faces, index);
     }
+    // A person's answer is the best over their pictures.
     const answered = {};
     for (const row of data.results || []) {
-      const track = faces[row.index];
-      if (track) answered[track.id] = { verdict: row.verdict, engines: row.enginesAnswered || [] };
+      const item = faces[row.index];
+      if (!item) continue;
+      const got = { verdict: row.verdict, engines: row.enginesAnswered || [] };
+      const have = answered[item.track.id];
+      if (!have || rank(got.verdict) < rank(have.verdict)) answered[item.track.id] = got;
     }
     return answered;
   }
@@ -274,17 +285,18 @@ export async function sendFaces({
       if (!isFault(err)) throw err;
       // Several at once were too much for the server: one at a time. A face
       // the server cannot take even alone stays "not checked yet".
-      for (const track of batch.length > 1 ? batch : []) {
+      for (const item of batch.length > 1 ? batch : []) {
         if (signal?.aborted) break;
         try {
-          Object.assign(answered, await ask([track], index));
+          const one = await ask([item], index);
+          for (const [id, got] of Object.entries(one)) if (!answered[id] || rank(got.verdict) < rank(answered[id].verdict)) answered[id] = got;
         } catch (single) {
           if (!isFault(single)) throw single;
         }
       }
     }
     // A face with no answer is "not checked yet", to send again next run.
-    for (const track of batch) answered[track.id] ||= { verdict: 'no_answer', engines: [] };
+    for (const { track } of batch) answered[track.id] ||= { verdict: 'no_answer', engines: [] };
     Object.assign(all, answered);
     onAnswers(answered);
   }

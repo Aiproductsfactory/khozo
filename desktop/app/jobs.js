@@ -23,6 +23,8 @@ import { safeAddress } from '../scanner/live.js';
 
 /** Without Aarakshak's model on the laptop, at most this many people a video are sent, clearest first. */
 export const SEND_LIMIT_WITHOUT_MODEL = 600;
+/** With the first pass, how many pictures of one person go to Khozo: the one that scored best, then the clearest. */
+export const PICTURES_TO_SEND = 3;
 /** A Khozo that kept no checks is asked again after this long: it may have been updated. */
 const OLDER_KHOZO_RECHECK_MS = 6 * 3600 * 1000;
 
@@ -347,6 +349,22 @@ export function createJobs({
     }
   }
 
+  /** A person's picture to show and send: the one the first pass scored best, else the clearest. */
+  const bestPictureOf = (job, k, track) => job.bestPicture?.[k] || track.picture;
+
+  /**
+   * Which of a person's pictures go to Khozo (scan.js keeps up to five): with
+   * the first pass, the one that scored best and then the clearest, up to
+   * PICTURES_TO_SEND, under the person's one name, and Khozo keeps the best
+   * answer; without it, the clearest one.
+   */
+  function picturesToSend(job, k, track) {
+    const all = track.pictures?.length ? track.pictures.map((p) => p.file) : [track.picture];
+    const best = job.bestPicture?.[k];
+    if (!best) return all.slice(0, 1);
+    return [best, ...all.filter((f) => f !== best)].slice(0, PICTURES_TO_SEND);
+  }
+
   /** The whole frame with the face marked: kept from a live camera, or read again from the video. */
   async function frameBytes(job, index, file, track) {
     if (track.frame) return files.read(path.join(fileDir(job.id, index), track.frame));
@@ -355,7 +373,7 @@ export function createJobs({
 
   /** The face, and the whole frame with the face marked, for a sighting. */
   async function addPictures(form, job, index, file, track) {
-    form.append('photo', new File([files.read(path.join(fileDir(job.id, index), track.picture))], 'face.jpg', { type: 'image/jpeg' }));
+    form.append('photo', new File([files.read(path.join(fileDir(job.id, index), bestPictureOf(job, keyOf(index, track.id), track)))], 'face.jpg', { type: 'image/jpeg' }));
     try {
       const frame = await frameBytes(job, index, file, track);
       if (frame) form.append('extraPhotos', new File([frame], 'frame.jpg', { type: 'image/jpeg' }));
@@ -475,7 +493,7 @@ export function createJobs({
       closeness: job.scores[k] ?? null,
       quality: track.quality,
       decision: job.decisions[k] || null,
-      picture: `khozo://picture/${job.id}/${index}/${encodeURIComponent(track.picture.replace(/\\/g, '/'))}`,
+      picture: `khozo://picture/${job.id}/${index}/${encodeURIComponent(bestPictureOf(job, k, track).replace(/\\/g, '/'))}`,
       // A check against open cases: the cases this face was very close to, with the officer's word on each.
       leads: (job.answers[k]?.leads || []).map((lead) => ({ ...lead, decision: job.decisions[lead.id] || null })),
     };
@@ -701,9 +719,10 @@ export function createJobs({
     if (tracks.length) {
       const result = await worker.request('signatures', {
         fileDir: fileDir(job.id, index), key, card: model.card, detectorPath: finder,
-        caseSignatures: sigs, tracks: tracks.map((t) => ({ key: keyOf(index, t.id), picture: t.picture, landmarks: t.landmarks })),
+        caseSignatures: sigs, tracks: tracks.map((t) => ({ key: keyOf(index, t.id), picture: t.picture, pictures: t.pictures, landmarks: t.landmarks })),
       });
       Object.assign(job.scores, result.scores);
+      Object.assign(job.bestPicture ||= {}, result.best || {});
     }
     file.scored = true;
     changed(job);
@@ -795,7 +814,8 @@ export function createJobs({
           camera: file.camera,
           recordedFrom: file.recordedFrom,
           searchId: file.searchId,
-          readPicture: (t) => files.read(path.join(fileDir(job.id, index), t.picture)),
+          readPicture: (t, picture = t.picture) => files.read(path.join(fileDir(job.id, index), picture)),
+          picturesOf: (t) => picturesToSend(job, t.id, t),
           signal,
           onAnswers: (answers) => {
             Object.assign(job.answers, answers);
@@ -858,7 +878,7 @@ export function createJobs({
             camera: file.camera,
             recordedFrom: file.recordedFrom,
             searchId: file.searchId,
-            readPicture: (t) => files.read(path.join(fileDir(job.id, 0), t.picture)),
+            readPicture: (t, picture = t.picture) => files.read(path.join(fileDir(job.id, 0), picture)),
             signal,
             onAnswers: (answers) => {
               Object.assign(job.answers, answers);
