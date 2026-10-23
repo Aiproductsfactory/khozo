@@ -113,15 +113,23 @@ export default function CheckReport() {
           <h3 className="mb-2 font-semibold">{t('What the officer decided')}</h3>
           {report.decisions.length ? (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[640px] text-sm">
+              <table className="w-full min-w-[760px] text-sm">
                 <thead className="text-left text-xs uppercase tracking-wide text-gray-500">
-                  <tr><th className="py-1.5 pr-3">{t('Seen')}</th><th className="py-1.5 pr-3">{t('Camera')}</th><th className="py-1.5 pr-3">{t('Decision')}</th><th className="py-1.5 pr-3">{t('Face engines')}</th><th className="py-1.5">{t('Marked by')}</th></tr>
+                  <tr><th className="py-1.5 pr-3">{t('Seen')}</th><th className="py-1.5 pr-3">{t('Camera')}</th><th className="py-1.5 pr-3">{t('Pictures')}</th><th className="py-1.5 pr-3">{t('Decision')}</th><th className="py-1.5 pr-3">{t('Face engines')}</th><th className="py-1.5">{t('Marked by')}</th></tr>
                 </thead>
                 <tbody>
                   {report.decisions.map((d) => (
                     <tr key={d.key} className="border-t border-black/10 align-top">
                       <td className="py-1.5 pr-3">{d.seenAt ? when(d.seenAt) : '-'}<span className="block text-xs text-gray-500">{t('{t} into the video', { t: d.videoTime || '-' })}</span></td>
                       <td className="py-1.5 pr-3">{d.cameraPlace || '-'}</td>
+                      <td className="py-1.5 pr-3">
+                        {d.pictures ? (
+                          <span className="flex gap-2">
+                            <img src={d.pictures.face} alt={t('Face from the video')} className="h-24 w-24 rounded object-cover ring-1 ring-black/10" />
+                            {d.pictures.frame && <img src={d.pictures.frame} alt={t('The whole frame, face marked')} className="h-24 w-auto rounded ring-1 ring-black/10" />}
+                          </span>
+                        ) : <span className="text-xs text-gray-500">{d.decision === 'same' ? t('Not kept') : t('None: no picture is kept for "not this person"')}</span>}
+                      </td>
                       <td className="py-1.5 pr-3">{d.decision === 'same' ? t('Same person') : t('Not this person')}{d.sightingId ? <span className="block text-xs text-gray-500">{t('Sighting {id}', { id: d.sightingId })}</span> : null}</td>
                       <td className="py-1.5 pr-3">{d.verdict || '-'}</td>
                       <td className="py-1.5">{d.markedBy || '-'}<span className="block text-xs text-gray-500">{when(d.markedAt)}</span></td>

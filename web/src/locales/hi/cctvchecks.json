@@ -98,5 +98,10 @@
   "Kept encrypted for the check; not deleted yet": "जाँच के लिए एन्क्रिप्ट करके रखे गए; अभी हटाए नहीं गए",
   "{camera}: watched live from {start} until {until}; {read} watched": "{camera}: {start} से {until} तक लाइव देखा गया; {read} देखा",
   "The case's face signatures were kept on the laptop for the check and deleted {date}": "केस के चेहरे के संकेत जाँच के लिए लैपटॉप पर रखे गए और {date} को हटाए गए",
-  "The case's face signatures are kept on the laptop, encrypted, until the check is deleted": "केस के चेहरे के संकेत जाँच हटने तक लैपटॉप पर एन्क्रिप्ट करके रखे जाते हैं"
+  "The case's face signatures are kept on the laptop, encrypted, until the check is deleted": "केस के चेहरे के संकेत जाँच हटने तक लैपटॉप पर एन्क्रिप्ट करके रखे जाते हैं",
+  "Pictures": "तस्वीरें",
+  "Face from the video": "वीडियो से चेहरा",
+  "The whole frame, face marked": "पूरी तस्वीर, चेहरा चिह्नित",
+  "Not kept": "नहीं रखी गई",
+  "None: no picture is kept for \"not this person\"": "कोई नहीं: \"यह व्यक्ति नहीं\" के लिए कोई तस्वीर नहीं रखी जाती"
 }
