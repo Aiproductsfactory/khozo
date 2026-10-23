@@ -32,6 +32,7 @@ import {
   OPEN_CASE_BAR, clearsOpenCaseBar, leadIdFor, leadView, newOpenCaseCheck, openCaseArea, openCaseFiltersOf, openCasesFor, openCaseSettingsOf, shortlistOf,
 } from '../shared/open-case-checks.js';
 import { closedVideoJobPatch, videoJobView } from '../shared/video-jobs.js';
+import { desktopPolicyOf, liveUntilOf, liveWatchProblem } from '../shared/desktop-policy.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const checks = [];
@@ -104,6 +105,15 @@ console.log('The rules');
     && view.decisions[0].sightingId === null && !JSON.stringify(view).includes('"b"') && view.device === 'LAPTOP-7' && view.openCases.casesSearched === 2 && view.openCases.leads === 1);
   const closed = closedVideoJobPatch(job);
   check('closing it keeps which case each lead was, without the scores', closed.leads.ld_x.caseId === 'b' && closed.leads.ld_x.aarakshak === undefined);
+
+  const policyOff = desktopPolicyOf({});
+  check('laptop answers and live watches are off unless switched on', !policyOff.laptopAnswers && !policyOff.liveWatch && policyOff.liveWatchHours === 12 && policyOff.laptopLine === 0.35);
+  const policyOn = desktopPolicyOf({ laptopAnswers: 'on', liveWatch: 'yes', liveWatchHours: '4', laptopLine: '2' });
+  check('the hours are read, and a line out of range keeps Aarakshak\'s 0.35', policyOn.laptopAnswers && policyOn.liveWatch && policyOn.liveWatchHours === 4 && policyOn.laptopLine === 0.35);
+  check('a watch must end later than now and within the hours', liveUntilOf(new Date(Date.now() + 3600000).toISOString(), policyOn).until && liveUntilOf(new Date(Date.now() + 5 * 3600000).toISOString(), policyOn).error && liveUntilOf('soon', policyOn).error);
+  const watchJob = { live: { until: new Date(Date.now() - 20 * 60000).toISOString() } };
+  check('faces are refused 10 minutes after a watch ends, and while it is switched off', liveWatchProblem(watchJob, policyOn)?.code === 'live_ended'
+    && liveWatchProblem({ live: { until: new Date(Date.now() - 5 * 60000).toISOString() } }, policyOn) === null && liveWatchProblem(watchJob, policyOff)?.code === 'live_off' && liveWatchProblem({}, policyOff) === null);
 }
 
 // ---- The stand-ins -----------------------------------------------------------
@@ -267,6 +277,9 @@ function start(runtime, dataDir, port, env = {}) {
       AWS_MAX_ATTEMPTS: '1',
       KHOZO_REKOGNITION_ENDPOINT: standInUrl,
       KHOZO_DESKTOP_OPEN_CASES: 'on',
+      KHOZO_DESKTOP_LAPTOP_ANSWERS: 'on',
+      KHOZO_DESKTOP_LIVE_WATCH: 'on',
+      KHOZO_DESKTOP_LIVE_WATCH_HOURS: '6',
       ...env,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -501,15 +514,49 @@ async function runOn(name, runtime, port) {
       && onRoute.find((m) => m.cameraPlace === 'Gate camera')?.lat === 18.94 && onRoute.every((m) => m.sightingId), JSON.stringify(onRoute.map((m) => [m.cameraPlace, m.seenAt])));
     check('a face another district sent from a check against open cases is on the route too', onRoute.some((m) => m.fromOpenCases && m.cameraPlace === 'CSMT station, gate 2'));
 
+    // Phase 3: what the app may do beyond one case's videos (shared/desktop-policy.js).
+    const version = await request('GET', '/dashboard/desktop-version', { token: mumbai });
+    check('Khozo tells the app it may give laptop answers and watch a live camera, and for how long', version.data.policy?.laptopAnswers === true && version.data.policy.liveWatch === true
+      && version.data.policy.liveWatchHours === 6 && version.data.policy.laptopLine === 0.35, JSON.stringify(version.data.policy));
+    const liveFiles = JSON.stringify([{ key: 0, name: 'Live camera', cameraPlace: 'CSMT station, platform 4 (live)', lat: 18.94, lng: 72.83, recordedFrom: new Date().toISOString(), live: true }]);
+    const inHours = (h) => new Date(Date.now() + h * 3600 * 1000).toISOString();
+    const startLive = (body) => request('POST', '/reports/r_oc_plant/video-jobs', { token: mumbai, body: { device: 'PS-POWAI-LAPTOP2', files: liveFiles, ...body } });
+    const watch = await startLive({ jobKey: 'live_1', liveUntil: inHours(2), keepsTemplate: 'yes' });
+    check('a live watch starts for one case, until a set time, and says the laptop keeps the case\'s signatures', watch.status === 201 && watch.data.job.live?.until && watch.data.job.videos[0].live === true
+      && watch.data.job.laptopTemplate?.kept === true && watch.data.job.laptopTemplate.deletedAt === null, JSON.stringify(watch.data).slice(0, 300));
+    check('a watch longer than the allowed hours is refused', (await startLive({ jobKey: 'live_2', liveUntil: inHours(7) })).status === 400);
+    check('a watch that ends before now is refused', (await startLive({ jobKey: 'live_3', liveUntil: inHours(-1) })).status === 400);
+    const twoCameras = JSON.stringify([JSON.parse(liveFiles)[0], { ...JSON.parse(liveFiles)[0], key: 1 }]);
+    check('a watch is of one camera', (await startLive({ jobKey: 'live_4', liveUntil: inHours(1), files: twoCameras })).status === 400);
+    check('a live camera is never watched against every open case', (await request('POST', '/reports/open-case-checks', { token: mumbai, body: { ...body, jobKey: 'oc_live', files: liveFiles } })).data.code === 'live_one_case');
+    const liveFace = new FormData();
+    liveFace.append('photo', new File([photo('PLANT')], 'face.png', { type: 'image/png' }));
+    liveFace.append('fileKey', '0');
+    liveFace.append('batch', 'w1');
+    liveFace.append('keys', '0:w0-t1');
+    liveFace.append('times', '12.0');
+    const liveAnswer = await request('POST', `/reports/r_oc_plant/video-jobs/${watch.data.job.id}/faces`, { token: mumbai, form: liveFace });
+    check('a face from the live camera is compared with the case, as from a video', liveAnswer.status === 200 && liveAnswer.data.results?.[0]?.verdict === 'likely', JSON.stringify(liveAnswer.data));
+    const deletedAt = new Date().toISOString();
+    const closedWatch = await request('POST', `/reports/r_oc_plant/video-jobs/${watch.data.job.id}/close`, { token: mumbai, body: { templateDeletedAt: deletedAt } });
+    check('T3.2: closing the watch records when the laptop deleted the case\'s signatures', closedWatch.data.job?.laptopTemplate?.deletedAt === deletedAt, JSON.stringify(closedWatch.data.job?.laptopTemplate));
+    const watchReport = await request('GET', `/reports/r_oc_plant/video-jobs/${watch.data.job.id}/report`, { token: mumbai });
+    check('… and the court report says so, with the watch\'s times', watchReport.data.check?.caseTemplateOnLaptop?.deletedAt === deletedAt && watchReport.data.check?.live?.until === watch.data.job.live.until);
+    const liveAudit = JSON.parse(fs.readFileSync(dbFile, 'utf8')).audit;
+    check('starting a live watch is audited as such, with its end', liveAudit.some((a) => a.action === 'case.live_watch_started' && a.metadata?.live?.until === watch.data.job.live.until && a.scope.reportId === 'r_oc_plant'));
+
     await stop(child);
 
     // Switched off.
-    child = start(runtime, dataDir, port, { KHOZO_DESKTOP_OPEN_CASES: '' });
+    child = start(runtime, dataDir, port, { KHOZO_DESKTOP_OPEN_CASES: '', KHOZO_DESKTOP_LAPTOP_ANSWERS: '', KHOZO_DESKTOP_LIVE_WATCH: '' });
     await waitFor(child);
     const token = await login('police@khozo.org');
     const off = await request('GET', '/reports/open-case-checks/cases', { token });
     check('switched off, the app is told so and nothing starts', off.data.enabled === false && off.data.reason === 'off'
       && (await request('POST', '/reports/open-case-checks', { token, body: { ...body, jobKey: 'oc_off' } })).status === 403);
+    const offPolicy = (await request('GET', '/dashboard/desktop-version', { token })).data.policy;
+    check('without the switches, no laptop answers and no live watch', offPolicy && offPolicy.laptopAnswers === false && offPolicy.liveWatch === false);
+    check('a live watch is refused while it is switched off', (await request('POST', '/reports/r_oc_plant/video-jobs', { token, body: { jobKey: 'live_off', files: JSON.stringify([{ key: 0, cameraPlace: 'A camera (live)', live: true }]), liveUntil: new Date(Date.now() + 3600000).toISOString() } })).data.code === 'live_off');
     await stop(child);
 
     // No second engine: the bar cannot be met, so it does not run.

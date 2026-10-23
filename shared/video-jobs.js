@@ -96,24 +96,30 @@ export function jobFilesOf(list) {
     const sha = text(f?.sha256, 64).toLowerCase();
     const from = count(f?.from);
     const to = count(f?.to);
+    // A live camera watched as it records (desktop-policy.js liveWatch): no file, no length, no fingerprint.
+    const live = f?.live === true || f?.live === 'true';
     files.push({
       key: Number.isInteger(Number(f?.key)) ? Number(f.key) : i,
       name: text(f?.name, 200) || null,
-      bytes: count(f?.bytes),
-      seconds: count(f?.seconds),
-      sha256: SHA256.test(sha) ? sha : null,
+      bytes: live ? null : count(f?.bytes),
+      seconds: live ? null : count(f?.seconds),
+      sha256: !live && SHA256.test(sha) ? sha : null,
       cameraPlace,
       // Where the camera is on the map, when the officer gave it: the sighting's map point.
       ...(coordinatesOf(f?.lat, f?.lng) || { lat: null, lng: null }),
       recordedFrom: isoOrNull(f?.recordedFrom),
-      window: from != null || to != null ? { from: from ?? 0, to } : null,
+      window: !live && (from != null || to != null) ? { from: from ?? 0, to } : null,
+      ...(live ? { live: true } : {}),
     });
   }
   return { files };
 }
 
-/** A new check's record. `body` is what the laptop sent; the case and the officer come from Khozo. */
-export function newVideoJob({ id, report, user, body, files, now = new Date().toISOString() }) {
+/**
+ * A new check's record. `body` is what the laptop sent; the case and the
+ * officer come from Khozo. `live` is `{ until }` for a watch of a live camera.
+ */
+export function newVideoJob({ id, report, user, body, files, live = null, now = new Date().toISOString() }) {
   // Flat fields: the model on the laptop, if any, and the first pass's line.
   const model = body?.modelName || body?.modelVersion
     ? { name: text(body.modelName, 80) || null, version: text(body.modelVersion, 120) || null }
@@ -130,6 +136,11 @@ export function newVideoJob({ id, report, user, body, files, now = new Date().to
     device: text(body?.device, 80) || null,
     model: model && (model.name || model.version) ? model : null,
     firstPass: model && Number.isFinite(line) ? { line, top: Number.isFinite(top) ? top : null } : null,
+    // A live camera watched until a set time, rather than recorded videos.
+    live: live ? { until: live.until, startedAt: now } : null,
+    // Whether the laptop keeps the case's face signatures, encrypted, for the
+    // life of the check (desktop-policy.js laptopAnswers), and when it said it deleted them.
+    laptopTemplate: body?.keepsTemplate === 'yes' ? { kept: true, deletedAt: null } : null,
     status: 'open',
     createdById: user.id,
     createdByName: user.name || null,
@@ -343,11 +354,14 @@ export function videoJobView(job) {
     createdByRole: job.createdByRole,
     officerPlace: job.officerPlace || null,
     device: job.device || null,
+    live: job.live || null,
+    laptopTemplate: job.laptopTemplate || null,
     appVersion: job.appVersion,
     model: job.model ? { name: job.model.name } : null,
     videos: (job.files || []).map((f) => ({
       key: f.key,
       name: f.name,
+      live: Boolean(f.live),
       cameraPlace: f.cameraPlace,
       lat: f.lat ?? null,
       lng: f.lng ?? null,
@@ -473,6 +487,7 @@ export function videoJobReport(job, report, now = new Date().toISOString()) {
     check: {
       id: job.id, status: job.status, progressStatus: job.progress?.status || null, startedAt: job.createdAt, closedAt: job.closedAt || null,
       officer: job.createdByName || null, role: job.createdByRole || null, officerPlace: job.officerPlace || null, laptop: job.device || null,
+      live: job.live || null, caseTemplateOnLaptop: job.laptopTemplate || null,
       app: job.appVersion || null, model: job.model?.name || null, firstPassLine: job.firstPass?.line ?? null, scanSeconds: job.progress?.scanSeconds ?? null,
     },
     videos: (job.files || []).map((f) => ({

@@ -45,6 +45,11 @@ export default registerDashboardRoutes(Router(), {
     smsGatewayUrl: process.env.KHOZO_SMS_GATEWAY_URL,
     smsApiKey: process.env.KHOZO_SMS_API_KEY,
     expoAccessToken: process.env.EXPO_ACCESS_TOKEN,
+    // What the desktop app may do beyond reading videos for one case (shared/desktop-policy.js).
+    laptopAnswers: process.env.KHOZO_DESKTOP_LAPTOP_ANSWERS,
+    laptopLine: process.env.KHOZO_DESKTOP_LAPTOP_LINE,
+    liveWatch: process.env.KHOZO_DESKTOP_LIVE_WATCH,
+    liveWatchHours: process.env.KHOZO_DESKTOP_LIVE_WATCH_HOURS,
     // The newest Khozo Desktop, for the app to offer (GET /api/dashboard/desktop-version).
     desktopLatest: {
       version: process.env.KHOZO_DESKTOP_LATEST_VERSION,

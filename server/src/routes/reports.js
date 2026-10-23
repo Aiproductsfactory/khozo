@@ -104,6 +104,11 @@ export default registerReportRoutes(Router(), {
     desktopDecisionLimit: process.env.KHOZO_DESKTOP_DECISION_LIMIT,
     // Checking footage against open cases (shared/open-case-checks.js), off unless switched on.
     openCases: process.env.KHOZO_DESKTOP_OPEN_CASES,
+    // The laptop's own answers with no internet, and watching a live camera (shared/desktop-policy.js).
+    laptopAnswers: process.env.KHOZO_DESKTOP_LAPTOP_ANSWERS,
+    laptopLine: process.env.KHOZO_DESKTOP_LAPTOP_LINE,
+    liveWatch: process.env.KHOZO_DESKTOP_LIVE_WATCH,
+    liveWatchHours: process.env.KHOZO_DESKTOP_LIVE_WATCH_HOURS,
     openCasesArea: process.env.KHOZO_DESKTOP_OPEN_CASES_AREA,
     openCasesTop: process.env.KHOZO_OPEN_CASES_TOP,
     openCasesAarakshak: process.env.KHOZO_OPEN_CASES_AARAKSHAK,

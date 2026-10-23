@@ -159,6 +159,12 @@ function buildDeps(env, store, ctx) {
       // live use of its gallery; district desks search their state, or with
       // KHOZO_DESKTOP_OPEN_CASES_AREA=district their district; the bar.
       openCases: env.KHOZO_DESKTOP_OPEN_CASES,
+      // The laptop's own answers with no internet, and watching a live camera
+      // (shared/desktop-policy.js): both off unless switched on.
+      laptopAnswers: env.KHOZO_DESKTOP_LAPTOP_ANSWERS,
+      laptopLine: env.KHOZO_DESKTOP_LAPTOP_LINE,
+      liveWatch: env.KHOZO_DESKTOP_LIVE_WATCH,
+      liveWatchHours: env.KHOZO_DESKTOP_LIVE_WATCH_HOURS,
       openCasesArea: env.KHOZO_DESKTOP_OPEN_CASES_AREA,
       openCasesTop: env.KHOZO_OPEN_CASES_TOP,
       openCasesAarakshak: env.KHOZO_OPEN_CASES_AARAKSHAK,

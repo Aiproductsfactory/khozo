@@ -40,6 +40,7 @@ import { dismissalApproval } from '../sighting-misuse.js';
 import { anonymiseCase, anonymiseSighting, runRetentionSweep } from '../retention.js';
 import { summariseVideoJobs } from '../video-jobs.js';
 import { signExport, stable } from '../export-signing.js';
+import { desktopPolicyOf } from '../desktop-policy.js';
 import { campaignSourceOf } from '../campaign-source.js';
 import { MAX_PUSH_DEVICES, STATION_ROLES, alertPhones, isPushToken, pushTokensOf, stationAlertWords, stationDeskOf } from '../station-alerts.js';
 import { BULK_MAX_ROWS, activationLink, isControlRoomWord, isEmail, isPhone, newActivation, parseLocation, roleFromSheet, sheetPhone } from '../bulk-accounts.js';
@@ -2120,6 +2121,8 @@ export default function registerDashboardRoutes(router, deps) {
     const version = /^\d+\.\d+\.\d+$/.test(String(latest.version || '')) ? String(latest.version) : null;
     const url = String(latest.downloadUrl || '');
     res.json({
+      // What the app may do beyond reading videos for one case (shared/desktop-policy.js).
+      policy: desktopPolicyOf(settings),
       version,
       notes: version ? String(latest.notes || '').slice(0, 500) : '',
       sha256: version && /^[a-f0-9]{64}$/i.test(String(latest.sha256 || '')) ? String(latest.sha256).toLowerCase() : null,

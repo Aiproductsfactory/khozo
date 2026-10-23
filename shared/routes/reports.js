@@ -176,6 +176,7 @@ import {
   facesSent, isClientKey, jobFilesOf, listFromText, newVideoJob, progressPatch, sightingIdFor, videoJobReport, videoJobView, videoTimeText,
 } from '../video-jobs.js';
 import { signExport } from '../export-signing.js';
+import { desktopPolicyOf, liveUntilOf, liveWatchProblem } from '../desktop-policy.js';
 import {
   LEAD_ID, caseKeyFor, leadIdFor, leadView, newOpenCaseCheck, openCaseArea, openCaseFaceKey, openCaseFacePatch, openCaseFiltersOf, openCasesFor, openCaseSettingsOf,
 } from '../open-case-checks.js';
@@ -3936,6 +3937,9 @@ export default function registerReportRoutes(router, deps) {
     key: (req) => `user:${req.user?.id || clientIp(req)}`,
   });
   const jobFaceBudget = Number(settings.desktopJobFaces) > 0 ? Number(settings.desktopJobFaces) : DEFAULT_JOB_FACE_BUDGET;
+  // What the desktop app may do beyond reading videos for one case (shared/desktop-policy.js).
+  const desktopPolicy = desktopPolicyOf(settings);
+  const liveProblem = (job) => liveWatchProblem(job, desktopPolicy);
   /** Changes a check from its latest stored version (see `changeVideoJob` above). */
   const changeJob = async (id, makePatch) => {
     if (typeof changeVideoJob === 'function') return changeVideoJob(id, makePatch);
@@ -4099,22 +4103,37 @@ export default function registerReportRoutes(router, deps) {
     if (earlier) return res.json({ job: videoJobView(earlier), repeated: true });
     const read = jobFilesOf(listFromText(b.files));
     if (read.error) return res.status(400).json({ error: read.error });
-    const job = newVideoJob({ id: `vj_${nanoid(10)}`, report: r, user: req.user, body: b, files: read.files });
+    // A live camera (scenario 11): one camera, for one case, until a set time,
+    // and only where Khozo has it switched on (shared/desktop-policy.js).
+    let live = null;
+    if (read.files.some((f) => f.live)) {
+      if (!desktopPolicy.liveWatch) return res.status(403).json({ error: 'Watching a live camera is not switched on in Khozo.', code: 'live_off' });
+      if (read.files.length !== 1) return res.status(400).json({ error: 'Watch one live camera at a time.' });
+      const until = liveUntilOf(b.liveUntil, desktopPolicy);
+      if (until.error) return res.status(400).json({ error: until.error });
+      live = { until: until.until };
+    }
+    const job = newVideoJob({ id: `vj_${nanoid(10)}`, report: r, user: req.user, body: b, files: read.files, live });
     addVideoJob(job);
     addAudit({
       actorId: req.user.id,
       actorName: req.user.name,
       actorRole: req.user.role,
-      action: 'case.video_job_started',
+      action: live ? 'case.live_watch_started' : 'case.video_job_started',
       targetType: 'report',
       targetId: r.id,
-      summary: `Started a CCTV check of ${job.files.length} video(s) for case ${r.id} on a laptop`,
+      summary: live
+        ? `Started watching a live camera at ${job.files[0].cameraPlace} for case ${r.id} until ${live.until}, on a laptop`
+        : `Started a CCTV check of ${job.files.length} video(s) for case ${r.id} on a laptop`,
       scope: { state: r.state, district: r.district, reportId: r.id },
       metadata: {
         jobId: job.id,
         appVersion: job.appVersion,
+        laptop: job.device,
         model: job.model,
-        videos: job.files.map((f) => ({ name: f.name, bytes: f.bytes, seconds: f.seconds, cameraPlace: f.cameraPlace, recordedFrom: f.recordedFrom, window: f.window })),
+        live: job.live,
+        caseTemplateOnLaptop: Boolean(job.laptopTemplate),
+        videos: job.files.map((f) => ({ name: f.name, bytes: f.bytes, seconds: f.seconds, cameraPlace: f.cameraPlace, recordedFrom: f.recordedFrom, window: f.window, live: Boolean(f.live) })),
       },
     });
     res.status(201).json({ job: videoJobView(job) });
@@ -4160,6 +4179,8 @@ export default function registerReportRoutes(router, deps) {
     const problem = videoCaseProblem(r, { allowFoundChild: true });
     if (problem) return res.status(problem.status).json({ error: problem.error });
     if (job.status !== 'open') return res.status(409).json({ error: 'This check is closed' });
+    const ended = liveProblem(job);
+    if (ended) return res.status(ended.status).json({ error: ended.error, code: ended.code });
     if (typeof compareFramesWithCase !== 'function') return res.status(501).json({ error: 'Searching a video is not available here' });
     const b = req.body || {};
     const file = job.files.find((f) => String(f.key) === String(b.fileKey));
@@ -4392,10 +4413,19 @@ export default function registerReportRoutes(router, deps) {
     const found = videoJobOf(req, res, { mine: true });
     if (!found) return;
     const { r, job } = found;
-    if (job.status === 'closed') return res.json({ job: videoJobView(job), repeated: true });
+    // When the laptop deleted the case's face signatures it kept for the check (spec T3.2).
+    const b = req.body || {};
+    const deletedAt = b.templateDeletedAt && Number.isFinite(Date.parse(b.templateDeletedAt)) ? new Date(Date.parse(b.templateDeletedAt)).toISOString() : null;
+    const templatePatch = (current) => (current.laptopTemplate && deletedAt && !current.laptopTemplate.deletedAt
+      ? { laptopTemplate: { ...current.laptopTemplate, deletedAt } }
+      : {});
+    if (job.status === 'closed') {
+      const recorded = Object.keys(templatePatch(job)).length ? await changeJob(job.id, templatePatch) : null;
+      return res.json({ job: videoJobView(recorded || job), repeated: true });
+    }
     const now = new Date().toISOString();
     // A closed check keeps its counts and drops what each engine scored for each face.
-    const updated = await changeJob(job.id, (current) => closedVideoJobPatch(current, now)) || { ...job, status: 'closed', closedAt: now };
+    const updated = await changeJob(job.id, (current) => ({ ...closedVideoJobPatch(current, now), ...templatePatch(current) })) || { ...job, status: 'closed', closedAt: now };
     addAudit({
       actorId: req.user.id,
       actorName: req.user.name,
@@ -4405,7 +4435,7 @@ export default function registerReportRoutes(router, deps) {
       targetId: r.id,
       summary: `Closed CCTV check ${job.id} for case ${r.id}`,
       scope: { state: r.state, district: r.district, reportId: r.id },
-      metadata: { jobId: job.id, counts: updated.counts || null },
+      metadata: { jobId: job.id, counts: updated.counts || null, caseTemplateDeletedAt: updated.laptopTemplate?.deletedAt || null },
     });
     res.json({ job: videoJobView(updated) });
   });
@@ -4513,6 +4543,8 @@ export default function registerReportRoutes(router, deps) {
     if (earlier) return res.json({ job: videoJobView(earlier), repeated: true });
     const read = jobFilesOf(listFromText(b.files));
     if (read.error) return res.status(400).json({ error: read.error });
+    // A live camera is watched for one case, never against every open case.
+    if (read.files.some((f) => f.live)) return res.status(400).json({ error: 'A live camera can be watched for one case only.', code: 'live_one_case' });
     const narrowed = openCaseFiltersOf(b);
     if (narrowed.error) return res.status(400).json({ error: narrowed.error });
     const area = openCaseArea(req.user, openCaseSettings.area);
