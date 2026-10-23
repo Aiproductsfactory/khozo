@@ -99,15 +99,28 @@ function FigureTable({ first, count, rows }) {
   );
 }
 
-/** One check: who ran it, the cameras, what was read and found, the sightings it made. On the case page, without the case's name. */
+/** When a face was seen: the camera clock where the recording start is known, else the time into the video. */
+const seenText = (t, d) => (d.seenAt
+  ? new Date(d.seenAt).toLocaleString(currentLocale(), { dateStyle: 'medium', timeStyle: 'medium' })
+  : t('{video} into the video', { video: d.videoTime || '-' }));
+
+/**
+ * One check: who ran it and on which laptop, the cameras, what was read and
+ * found, the sightings it made. On the case page, without the case's name,
+ * and with every decision and who made it (spec K14). A check against open
+ * cases has no case: it says how many cases it searched, never which.
+ */
 export function CheckCard({ job, showCase = true }) {
   const t = useT();
   const status = statusOf(t, job);
   const cameras = [...new Set((job.videos || []).map((v) => v.cameraPlace).filter(Boolean))];
+  const openCases = job.mode === 'open_cases';
   return (
     <div className="space-y-2 border-t border-black/5 px-4 py-3 text-sm first:border-t-0">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        {showCase ? (
+        {openCases ? (
+          <span className="font-semibold text-ink">{t('Check against open cases')}</span>
+        ) : showCase ? (
           <Link to={`/app/cases?id=${encodeURIComponent(job.reportId)}`} className="font-semibold capitalize text-ink hover:underline">
             {job.caseName || job.reportId}
             {job.caseFir && <span className="ml-1.5 font-normal normal-case text-gray-500">{t('FIR {fir}', { fir: job.caseFir })}</span>}
@@ -122,6 +135,7 @@ export function CheckCard({ job, showCase = true }) {
           date: fmtDate(job.createdAt),
           ago: timeAgo(job.updatedAt) || '-',
         })}
+        {job.device && <span className="block text-xs text-gray-500">{t('Laptop: {laptop}', { laptop: job.device })}</span>}
       </p>
       {showCase ? (
         <p className="text-gray-600">
@@ -149,18 +163,46 @@ export function CheckCard({ job, showCase = true }) {
           })}
         </ul>
       )}
-      <p className="text-gray-600">
-        {t('{hours} hours read, {people} people seen, {faces} faces compared, {matches} likely or possible', {
-          hours: hours(job.hours),
-          people: job.peopleSeen || 0,
-          faces: job.counts?.faces || 0,
-          matches: (job.counts?.likely || 0) + (job.counts?.possible || 0),
-        })}
-      </p>
+      {openCases ? (
+        <p className="text-gray-600">
+          {t('{hours} hours read, {people} people seen, {faces} faces searched among {cases} open cases, {leads} close to a case', {
+            hours: hours(job.hours),
+            people: job.peopleSeen || 0,
+            faces: job.counts?.faces || 0,
+            cases: job.openCases?.casesSearched ?? '-',
+            leads: job.openCases?.leads || 0,
+          })}
+        </p>
+      ) : (
+        <p className="text-gray-600">
+          {t('{hours} hours read, {people} people seen, {faces} faces compared, {matches} likely or possible', {
+            hours: hours(job.hours),
+            people: job.peopleSeen || 0,
+            faces: job.counts?.faces || 0,
+            matches: (job.counts?.likely || 0) + (job.counts?.possible || 0),
+          })}
+        </p>
+      )}
       {(job.confirmed > 0 || job.rejected > 0) && (
         <p className="text-gray-600">
-          {t('The officer marked {confirmed} as the person and {rejected} as not the person.', { confirmed: job.confirmed, rejected: job.rejected })}
+          {openCases
+            ? t('The officer sent {confirmed} to a case and did not send {rejected}.', { confirmed: job.confirmed, rejected: job.rejected })
+            : t('The officer marked {confirmed} as the person and {rejected} as not the person.', { confirmed: job.confirmed, rejected: job.rejected })}
         </p>
+      )}
+      {!showCase && job.decisions?.length > 0 && (
+        <details className="text-gray-600">
+          <summary className="cursor-pointer font-semibold text-ink">{t('Every decision ({n})', { n: job.decisions.length })}</summary>
+          <ul className="mt-1 space-y-1">
+            {job.decisions.map((d) => (
+              <li key={d.key}>
+                <span className={d.decision === 'same' ? 'font-semibold text-emerald-700' : 'font-semibold'}>{d.decision === 'same' ? t('Same person') : t('Not this person')}</span>
+                {` · ${d.cameraPlace || '-'} · ${seenText(t, d)} · `}
+                {t('by {officer}, {when}', { officer: d.markedBy || '-', when: d.markedAt ? fmtDate(d.markedAt) : '-' })}
+              </li>
+            ))}
+          </ul>
+        </details>
       )}
       {(job.sightings?.length > 0 || !showCase) && (
         <div className="flex flex-wrap gap-1.5">
