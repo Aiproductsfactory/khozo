@@ -285,15 +285,16 @@ export function createJobs({
           }
         }
         const res = await client.videoJobDecision(job.caseId, jobId, form);
-        Object.assign(d, { saved: true, via: 'check', sightingId: res.decision?.sightingId || null, error: null });
+        Object.assign(d, { saved: true, via: 'check', sightingId: res.decision?.sightingId || null, error: null, offline: false });
       } else if (job.server?.available === false) {
         if (d.decision === 'same') await client.addNote(job.caseId, noteFor({ job, file, track, verdict: job.answers[k]?.verdict, officer }));
-        Object.assign(d, { saved: true, via: d.decision === 'same' ? 'note' : 'laptop', error: null });
+        Object.assign(d, { saved: true, via: d.decision === 'same' ? 'note' : 'laptop', error: null, offline: false });
       } else {
-        Object.assign(d, { saved: false, error: 'No connection to Khozo' });
+        Object.assign(d, { saved: false, error: 'No connection to Khozo', offline: true });
       }
     } catch (err) {
-      Object.assign(d, { saved: false, error: err.message });
+      // `offline`: Khozo could not be reached or was busy, so waiting will do; anything else Khozo refused.
+      Object.assign(d, { saved: false, error: err.message, offline: err.status === 0 || err.status === 429 || err.status >= 500 });
     }
   }
 
@@ -355,7 +356,8 @@ export function createJobs({
       sync: {
         kept: Boolean(job.server?.jobId),
         olderKhozo: job.server?.available === false,
-        decisionsWaiting: Object.values(job.decisions).filter((d) => d.saved === false).length,
+        // Decisions Khozo did not take; one still on its way is not counted.
+        decisionsWaiting: Object.values(job.decisions).filter((d) => d.saved === false && d.error).length,
         progressWaiting: Boolean(job.sync?.progressPending),
         at: job.sync?.progressAt || null,
       },

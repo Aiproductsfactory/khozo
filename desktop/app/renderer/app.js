@@ -375,9 +375,13 @@ function personCard(job, p) {
   const decision = p.decision;
   let decided = '';
   if (decision?.decision === 'same') {
-    decided = decision.saved === false
-      ? `<p class="error">${esc(t('person.addFailed', { error: decision.error || '' }))}</p>`
-      : `<p class="decided same">✓ ${esc(t(decision.via === 'note' ? 'person.added' : 'person.sighting'))}</p>`;
+    decided = decision.saved === false && !decision.error
+      ? `<p class="quiet" role="status">${esc(t('person.sending'))}</p>`
+      : decision.saved === false && decision.offline
+        ? `<p class="quiet" role="status">${esc(t('person.waitingToSend'))}</p>`
+        : decision.saved === false
+          ? `<p class="error">${esc(t('person.addFailed', { error: decision.error }))}</p>`
+        : `<p class="decided same">✓ ${esc(t(decision.via === 'note' ? 'person.added' : 'person.sighting'))}</p>`;
   } else if (decision?.decision === 'not') {
     decided = `<p class="decided not">${esc(t('person.markedNot'))}</p>`;
   }
@@ -462,7 +466,7 @@ function renderJob(full) {
   everyone.textContent = t('job.tabEveryone', { n: job.everyone.length });
   first.classList.toggle('on', S.tab === 'first');
   everyone.classList.toggle('on', S.tab === 'everyone');
-  const sig = JSON.stringify([S.tab, S.camera, S.shown, job.status, job.toCheck.map((p) => [p.key, p.verdict, p.decision?.decision, p.decision?.saved]), job.everyone.length, S.state?.language]);
+  const sig = JSON.stringify([S.tab, S.camera, S.shown, job.status, job.toCheck.map((p) => [p.key, p.verdict, p.decision?.decision, p.decision?.saved, p.decision?.error, p.decision?.via]), job.everyone.length, S.state?.language]);
   if (sig !== S.resultsSig) {
     S.resultsSig = sig;
     document.getElementById('results').innerHTML = S.tab === 'first' ? renderFirst(job) : renderEveryone(job);
