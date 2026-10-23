@@ -4187,9 +4187,22 @@ export default function registerReportRoutes(router, deps) {
     if (!file) return res.status(400).json({ error: 'There is no such video in this check' });
     if (!isClientKey(b.batch)) return res.status(400).json({ error: 'This batch has no reference' });
     const key = batchKeyOf(file.key, b.batch);
+    // The laptop's name for each person (its decision key): a face sent again
+    // after "no answer" is the same face, counted once against the budget, and
+    // several pictures of one person (the laptop sends up to three) are one face.
+    const keys = String(b.keys || '').split(',').slice(0, VIDEO_SEARCH_BATCH).map((k) => (isClientKey(k) ? k : null));
     const earlier = job.batches?.[key];
     if (earlier) {
-      return res.json({ results: earlier.faces.map((f, index) => ({ index, verdict: f.verdict, enginesAnswered: f.engines || [] })), repeated: true });
+      // The same batch again: each picture's answer is its person's, or, for pictures sent without names, its own.
+      const byKey = new Map(earlier.faces.filter((f) => f.key).map((f) => [f.key, f]));
+      const count = Math.max(keys.filter(Boolean).length, earlier.faces.length);
+      return res.json({
+        results: Array.from({ length: count }, (_, index) => {
+          const f = (keys[index] && byKey.get(keys[index])) || earlier.faces[index] || earlier.faces[0];
+          return { index, verdict: f.verdict, enginesAnswered: f.engines || [] };
+        }),
+        repeated: true,
+      });
     }
 
     const pictures = [req.file, ...(Array.isArray(req.extraFiles) ? req.extraFiles : [])].filter((f) => f?.buffer?.length);
@@ -4199,11 +4212,8 @@ export default function registerReportRoutes(router, deps) {
       const error = validateImageFile(picture, 'Face picture');
       if (error) return res.status(error === PHOTO_TOO_LARGE ? 413 : 400).json({ error });
     }
-    // The laptop's name for each person (its decision key): a face sent again
-    // after "no answer" is the same face, counted once against the budget.
-    const keys = String(b.keys || '').split(',').slice(0, VIDEO_SEARCH_BATCH).map((k) => (isClientKey(k) ? k : null));
-    const seenBefore = keys.filter((k) => k && answerFor(job, file.key, { key: k })).length;
-    if (facesSent(job) + pictures.length - seenBefore > jobFaceBudget) {
+    const newPeople = new Set(keys.filter((k) => k && !answerFor(job, file.key, { key: k }))).size + pictures.filter((_, i) => !keys[i]).length;
+    if (facesSent(job) + newPeople > jobFaceBudget) {
       return res.status(409).json({ error: `This check has sent the ${jobFaceBudget} faces one check may send. Check a shorter time.`, code: 'face_budget' });
     }
     const lead = leadPhotoOf(r);
@@ -4227,10 +4237,21 @@ export default function registerReportRoutes(router, deps) {
       rekognition: result.rekognitionScore ?? null,
       engines: result.enginesAnswered || [],
     }));
+    // One face per person, with the best of its pictures' answers.
+    const rank = (v) => FRAME_VERDICTS.indexOf(v);
+    const better = (a, b) => rank(a.verdict) < rank(b.verdict) || (rank(a.verdict) === rank(b.verdict) && (a.aarakshak ?? -1) > (b.aarakshak ?? -1));
+    const byPerson = new Map();
+    faces.forEach((face, i) => {
+      const id = face.key || `#${i}`;
+      const have = byPerson.get(id);
+      if (!have) byPerson.set(id, { ...face, pictures: 1 });
+      else byPerson.set(id, { ...(better(face, have) ? face : have), pictures: have.pictures + 1 });
+    });
+    const people = [...byPerson.values()];
     const counts = Object.fromEntries(FRAME_VERDICTS.map((v) => [v, 0]));
-    for (const face of faces) counts[face.verdict] = (counts[face.verdict] || 0) + 1;
-    if (faces.some((f) => f.verdict !== 'no_answer')) {
-      await changeJob(job.id, (current) => batchPatch(current, key, faces));
+    for (const face of people) counts[face.verdict] = (counts[face.verdict] || 0) + 1;
+    if (people.some((f) => f.verdict !== 'no_answer')) {
+      await changeJob(job.id, (current) => batchPatch(current, key, people));
       addAudit({
         actorId: req.user.id,
         actorName: req.user.name,
@@ -4238,7 +4259,7 @@ export default function registerReportRoutes(router, deps) {
         action: 'case.video_searched',
         targetType: 'report',
         targetId: r.id,
-        summary: `Searched a video for case ${r.id}: ${faces.length} face(s) compared, ${counts.likely} likely, ${counts.possible} possible`,
+        summary: `Searched a video for case ${r.id}: ${people.length} face(s) compared${pictures.length > people.length ? ` from ${pictures.length} pictures` : ''}, ${counts.likely} likely, ${counts.possible} possible`,
         scope: { state: r.state, district: r.district, reportId: r.id },
         metadata: {
           jobId: job.id,
@@ -4252,9 +4273,9 @@ export default function registerReportRoutes(router, deps) {
           recordedFrom: file.recordedFrom,
           comparedWith: lead.id,
           counts,
-          // What each picture was found to be, by its time in the video. The
+          // What each person was found to be, by their time in the video. The
           // scores stay with the check until it is closed; no picture is kept.
-          faces: faces.map((face) => ({ t: face.t, verdict: face.verdict })),
+          faces: people.map((face) => ({ t: face.t, verdict: face.verdict, pictures: face.pictures })),
         },
       });
     }
@@ -4274,7 +4295,17 @@ export default function registerReportRoutes(router, deps) {
     const found = videoJobOf(req, res);
     if (!found) return;
     const { r, job } = found;
-    const report = signExport(videoJobReport(job, r), 'cctv_check_report', settings.exportSigning);
+    const plain = videoJobReport(job, r);
+    // The evidence behind each "Same person": the sighting's face picture and
+    // the whole frame with the face marked, as links a signed-in reader may
+    // open and the printed report shows. Nothing is embedded in the report.
+    plain.decisions = plain.decisions.map((d) => {
+      const s = d.sightingId ? findFoundReport(d.sightingId) : null;
+      if (!s || s.anonymizedAt || !s.photoFile) return d;
+      const frame = extraPhotosOf(s)[0];
+      return { ...d, pictures: { face: `/api/reports/photo/${s.id}`, frame: frame ? extraPhotoUrl(s.id, frame.id) : null } };
+    });
+    const report = signExport(plain, 'cctv_check_report', settings.exportSigning);
     addAudit({
       actorId: req.user.id,
       actorName: req.user.name,

@@ -2267,6 +2267,10 @@ async function videoJobChecks({ superAdmin, sjpu, cwc, parent, fake }) {
   assert(signed.case?.id === id && signed.videos?.[0]?.sha256 === 'd'.repeat(64) && signed.videos[0].cameraPlace === 'Kalupur railway station, gate 1'
     && signed.decisions.some((d) => d.decision === 'same' && d.sightingId === sightingId) && signed.signature?.type === 'cctv_check_report',
     `a check's report should hold its videos, fingerprints and decisions, signed: ${JSON.stringify(signed).slice(0, 300)}`);
+  const evidence = signed.decisions.find((d) => d.decision === 'same' && d.sightingId === sightingId);
+  assert(evidence.pictures?.face === `/api/reports/photo/${sightingId}` && 'frame' in evidence.pictures
+    && !signed.decisions.some((d) => d.decision === 'not' && d.pictures),
+    `a "same person" decision in the report should link the sighting's face and frame, a "not" none: ${JSON.stringify(signed.decisions)}`);
   const verified = await request('POST', '/dashboard/export/verify', { token: superAdmin.token, body: signed });
   assert(verified.ok === true && verified.type === 'cctv_check_report', `a check's report should pass Khozo's export check: ${JSON.stringify(verified)}`);
   const changed = await request('POST', '/dashboard/export/verify', { token: superAdmin.token, body: { ...signed, decisions: [] } });
