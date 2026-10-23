@@ -3,6 +3,9 @@
 // window.khozo (preload.cjs); nothing here touches the computer directly.
 import { LANGUAGES, setLanguage, t } from './i18n.js';
 
+/** The language's own way of writing dates, for the live watch's end. */
+const currentLocale = () => ({ hi: 'hi-IN', gu: 'gu-IN' }[S?.state?.language] || 'en-IN');
+
 const k = window.khozo;
 const app = document.getElementById('app');
 const modal = document.getElementById('modal');
@@ -171,7 +174,8 @@ function renderHome() {
   app.innerHTML = `${header()}<main>
     ${updateBanner()}
     ${S.state?.canCheck ? `<p class="row"><button class="btn primary big" data-act="new">${esc(t('home.new'))}</button>
-      ${S.openCases?.enabled ? `<button class="btn big" data-act="new-open" id="new-open">${esc(t('home.openCases'))}</button>` : ''}</p>
+      ${S.openCases?.enabled ? `<button class="btn big" data-act="new-open" id="new-open">${esc(t('home.openCases'))}</button>` : ''}
+      ${S.state?.policy?.liveWatch && S.state?.model ? `<button class="btn big" data-act="new-live" id="new-live">${esc(t('home.live'))}</button>` : ''}</p>
       ${S.openCases?.enabled ? `<p class="small quiet">${esc(t('home.openCasesNote'))}</p>` : ''}` : `<div class="error">${esc(t('home.cannotCheck'))}</div>`}
     <h2>${esc(t('home.title'))}</h2>
     <div class="jobs">${cards || `<p class="quiet">${esc(t('home.empty'))}</p>`}</div>
@@ -331,16 +335,33 @@ function renderPartHint() {
 function renderNew() {
   const nc = S.nc;
   const open = nc.mode === 'open_cases';
+  const live = nc.mode === 'live';
+  const hours = Number(S.state?.policy?.liveWatchHours) || 12;
   app.innerHTML = `${header()}<main>
     <p><button class="btn" data-act="home">← ${esc(t('job.back'))}</button></p>
-    <h1>${esc(open ? t('open.title') : t('new.title'))}</h1>
+    <h1>${esc(open ? t('open.title') : live ? t('live.title') : t('new.title'))}</h1>
     ${open ? `<p class="quiet">${esc(t('home.openCasesNote'))}</p>` : ''}
+    ${live ? `<p class="quiet">${esc(t('home.liveNote'))}</p>` : ''}
     <div class="error${nc.error ? '' : ' hidden'}" id="new-error" role="alert">${esc(nc.error)}</div>
 
     <h2 class="step"><span class="n">1</span>${esc(open ? t('open.step1') : t('new.step1'))}</h2>
     ${open ? renderFilters() : `<input type="search" id="case-search" placeholder="${esc(t('new.search'))}" aria-label="${esc(t('new.search'))}" value="${esc(nc.q)}">
     <div class="cases" id="cases" style="margin-top:10px"></div>`}
 
+    ${live ? `
+    <h2 class="step"><span class="n">2</span>${esc(t('live.step2'))}</h2>
+    <div class="live-fields">
+      <label>${esc(t('new.camera'))}<input type="text" data-input="live-camera" id="live-camera" value="${esc(nc.camera)}" placeholder="${esc(t('new.cameraHint'))}"></label>
+      <label>${esc(t('live.address'))}<input type="text" data-input="live-address" id="live-address" value="${esc(nc.address)}" placeholder="rtsp://192.168.1.64:554/Streaming/Channels/101" autocomplete="off" spellcheck="false"></label>
+      <span class="small quiet">${esc(t('live.addressHint'))}</span>
+      <label>${esc(t('new.where'))}<input type="text" data-input="live-where" id="live-where" value="${esc(nc.where)}" placeholder="${esc(t('new.whereHint'))}"></label>
+      <span class="small quiet" id="live-where-note">${esc(whereNote(nc))}</span>
+      <label>${esc(t('live.until'))}<input type="datetime-local" data-input="live-until" id="live-until" value="${esc(nc.until)}"></label>
+      <span class="small quiet">${esc(t('live.untilHint', { n: hours }))}</span>
+    </div>
+    <details><summary>${esc(t('new.more'))}</summary>
+      <label class="row" style="font-weight:400"><input type="checkbox" data-input="far"${nc.far ? ' checked' : ''}> ${esc(t('new.far'))}</label>
+    </details>` : `
     <h2 class="step"><span class="n">2</span>${esc(t('new.step2'))}</h2>
     <div class="row"><button class="btn" data-act="add-files">${esc(t('new.addFiles'))}</button><button class="btn" data-act="add-folder">${esc(t('new.addFolder'))}</button></div>
     <div id="files" style="margin-top:10px"></div>
@@ -361,15 +382,69 @@ function renderNew() {
         <option value="4"${nc.fps === 4 ? ' selected' : ''}>${esc(t('new.speed.careful'))}</option>
       </select>
       <label class="row" style="font-weight:400"><input type="checkbox" data-input="far"${nc.far ? ' checked' : ''}> ${esc(t('new.far'))}</label>
-    </details>
+    </details>`}
 
-    <p class="note">${esc(open ? t('open.lead') : t('job.lead'))}</p>
-    <p class="row"><button class="btn green big" data-act="start" id="start-button">${esc(t('new.start'))}</button><button class="btn" data-act="home">${esc(t('new.cancel'))}</button></p>
+    <p class="note">${esc(open ? t('open.lead') : live ? t('live.lead') : t('job.lead'))}</p>
+    <p class="row"><button class="btn green big" data-act="start" id="start-button">${esc(live ? t('live.start') : t('new.start'))}</button><button class="btn" data-act="home">${esc(t('new.cancel'))}</button></p>
   </main>`;
   if (open) renderCount();
   else renderCases();
-  renderFiles();
-  renderPartHint();
+  if (!live) {
+    renderFiles();
+    renderPartHint();
+  }
+}
+
+/** A datetime-local value for `ms`, in this computer's time. */
+function localValue(ms) {
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** Watching one live camera for one case (spec scenario 11), where Khozo has it switched on. */
+function newLiveCheck() {
+  S.nc = {
+    mode: 'live', q: '', cases: null, caseId: null, files: [], camera: '', address: '', where: '', lat: null, lng: null,
+    until: localValue(Date.now() + 2 * 3600 * 1000), far: false, error: '', busy: false,
+  };
+  S.screen = 'new';
+  render();
+  searchCases('');
+}
+
+/** Starts a live watch, or says what is missing. */
+async function startLive() {
+  const nc = S.nc;
+  const problem = !nc.caseId ? t('new.needCase')
+    : String(nc.camera || '').trim().length < 3 ? t('new.needCamera')
+      : !String(nc.address || '').trim() ? t('live.needAddress')
+        : !nc.until || !Number.isFinite(Date.parse(nc.until)) ? t('live.needUntil')
+          : String(nc.where || '').trim() && nc.lat == null ? t('new.whereBad')
+            : '';
+  const box = document.getElementById('new-error');
+  if (problem) {
+    box.textContent = problem;
+    box.classList.remove('hidden');
+    box.scrollIntoView({ behavior: 'smooth' });
+    return;
+  }
+  const button = document.getElementById('start-button');
+  button.disabled = true;
+  button.textContent = t('live.connecting');
+  const result = await k.createJob({
+    mode: 'live',
+    caseId: nc.caseId,
+    live: { camera: nc.camera, address: nc.address, lat: nc.lat, lng: nc.lng, until: new Date(Date.parse(nc.until)).toISOString(), farFaces: nc.far },
+  });
+  if (result?.error) {
+    button.disabled = false;
+    button.textContent = t('live.start');
+    box.textContent = errorText(result);
+    box.classList.remove('hidden');
+    return;
+  }
+  await showJob(result.id);
 }
 
 async function addFiles(folder) {
@@ -382,6 +457,7 @@ async function addFiles(folder) {
 
 async function startCheck() {
   const nc = S.nc;
+  if (nc.mode === 'live') return startLive();
   const usable = nc.files.filter((f) => !f.error);
   const open = nc.mode === 'open_cases';
   const problem = open && nc.count && !nc.count.enabled ? nc.count.error || t('open.off')
@@ -484,8 +560,9 @@ function renderJobHead(job) {
 }
 
 function renderJobButtons(job) {
-  return `${['running', 'queued'].includes(job.status) ? `<button class="btn" data-act="pause" data-id="${esc(job.id)}">${esc(t('home.pause'))}</button>` : ''}
-    ${['paused', 'error'].includes(job.status) ? `<button class="btn primary" data-act="resume" data-id="${esc(job.id)}">${esc(t('home.resume'))}</button>` : ''}
+  const watchOver = job.live && Date.parse(job.live.until) <= Date.now();
+  return `${['running', 'queued'].includes(job.status) ? `<button class="btn" data-act="pause" data-id="${esc(job.id)}">${esc(t(job.live ? 'live.stop' : 'home.pause'))}</button>` : ''}
+    ${['paused', 'error'].includes(job.status) && !watchOver ? `<button class="btn primary" data-act="resume" data-id="${esc(job.id)}">${esc(t(job.live ? 'live.resume' : 'home.resume'))}</button>` : ''}
     <button class="btn danger" data-act="remove" data-id="${esc(job.id)}">${esc(t('home.delete'))}</button>`;
 }
 
@@ -509,6 +586,10 @@ function renderJobLive(job) {
     ${syncNote(job)}
     ${job.notice ? `<div class="info">${esc(t(`notice.${job.notice}`, { n: 600 }))}</div>` : ''}
     ${job.photoYears >= 2 ? `<div class="info" id="old-photo">${esc(t('notice.old_photo', { n: job.photoYears }))}</div>` : ''}
+    ${job.live ? `<div class="info live-line" id="live-line">${esc(t('live.watching', { camera: job.files[0]?.camera || '', until: new Date(job.live.until).toLocaleString(currentLocale(), { dateStyle: 'medium', timeStyle: 'short' }) }))}
+      <br><span class="small">${esc(t('live.counts', { n: job.live.peopleSeen || 0, close: job.counts.people }))}</span></div>` : ''}
+    ${job.live?.stalled && job.status === 'running' ? `<div class="error" role="status">${esc(t('live.stalled'))}</div>` : ''}
+    ${job.counts.laptop ? `<div class="info">${esc(t('laptop.note'))}</div>` : ''}
     <h3>${esc(t('job.files'))}</h3>
     <div class="card files-progress">${files}</div>
     <p class="note">${esc(job.mode === 'open_cases' ? t('open.lead') : t('job.lead'))}</p>`;
@@ -610,7 +691,7 @@ function personCard(job, p) {
       <p>${esc(t('person.seen', { camera: p.camera, when }))}</p>
       ${p.closeness != null ? `<details class="small quiet"><summary>${esc(t('person.details'))}</summary>${esc(t('person.closeness', { score: p.closeness.toFixed(2) }))}</details>` : ''}
       <div class="row" style="margin-top:10px">
-        <button class="btn primary" data-act="play" data-key="${esc(p.key)}">▶ ${esc(t('person.play'))}</button>
+        ${p.live ? '' : `<button class="btn primary" data-act="play" data-key="${esc(p.key)}">▶ ${esc(t('person.play'))}</button>`}
         <button class="btn" data-act="frame" data-key="${esc(p.key)}">${esc(t('person.frame'))}</button>
         ${decision?.decision === 'same' && decision.saved !== false ? '' : `<button class="btn green" data-act="same" data-key="${esc(p.key)}">${esc(t('person.same'))}</button>`}
         ${decision?.decision ? '' : `<button class="btn" data-act="not" data-key="${esc(p.key)}">${esc(t('person.not'))}</button>`}
@@ -631,6 +712,11 @@ function renderFirst(job) {
 }
 
 function renderEveryone(job) {
+  if (job.live) return `<p class="info">${esc(t('live.everyone'))}</p>${renderEveryoneFaces(job)}`;
+  return renderEveryoneFaces(job);
+}
+
+function renderEveryoneFaces(job) {
   const cameras = job.files.map((f) => `<option value="${f.index}"${String(S.camera) === String(f.index) ? ' selected' : ''}>${esc(f.camera)} (${esc(f.name)})</option>`).join('');
   const people = job.everyone.filter((p) => S.camera === 'all' || String(p.fileIndex) === String(S.camera));
   const groups = new Map();
@@ -649,7 +735,7 @@ function renderEveryone(job) {
     const faces = list.slice(0, limit).map((p) => `<button class="face" data-act="play" data-key="${esc(p.key)}" title="${esc(verdictWords(p.verdict))}">
       <img src="${esc(p.picture)}" alt="" loading="lazy">
       <div class="t">${esc(p.clock || videoTime(p.time))}</div>
-      ${['likely', 'possible', 'not_agreed'].includes(p.verdict) ? `<span class="chip ${esc(p.verdict)}">${esc(t(`chip.${p.verdict}`))}</span>` : ''}
+      ${['likely', 'possible', 'not_agreed', 'laptop'].includes(p.verdict) ? `<span class="chip ${esc(p.verdict)}">${esc(t(`chip.${p.verdict}`))}</span>` : ''}
     </button>`).join('');
     const more = list.length > limit ? `<p><button class="btn" data-act="more" data-group="${esc(groupKey)}">${esc(t('job.showMore', { n: Math.min(PER_SLICE, list.length - limit) }))}</button></p>` : '';
     return `<h3>${esc(label)} <span class="quiet small">(${esc(t('job.peopleSeen', { n: list.length }))})</span></h3><div class="grid">${faces}</div>${more}`;
@@ -802,6 +888,13 @@ const actions = {
     if (S.state?.canCheck) askOpenCases();
   },
   new() { newCheck(); },
+  'new-live'() { newLiveCheck(); },
+  async 'alert-open'(el) {
+    document.getElementById('alert-banner')?.remove();
+    S.tab = 'first';
+    await showJob(el.dataset.id);
+  },
+  'alert-later'() { document.getElementById('alert-banner')?.remove(); },
   'new-open'() { newOpenCheck(); },
   'camera-all'(el) {
     const from = S.nc.files[Number(el.dataset.i)];
@@ -939,6 +1032,17 @@ document.addEventListener('input', (e) => {
     Object.assign(f, { where: el.value, lat: point?.lat ?? null, lng: point?.lng ?? null });
     const note = document.getElementById(`where-note-${el.dataset.i}`);
     if (note) note.textContent = whereNote(f);
+  } else if (el.dataset.input === 'live-camera') {
+    S.nc.camera = el.value;
+  } else if (el.dataset.input === 'live-address') {
+    S.nc.address = el.value.trim();
+  } else if (el.dataset.input === 'live-until') {
+    S.nc.until = el.value;
+  } else if (el.dataset.input === 'live-where') {
+    const point = pointFrom(el.value);
+    Object.assign(S.nc, { where: el.value, lat: point?.lat ?? null, lng: point?.lng ?? null });
+    const note = document.getElementById('live-where-note');
+    if (note) note.textContent = whereNote(S.nc);
   } else if (el.dataset.input === 'from' || el.dataset.input === 'to') {
     S.nc[el.dataset.input] = el.value;
   } else if (['f-ageFrom', 'f-ageTo', 'f-district', 'f-missingFrom', 'f-missingTo'].includes(el.dataset.input)) {
@@ -973,10 +1077,38 @@ k.onJobChanged(async (id) => {
   }
 });
 
+// A live watch saw a face close to the case: said on every screen until the officer looks or puts it off.
+k.onAlert(async ({ jobId, key }) => {
+  const job = await k.getJob(jobId);
+  if (job?.error || !job) return;
+  const p = job.everyone.find((x) => x.key === key) || job.toCheck[0];
+  document.getElementById('alert-banner')?.remove();
+  const banner = document.createElement('div');
+  banner.id = 'alert-banner';
+  banner.className = 'alert-banner';
+  banner.setAttribute('role', 'alert');
+  banner.innerHTML = `<strong>${esc(t('live.alert', { camera: p?.camera || '', when: p?.clock || '' }))}</strong>
+    <span class="row"><button class="btn primary" data-act="alert-open" data-id="${esc(jobId)}">${esc(t('live.open'))}</button>
+    <button class="btn" data-act="alert-later">${esc(t('live.later'))}</button></span>`;
+  document.body.prepend(banner);
+  if (S.screen === 'job' && S.jobId === jobId) { S.job = job; renderJob(false); }
+});
+
+// A case photo comes from Khozo: with no internet it cannot be shown, and the screen says so instead of a broken picture.
+document.addEventListener('error', (e) => {
+  const img = e.target;
+  if (img?.tagName !== 'IMG' || !String(img.getAttribute('src') || '').startsWith('khozo://case-photo/') || !img.closest('.pair')) return;
+  const note = document.createElement('div');
+  note.className = 'nophoto';
+  note.textContent = t('person.noCasePhoto');
+  img.replaceWith(note);
+}, true);
+
 // For the scripted check of a build (app/smoke.js).
 window.__khozo = {
   reload,
   newCheck,
+  newLiveCheck,
   newOpenCheck,
   showJob,
   tab: (name) => { S.tab = name; renderJob(false); },

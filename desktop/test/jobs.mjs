@@ -18,7 +18,7 @@
  *
  *   cd desktop && node test/jobs.mjs
  */
-import { fork, spawnSync } from 'node:child_process';
+import { fork, spawn, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -31,6 +31,10 @@ import { VIDEO_ROLES, canSearchCase } from '../app/roles.js';
 import { KEYS, TRANSLATIONS } from '../app/renderer/i18n.js';
 import { ffmpegPath } from '../scanner/ffmpeg.js';
 import { KhozoError } from '../scanner/khozo.js';
+import { isStreamAddress, safeAddress } from '../scanner/live.js';
+import { readModelCard } from '../scanner/recognizer.js';
+import { loadDetector } from '../scanner/detector.js';
+import { scanFile } from '../scanner/scan.js';
 import sharp from 'sharp';
 import { POLICE_ROLES } from '../../shared/scope.js';
 
@@ -71,7 +75,7 @@ function startWorker() {
  * updated); `online = false` is a laptop that cannot reach Khozo.
  */
 function fakeClient({ keeps = true } = {}) {
-  const calls = { searches: [], notes: [], started: [], progress: [], decisions: [], closed: [], openStarted: [], openFaces: [], leads: [], openProgress: [], openClosed: [], caseReads: 0 };
+  const calls = { searches: [], notes: [], started: [], progress: [], decisions: [], closed: [], closeBodies: [], openStarted: [], openFaces: [], leads: [], openProgress: [], openClosed: [], caseReads: 0 };
   let online = true;
   // Set by a test: what Khozo answers a decision with, and how a start is refused.
   const knobs = { decisionRefusal: null, startRefusal: null, startDelayMs: 0 };
@@ -112,7 +116,7 @@ function fakeClient({ keeps = true } = {}) {
       });
       return { decision: { decision, sightingId: decision === 'same' ? `f_${calls.decisions.length}` : undefined } };
     },
-    closeVideoJob: async (caseId, jobId) => { reach(); calls.closed.push(jobId); return { job: {} }; },
+    closeVideoJob: async (caseId, jobId, body = {}) => { reach(); calls.closed.push(jobId); calls.closeBodies.push({ jobId, body }); return { job: {} }; },
     // Checks against open cases: the first face sent is close to a case the officer can open.
     openCaseCount: async () => { reach(); return { enabled: true, cases: 240, area: { kind: 'state', state: 'Gujarat' } }; },
     startOpenCaseCheck: async (body) => {
@@ -556,6 +560,105 @@ if (process.env.KHOZO_SMOKE_VIDEO) {
   check('a check against open cases sends each person, one a request, at 240 px', openJob.status === 'done' && openClient.calls.openFaces.length === openJob.counts.people && openClient.calls.openFaces.every((f) => f.side === 240 && /^0:/.test(f.key) && f.fileKey === '0'), `${openJob.status} ${openJob.error || ''} ${openClient.calls.openFaces.length} of ${openJob.counts.people}`);
   check('no case is read on the laptop for it', openClient.calls.caseReads === 0 && openJob.model === null);
   check('its one lead is shown under its case', openJob.groups.length === 1 && openJob.groups[0].caseId === 'r_in');
+}
+
+// ---- Phase 3: answers on the laptop, and a live camera ---------------------------------------
+
+console.log('Answers on the laptop when Khozo has not answered');
+{
+  const key = crypto.randomBytes(32);
+  const files = secureFiles(key);
+  const officer = { id: 'u1', name: 'PSI Test' };
+  const client = fakeClient();
+  const root = path.join(tmp, 'jobs-laptop');
+  plantJob(root, files, 'job_laptop');
+  const planted = files.readJson(path.join(root, 'job_laptop', 'job.bin'));
+  Object.assign(planted, { keepsTemplate: true, laptopAnswers: { line: 0.35 }, answers: {}, scores: { '0:s0-1': 0.61, '0:s0-2': 0.2 } });
+  files.writeJson(path.join(root, 'job_laptop', 'job.bin'), planted);
+  files.writeJson(path.join(root, 'job_laptop', 'case.bin'), { signatures: [{ photo: 0, signature: [0.1, 0.2] }] });
+  const jobs = createJobs({ root, files, key, startWorker, getClient: () => client, officer, appVersion: '0.4.0' });
+  const before = jobs.get('job_laptop');
+  check('a face close on this laptop is shown while Khozo has not answered, marked as the laptop\'s', before.toCheck.length === 1 && before.toCheck[0].key === '0:s0-1' && before.toCheck[0].verdict === 'laptop' && before.counts.laptop === 1);
+  check('a face below the line is not', !before.toCheck.some((p) => p.key === '0:s0-2'));
+  const kept = files.readJson(path.join(root, 'job_laptop', 'job.bin'));
+  kept.answers = { '0:s0-1': { verdict: 'unlikely', engines: ['aarakshak', 'rekognition'] } };
+  files.writeJson(path.join(root, 'job_laptop', 'job.bin'), kept);
+  const after = createJobs({ root, files, key, startWorker, getClient: () => client, officer }).get('job_laptop');
+  check('Khozo\'s answer takes the laptop\'s place', after.toCheck.length === 0 && after.counts.laptop === 0);
+  const decided = await jobs.decide('job_laptop', '0:s0-1', 'not');
+  const start = client.calls.started.find((c) => c.body.jobKey === 'job_laptop');
+  check('Khozo is told the laptop keeps the case\'s signatures for the check', start?.body.keepsTemplate === 'yes' && decided.saved === true);
+  jobs.remove('job_laptop');
+  await until(() => client.calls.closeBodies.some((c) => c.jobId === 'vj_job_laptop'));
+  const close = client.calls.closeBodies.find((c) => c.jobId === 'vj_job_laptop');
+  check('T3.2: deleting the check deletes the kept signatures, and Khozo is told when', !fs.existsSync(path.join(root, 'job_laptop', 'case.bin')) && Number.isFinite(Date.parse(close?.body?.templateDeletedAt || '')));
+
+  const plainRoot = path.join(tmp, 'jobs-no-laptop');
+  const plain = createJobs({ root: plainRoot, files, key, startWorker, getClient: () => client, officer, getPolicy: () => ({ laptopAnswers: true, laptopLine: 0.4 }) });
+  const id = plain.create({ report: { id: 'r_test', childName: 'Test Person' }, window: { mode: 'video', from: '1:00:00' }, files: [{ path: video, name: 'test.mp4', bytes: 1, duration: 40, width: 640, height: 360, camera: 'Test camera' }] });
+  await untilDone(plain, id);
+  check('without Aarakshak\'s model on the laptop there are no laptop answers, whatever Khozo allows', plain.get(id).keepsTemplate === false && plain.get(id).laptopAnswers === null);
+  check('a stream address shows without its password', safeAddress('rtsp://admin:secret@192.168.1.64:554/ch1') === 'rtsp://***@192.168.1.64:554/ch1' && isStreamAddress('rtsp://cam/1') && !isStreamAddress('C:\\video.mp4'));
+}
+
+if (process.env.KHOZO_SMOKE_VIDEO && process.env.KHOZO_FACE_MODEL) {
+  console.log('A live camera (the clip streamed over the network as a camera would)');
+  const clip = process.env.KHOZO_SMOKE_VIDEO;
+  const card = process.env.KHOZO_FACE_MODEL;
+  const c = readModelCard(card);
+  const model = { card, name: c.name, version: c.version, provider: c.provider, detectorPath: c.detectorPath || null, detectorScore: c.detectorScore };
+  // The case photo: the clearest person in the clip, found by reading it once.
+  const scanDir = path.join(tmp, 'live-scan');
+  const detector = await loadDetector({ modelPath: model.detectorPath || undefined });
+  const record = await scanFile(clip, { fps: 2, outDir: scanDir, detector, scoreMin: model.detectorScore ?? undefined });
+  await detector.close();
+  const best = [...record.tracks].sort((a, b) => b.quality - a.quality)[0];
+  const casePhoto = fs.readFileSync(path.join(scanDir, best.picture));
+
+  const runWatch = async ({ name, policy, goOffline = false }) => {
+    const key = crypto.randomBytes(32);
+    const files = secureFiles(key);
+    const client = fakeClient();
+    client.photo = async () => casePhoto;
+    const alerts = [];
+    const root = path.join(tmp, `jobs-live-${name}`);
+    const port = 47000 + Math.floor(Math.random() * 2000);
+    const sender = spawn(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-re', '-stream_loop', '-1', '-i', clip, '-an', '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-g', '25', '-f', 'mpegts', `udp://127.0.0.1:${port}?pkt_size=1316`], { stdio: 'ignore', windowsHide: true });
+    const jobs = createJobs({ root, files, key, startWorker, getClient: () => client, officer: { id: 'u1', name: 'PSI Test' }, model, getPolicy: () => policy, onAlert: (jobId, p) => alerts.push({ at: Date.now(), p }) });
+    const started = Date.now();
+    const id = jobs.create({ report: { id: 'r_test', childName: 'Test Person' }, live: { address: `udp://127.0.0.1:${port}`, until: new Date(started + 120000).toISOString(), startedAt: new Date(started).toISOString() }, files: [{ camera: 'Kalupur railway station, platform 1 (live)' }] });
+    // With no internet once the case's signatures are made: the laptop is on its own.
+    if (goOffline) {
+      await until(() => client.calls.caseReads > 0, 30000);
+      await sleep(500);
+      client.online = false;
+    }
+    await until(() => alerts.length > 0, 90000);
+    await until(() => jobs.get(id).live.peopleSeen > 0, 30000);
+    const view = jobs.get(id);
+    jobs.pause(id);
+    await untilDone(jobs, id, 30000);
+    sender.kill();
+    return { jobs, id, view, alerts, client, root, started };
+  };
+
+  const watched = await runWatch({ name: 'online', policy: { liveWatch: true } });
+  console.log(`    first alert ${watched.alerts.length ? Math.round((watched.alerts[0].at - watched.started) / 100) / 10 : '-'} s after the stream started; ${watched.view.live.peopleSeen} people seen, ${watched.view.everyone.length} kept`);
+  check('T3.3: a person close to the case is flagged to the desk within 60 seconds of the stream starting', watched.alerts.length > 0 && watched.alerts[0].at - watched.started <= 60000,
+    `${watched.alerts.length ? Math.round((watched.alerts[0].at - watched.started) / 1000) : 'no'} s`);
+  check('… on Khozo\'s answer, sent one face at a time with the camera place', watched.client.calls.searches.length > 0 && watched.client.calls.searches.every((s) => s.faces === 1 && s.camera === 'Kalupur railway station, platform 1 (live)'));
+  const keptFaces = fs.readdirSync(path.join(watched.root, watched.id, 'files', '0', 'faces')).length;
+  check('only faces close to the case are kept on the laptop, each with its whole frame', keptFaces === watched.view.everyone.length && keptFaces > 0
+    && fs.readdirSync(path.join(watched.root, watched.id, 'files', '0', 'frames')).length === keptFaces && watched.view.live.peopleSeen >= keptFaces, `${keptFaces} kept, ${watched.view.live.peopleSeen} seen`);
+  const frame = await watched.jobs.frame(watched.id, watched.view.everyone[0].key);
+  check('"See full picture" shows the kept frame', frame.subarray(0, 2).toString('hex') === 'ffd8');
+  const liveStart = watched.client.calls.started.find((s) => s.body.liveUntil);
+  check('Khozo is told the watch\'s end, and the camera is marked live', liveStart && JSON.parse(liveStart.body.files)[0].live === true);
+
+  const offline = await runWatch({ name: 'offline', policy: { liveWatch: true, laptopAnswers: true, laptopLine: 0.35 }, goOffline: true });
+  console.log(`    with no internet: first alert ${offline.alerts.length ? Math.round((offline.alerts[0].at - offline.started) / 100) / 10 : '-'} s after the stream started`);
+  check('scenario 10 with 11: with no internet, a face close on the laptop is flagged at once, marked as the laptop\'s', offline.alerts.length > 0 && offline.alerts[0].p.verdict === 'laptop' && offline.alerts[0].at - offline.started <= 60000,
+    `${offline.alerts.length ? Math.round((offline.alerts[0].at - offline.started) / 1000) : 'no'} s, ${offline.alerts[0]?.p?.verdict}`);
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });

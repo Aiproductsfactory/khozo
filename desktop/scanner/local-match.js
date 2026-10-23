@@ -7,14 +7,18 @@
 // Each signature is made the way Aarakshak makes it, so the scores match its
 // cloud: YuNet on the whole picture at its own size, the face with the
 // largest box, its five points in whole pixels, lined up to 112 x 112. A
-// person's signature is made from the very picture that would be sent to
-// Khozo, so the laptop and the cloud look at the same thing.
+// person's signature is made from the very picture that is sent to Khozo,
+// the 240 px copy (comparisonCopy), so the laptop and the cloud look at the
+// same thing: on the same pictures the two agree within 0.014 (spec T3.1,
+// 23 Oct 2026: 80 faces, 3,160 pairs). Signing the larger picture instead put
+// them up to 0.33 apart.
 //
 // The case's photos are read into memory to make their signatures and are
 // never written to disk; the signatures are dropped when the run ends.
 import path from 'node:path';
 import sharp from 'sharp';
 import { alignFace } from './align.js';
+import { comparisonCopy, pointsOnCopy } from './compare-copy.js';
 import { cosine } from './recognizer.js';
 
 /** The area of a face's box as Aarakshak measures it: whole pixels, kept inside the picture. */
@@ -66,7 +70,8 @@ export async function caseSignatures({ client, report, detector, recognizer }) {
  */
 export async function trackSignature({ dir, track, detector, recognizer, readPicture = null }) {
   const picture = readPicture ? await readPicture(track) : path.join(dir, track.picture);
-  return pictureSignature(picture, { detector, recognizer, points: track.landmarks });
+  const { width } = await sharp(picture).metadata();
+  return pictureSignature(await comparisonCopy(picture), { detector, recognizer, points: pointsOnCopy(track.landmarks, width) });
 }
 
 /** How close a person is to the case: the best cosine over the case's photos. */

@@ -15,6 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, powerSaveBlocker, protocol, safeStorage, shell, utilityProcess } from 'electron';
 import { probe } from '../scanner/ffmpeg.js';
+import { isStreamAddress, probeStream } from '../scanner/live.js';
 import { createClient, KhozoError } from '../scanner/khozo.js';
 import { readModelCard } from '../scanner/recognizer.js';
 import { clipAround, frameOf } from './clips.js';
@@ -73,6 +74,9 @@ let session = null; // { token, user }
 let client = null;
 let jobs = null;
 let win = null;
+// What Khozo lets this app do (shared/desktop-policy.js): its last answer for
+// this officer, kept so a laptop with no internet knows it.
+let policy = {};
 const casePhotos = new Map();
 const clips = new Map();
 
@@ -155,9 +159,30 @@ function jobChanged(id) {
   }, 300));
 }
 
+/** A live watch saw a face close to the case: the officer at the desk is told, even if the window is behind others. */
+function alertDesk(jobId, person) {
+  const when = person.clock || '';
+  if (Notification.isSupported()) {
+    const n = new Notification({
+      title: 'Khozo Desktop: a face close to the case',
+      body: `Seen at ${person.camera}${when ? `, ${when}` : ''}. Look at it now. It is a lead, not an identification.`,
+      urgency: 'critical',
+      timeoutType: 'never',
+    });
+    n.on('click', () => { if (win && !win.isDestroyed()) { win.show(); win.focus(); win.webContents.send('jobs:alert', { jobId, key: person.key }); } });
+    n.show();
+  }
+  if (win && !win.isDestroyed()) {
+    win.flashFrame(true);
+    win.webContents.send('jobs:alert', { jobId, key: person.key });
+  }
+  log('A live watch saw a face close to the case');
+}
+
 function openSession() {
   client = createClient({ api: API, token: session.token });
   const userId = String(session.user.id || 'officer').replace(/[^A-Za-z0-9_-]/g, '_');
+  policy = settings.policies?.[userId] || {};
   jobs = createJobs({
     root: userFile(path.join('jobs', userId)),
     files,
@@ -171,6 +196,8 @@ function openSession() {
     // The laptop's own name: checks from two laptops on one case are told apart by it.
     device: os.hostname().slice(0, 80),
     frameOf,
+    getPolicy: () => policy,
+    onAlert: alertDesk,
     onChange: jobChanged,
     // Khozo no longer takes this sign-in (it expired, or the password changed):
     // back to the sign-in screen, with every job kept for when the officer is back.
@@ -198,6 +225,14 @@ function watchUpdates() {
     currentVersion: app.getVersion(),
     downloadsDir: path.join(app.getPath('temp'), 'khozo-desktop-updates'),
     onChange: () => { if (win && !win.isDestroyed()) win.webContents.send('update:changed'); },
+    // What Khozo lets this app do, kept for this officer for when there is no internet.
+    onPolicy: (answer) => {
+      policy = answer || {};
+      const userId = String(session?.user?.id || 'officer').replace(/[^A-Za-z0-9_-]/g, '_');
+      settings.policies = { ...(settings.policies || {}), [userId]: policy };
+      saveSettings();
+      if (win && !win.isDestroyed()) win.webContents.send('update:changed');
+    },
     log,
     launch: (file) => {
       // For trying a release before it goes out: fetched and checked, not run.
@@ -291,6 +326,7 @@ function registerBridge() {
     model: model ? { label: model.provider || 'Aarakshak' } : null,
     language: settings.language,
     update: updates?.view() || null,
+    policy: session ? policy : {},
     api: API,
     dataFolder: app.getPath('userData'),
   }));
@@ -371,8 +407,9 @@ function registerBridge() {
     }
   });
 
-  handle('jobs:create', async ({ mode = 'case', caseId, filters = {}, files: chosen, window = null, settings: options = {} }) => {
+  handle('jobs:create', async ({ mode = 'case', caseId, filters = {}, files: chosen, window = null, settings: options = {}, live = null }) => {
     const j = needJobs();
+    if (mode === 'live') return createLiveWatch(j, caseId, live || {});
     const openCases = mode === 'open_cases';
     let report = null;
     let searched = null;
@@ -407,6 +444,39 @@ function registerBridge() {
     return { id };
   });
 
+  /**
+   * A live camera watched for one case until a set time (spec scenario 11),
+   * only where Khozo has it switched on. The camera is asked first, so a wrong
+   * address is said now, not hours later.
+   */
+  async function createLiveWatch(j, caseId, live) {
+    if (!policy.liveWatch) throw new Error('Watching a live camera is not switched on in Khozo.');
+    if (!model) throw new Error('Watching a live camera needs Aarakshak\'s face model on this laptop.');
+    const report = await client.getCase(caseId);
+    if (!canSearchCase(report)) throw new Error('This case cannot be checked: it is found, closed, or still waiting to be verified.');
+    const camera = String(live.camera || '').trim().slice(0, 200);
+    if (camera.length < 3) throw new Error('Say where the camera is.');
+    const address = String(live.address || '').trim();
+    if (!isStreamAddress(address)) throw new Error('Give the camera\'s stream address, for example rtsp://192.168.1.64:554/Streaming/Channels/101');
+    const until = Date.parse(live.until || '');
+    const hours = Number(policy.liveWatchHours) || 12;
+    if (!Number.isFinite(until) || until <= Date.now()) throw new Error('Say until when to watch, later than now.');
+    if (until - Date.now() > hours * 3600 * 1000 + 60000) throw new Error(`A camera can be watched for at most ${hours} hours at a time.`);
+    await probeStream(address);
+    const lat = Number(live.lat);
+    const lng = Number(live.lng);
+    const point = live.lat != null && live.lng != null && Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : { lat: null, lng: null };
+    const id = j.create({
+      report,
+      live: { address, until: new Date(until).toISOString(), startedAt: new Date().toISOString() },
+      files: [{ camera, ...point }],
+      settings: { fps: 2, maxSide: live.farFaces ? 1920 : 960 },
+    });
+    // The address can hold the camera's password: it is never written to the log.
+    log('Live watch started');
+    return { id };
+  }
+
   handle('jobs:start', (id) => needJobs().start(id));
   handle('jobs:pause', (id) => needJobs().pause(id));
   handle('jobs:remove', (id) => { needJobs().remove(id); return { ok: true }; });
@@ -431,6 +501,7 @@ function registerBridge() {
   handle('jobs:clip', async ({ id, key: k }) => {
     const found = needJobs().personOf(id, k);
     if (!found) throw new Error('This person is not in the job');
+    if (found.file.live) throw new Error('Nothing is recorded from a live camera. Use "See full picture".');
     if (!fs.existsSync(found.file.path)) throw new Error('The video file is not where it was. Put the pen drive or disk back and try again.');
     const { video, from } = await clipAround(found.file.path, found.track.time);
     const clipId = crypto.randomUUID();
@@ -470,9 +541,7 @@ function registerScheme() {
       }
       if (url.hostname === 'frame') {
         const [jobId, k] = parts;
-        const found = needJobs().personOf(jobId, k);
-        if (!found) throw new Error('No such person');
-        return bytesResponse(request, await frameOf(found.file, found.track), 'image/jpeg');
+        return bytesResponse(request, await needJobs().frame(jobId, k), 'image/jpeg');
       }
       if (url.hostname === 'clip') {
         const clip = clips.get(parts[0]);

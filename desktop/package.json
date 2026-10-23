@@ -1,7 +1,7 @@
 {
   "name": "khozo-desktop",
   "productName": "Khozo Desktop",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "Khozo on the officer's laptop: long CCTV footage checked where it is, only face pictures sent",

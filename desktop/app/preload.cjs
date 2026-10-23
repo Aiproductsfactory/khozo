@@ -36,6 +36,11 @@ contextBridge.exposeInMainWorld('khozo', {
     ipcRenderer.on('session:ended', listener);
     return () => ipcRenderer.removeListener('session:ended', listener);
   },
+  onAlert: (fn) => {
+    const listener = (_e, alert) => fn(alert);
+    ipcRenderer.on('jobs:alert', listener);
+    return () => ipcRenderer.removeListener('jobs:alert', listener);
+  },
   onJobChanged: (fn) => {
     const listener = (_e, id) => fn(id);
     ipcRenderer.on('jobs:changed', listener);

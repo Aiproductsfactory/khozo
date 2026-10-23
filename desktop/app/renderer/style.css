@@ -128,4 +128,15 @@ details summary { cursor: pointer; font-weight: 600; margin: 10px 0; }
 .group.outside { border-left: 6px solid var(--amber); }
 .together .grid { grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); }
 .btn.small { padding: 4px 10px; font-size: 13px; margin-top: 6px; }
+
+/* A live camera. */
+.live-fields { display: grid; gap: 8px; max-width: 640px; }
+.live-fields label { display: block; font-weight: 600; }
+.live-fields label > input { margin-top: 4px; }
+.alert-banner { position: sticky; top: 0; z-index: 20; display: flex; gap: 16px; align-items: center; justify-content: space-between; flex-wrap: wrap; background: var(--amber); color: #fff; padding: 12px 20px; }
+.alert-banner .btn { color: var(--ink); }
+.alert-banner .btn.primary { color: #fff; background: var(--navy); border-color: var(--navy); }
+.nophoto { width: 150px; height: 150px; display: flex; align-items: center; justify-content: center; text-align: center; padding: 8px; font-size: 12px; color: var(--quiet); background: #e5e9f0; border-radius: 8px; }
+.chip.laptop { background: var(--blue-soft); color: var(--blue); }
+.hit.laptop { border-left-color: var(--blue); border-left-style: dashed; }
 .footer { margin-top: 30px; font-size: 13px; color: var(--quiet); }

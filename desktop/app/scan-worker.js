@@ -12,6 +12,7 @@ import { loadDetector } from '../scanner/detector.js';
 import { closeness, pictureSignature, trackSignature } from '../scanner/local-match.js';
 import { loadRecognizer } from '../scanner/recognizer.js';
 import { scanFile } from '../scanner/scan.js';
+import { watchStream } from '../scanner/live.js';
 import { open, seal } from './secure-store.js';
 import fs from 'node:fs';
 
@@ -42,6 +43,7 @@ async function recognizerFor(card) {
 }
 
 const key = (task) => Buffer.from(task.key);
+const watching = new Map(); // request id -> AbortController of a live watch
 
 const tasks = {
   async scan(task, id) {
@@ -65,6 +67,57 @@ const tasks = {
       onProgress: (p) => send({ id, event: 'progress', ...p }),
       onCheckpoint: (c) => send({ id, event: 'checkpoint', ...c }),
     });
+  },
+
+  /**
+   * A live camera, until `until`: only faces close to the case are kept, as
+   * encrypted files in `fileDir` (the face, and the whole frame with the face
+   * marked); every other face is forgotten as soon as it is compared.
+   */
+  async watch(task, id) {
+    const r = await recognizerFor(task.card);
+    const found = await detectorFor(task.detectorPath);
+    const k = key(task);
+    const store = (relative, bytes) => {
+      const file = path.join(task.fileDir, relative);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, seal(k, bytes));
+    };
+    const controller = new AbortController();
+    watching.set(id, controller);
+    try {
+      return await watchStream(task.address, {
+        until: task.until,
+        fps: task.fps,
+        maxSide: task.maxSide,
+        scoreMin: task.scoreMin ?? undefined,
+        detector: found,
+        recognizer: r,
+        caseSignatures: task.caseSignatures,
+        line: task.line,
+        idPrefix: task.idPrefix,
+        startedAt: task.startedAt,
+        signal: controller.signal,
+        onClose: (face) => {
+          const picture = path.join('faces', `${face.id}.jpg`);
+          const frame = path.join('frames', `${face.id}.jpg`);
+          store(picture, face.picture);
+          store(frame, face.frame);
+          const { picture: _p, frame: _f, ...rest } = face;
+          send({ id, event: 'close', track: { ...rest, picture, frame } });
+        },
+        onProgress: (p) => send({ id, event: 'progress', ...p }),
+        onStall: (err) => send({ id, event: 'stall', error: err.message }),
+      });
+    } finally {
+      watching.delete(id);
+    }
+  },
+
+  /** Stops a watch: it resolves with what it saw. */
+  async stopWatch(task) {
+    watching.get(task.watchId)?.abort();
+    return { stopped: watching.has(task.watchId) };
   },
 
   async caseSignatures(task) {
@@ -109,5 +162,6 @@ async function handle(message) {
   }
 }
 
-if (port) port.on('message', (e) => handle(e.data));
-else process.on('message', handle);
+// Each request is handled as it comes: a watch runs for hours, and its stop must get through.
+if (port) port.on('message', (e) => { handle(e.data); });
+else process.on('message', (m) => { handle(m); });

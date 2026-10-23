@@ -19,6 +19,7 @@ import { sendFaces, sendOpenCaseFaces } from '../scanner/khozo.js';
 import { chooseToSend } from '../scanner/local-match.js';
 import { clockTime, VERDICT_WORDS } from '../scanner/review.js';
 import { parseTime } from '../scanner/scan.js';
+import { safeAddress } from '../scanner/live.js';
 
 /** Without Aarakshak's model on the laptop, at most this many people a video are sent, clearest first. */
 export const SEND_LIMIT_WITHOUT_MODEL = 600;
@@ -26,7 +27,11 @@ export const SEND_LIMIT_WITHOUT_MODEL = 600;
 const OLDER_KHOZO_RECHECK_MS = 6 * 3600 * 1000;
 
 const JOB_FILE = 'job.bin';
+/** The case's face signatures, kept encrypted for the check's life when Khozo allows laptop answers. */
+const TEMPLATE_FILE = 'case.bin';
 const OPEN_VERDICTS = ['likely', 'possible', 'not_agreed'];
+/** "Look at these first", in order: Khozo's answers, then a face close on this laptop that Khozo has not answered yet. */
+const FIRST_ORDER = ['likely', 'possible', 'not_agreed', 'laptop'];
 /** Seen together (spec F14): the people on the same camera within this many seconds of a confirmed moment. */
 export const TOGETHER_SECONDS = 10;
 const YEAR_MS = 365.25 * 86400000;
@@ -112,10 +117,12 @@ const sleep = (ms, signal) => new Promise((resolve) => {
  *   frameOf(file, track) -> JPEG   the whole frame, face marked, sent with "Same person"
  *   onChange(id)   a job changed; the window asks for it again
  *   onSignedOut()  Khozo no longer takes this officer's sign-in (expired, or the password changed); the jobs stay
+ *   getPolicy()    what Khozo lets this app do (shared/desktop-policy.js), the last answer kept
+ *   onAlert(id, person)   a live watch saw a face close to the case: tell the officer at the desk
  */
 export function createJobs({
   root, files, key, startWorker, getClient, model = null, detectorPath = null, officer = {}, appVersion = null, device = null, frameOf = null,
-  onChange = () => {}, onSignedOut = () => {}, checkpointMs = 30000, log = () => {},
+  onChange = () => {}, onSignedOut = () => {}, getPolicy = () => ({}), onAlert = () => {}, checkpointMs = 30000, log = () => {},
 }) {
   let toldSignedOut = false;
   const signedOut = () => {
@@ -157,7 +164,7 @@ export function createJobs({
         if (!client) break;
         try {
           if (c.mode === 'open_cases') await client.closeOpenCaseCheck(c.jobId);
-          else await client.closeVideoJob(c.caseId, c.jobId);
+          else await client.closeVideoJob(c.caseId, c.jobId, c.templateDeletedAt ? { templateDeletedAt: c.templateDeletedAt } : {});
         } catch (err) {
           if (err.status === 401) signedOut();
           // Not reached, or busy: tried again later. Anything else (gone, refused) is as closed as it will get.
@@ -221,6 +228,7 @@ export function createJobs({
     const videos = JSON.stringify(job.files.map((f, key) => ({
       key, name: f.name, bytes: f.bytes, seconds: f.duration, sha256: f.sha256 || null,
       cameraPlace: f.camera, lat: f.lat ?? null, lng: f.lng ?? null, recordedFrom: isoOf(f.recordedFrom), from: f.from, to: f.to,
+      ...(f.live ? { live: true } : {}),
     })));
     try {
       const { job: made } = job.mode === 'open_cases'
@@ -231,6 +239,8 @@ export function createJobs({
         : await getClient().startVideoJob(job.caseId, {
           jobKey: job.id, appVersion, device, files: videos,
           ...(firstPass ? { modelName: model.name, modelVersion: model.version, firstPassLine: job.settings.line, firstPassTop: job.settings.top } : {}),
+          ...(job.keepsTemplate ? { keepsTemplate: 'yes' } : {}),
+          ...(job.live ? { liveUntil: job.live.until } : {}),
         });
       job.server = { jobId: made.id, available: true };
       save(job);
@@ -239,6 +249,7 @@ export function createJobs({
     } catch (err) {
       // A check against open cases has no case to fall back on: it needs Khozo's own record.
       if (routeMissing(err) && job.mode === 'open_cases') throw new Error('This Khozo cannot check footage against open cases yet.');
+      if (routeMissing(err) && job.live) throw new Error('This Khozo cannot watch a live camera yet.');
       if (routeMissing(err)) {
         job.server = { available: false, checkedAt: new Date().toISOString() };
         save(job);
@@ -298,7 +309,8 @@ export function createJobs({
         files: JSON.stringify(job.files.map((f, key) => ({
           key,
           secondsRead: Math.max(0, Math.round((f.scanTo ?? f.from ?? 0) - (f.from || 0))),
-          peopleSeen: tracksOf(f).length,
+          // A live watch keeps only the faces close to the case, so it counts the others as it goes.
+          peopleSeen: f.live ? f.peopleSeen ?? tracksOf(f).length : tracksOf(f).length,
           facesTooSmall: f.facesTooSmall || 0,
           state: fileState(f),
           sha256: f.sha256 || null,
@@ -335,14 +347,19 @@ export function createJobs({
     }
   }
 
+  /** The whole frame with the face marked: kept from a live camera, or read again from the video. */
+  async function frameBytes(job, index, file, track) {
+    if (track.frame) return files.read(path.join(fileDir(job.id, index), track.frame));
+    return frameOf ? frameOf(file, track) : null;
+  }
+
   /** The face, and the whole frame with the face marked, for a sighting. */
   async function addPictures(form, job, index, file, track) {
     form.append('photo', new File([files.read(path.join(fileDir(job.id, index), track.picture))], 'face.jpg', { type: 'image/jpeg' }));
-    if (frameOf) {
-      try {
-        form.append('extraPhotos', new File([await frameOf(file, track)], 'frame.jpg', { type: 'image/jpeg' }));
-      } catch { /* the video may have gone with its pen drive: the face alone */ }
-    }
+    try {
+      const frame = await frameBytes(job, index, file, track);
+      if (frame) form.append('extraPhotos', new File([frame], 'frame.jpg', { type: 'image/jpeg' }));
+    } catch { /* the video may have gone with its pen drive: the face alone */ }
   }
 
   /** Why a decision did not reach Khozo: `offline` goes again by itself, `refused` never will (the officer sees why). */
@@ -433,17 +450,28 @@ export function createJobs({
     if (touched) changed(job);
   }
 
+  /**
+   * A face's answer: Khozo's, or, where Khozo allows it and has not answered
+   * yet (no internet), "laptop" for a face this laptop finds close to the case.
+   */
+  function verdictOf(job, k) {
+    const khozo = job.answers[k]?.verdict || null;
+    if (khozo && khozo !== 'no_answer') return khozo;
+    return job.laptopAnswers && (job.scores[k] ?? -1) >= job.laptopAnswers.line ? 'laptop' : khozo;
+  }
+
   function person(job, file, index, track) {
     const k = keyOf(index, track.id);
     return {
       key: k,
       fileIndex: index,
       camera: file.camera,
+      live: Boolean(file.live),
       time: track.time,
       firstTime: track.firstTime,
       lastTime: track.lastTime,
       clock: clockTime(file.recordedFrom, track.time, { timeStyle: 'medium' }),
-      verdict: job.answers[k]?.verdict || null,
+      verdict: verdictOf(job, k),
       closeness: job.scores[k] ?? null,
       quality: track.quality,
       decision: job.decisions[k] || null,
@@ -502,11 +530,11 @@ export function createJobs({
     const people = job.files.flatMap((file, index) => tracksOf(file).map((track) => person(job, file, index, track)));
     addTogether(people);
     const openCases = job.mode === 'open_cases';
-    const rank = (v) => FRAME_VERDICTS.indexOf(v);
+    const rank = (v) => FIRST_ORDER.indexOf(v);
     const toCheck = people
-      .filter((p) => OPEN_VERDICTS.includes(p.verdict))
+      .filter((p) => FIRST_ORDER.includes(p.verdict))
       .sort((a, b) => rank(a.verdict) - rank(b.verdict) || (b.closeness ?? -2) - (a.closeness ?? -2) || b.quality - a.quality);
-    const answered = people.filter((p) => p.verdict && p.verdict !== 'no_answer').length;
+    const answered = people.filter((p) => p.verdict && p.verdict !== 'no_answer' && p.verdict !== 'laptop').length;
     return {
       id: job.id,
       mode: openCases ? 'open_cases' : 'case',
@@ -518,6 +546,14 @@ export function createJobs({
       groups: openCases ? groupsOf(people) : null,
       // Scenario 8: a case missing for years has a photo at least that old, and its matches are weak.
       photoYears: job.photoYears ?? null,
+      // A live camera watched until a set time (spec scenario 11). Never the stream's address with its password.
+      live: job.live ? {
+        until: job.live.until, startedAt: job.live.startedAt, address: safeAddress(job.live.address),
+        stalled: job.live.stalled || null, peopleSeen: job.files[0]?.peopleSeen ?? 0, alerts: Object.keys(job.alerts || {}).length,
+      } : null,
+      // Faces this laptop finds close that Khozo has not answered yet (no internet), when Khozo allows it.
+      laptopAnswers: job.laptopAnswers || null,
+      keepsTemplate: Boolean(job.keepsTemplate),
       status: job.status,
       error: job.error || null,
       waiting: job.waiting || null,
@@ -539,8 +575,10 @@ export function createJobs({
       },
       files: job.files.map((file, index) => {
         const own = people.filter((p) => p.fileIndex === index);
-        const span = (file.to ?? file.duration ?? 0) - (file.from || 0);
-        const reached = (file.scanTo ?? file.from ?? 0) - (file.from || 0);
+        // A live watch: the share of its time gone by.
+        const watch = file.live && job.live ? [Date.parse(job.live.startedAt), Date.parse(job.live.until)] : null;
+        const span = watch ? (watch[1] - watch[0]) / 1000 : (file.to ?? file.duration ?? 0) - (file.from || 0);
+        const reached = watch ? Math.min(span, (Math.min(Date.now(), watch[1]) - watch[0]) / 1000) : (file.scanTo ?? file.from ?? 0) - (file.from || 0);
         return {
           index,
           name: file.name,
@@ -553,7 +591,7 @@ export function createJobs({
           error: file.error || null,
           progress: span > 0 ? Math.min(1, Math.max(0, reached / span)) : file.scanned ? 1 : 0,
           eta: file.eta ?? null,
-          people: own.length,
+          people: file.live ? file.peopleSeen ?? own.length : own.length,
           tooSmall: file.facesTooSmall || 0,
           checked: own.filter((p) => p.verdict && p.verdict !== 'no_answer').length,
         };
@@ -563,6 +601,7 @@ export function createJobs({
         checked: answered,
         likely: people.filter((p) => p.verdict === 'likely').length,
         possible: people.filter((p) => p.verdict === 'possible').length,
+        laptop: people.filter((p) => p.verdict === 'laptop').length,
         leads: people.reduce((n, p) => n + p.leads.length, 0),
         tooSmall: job.files.reduce((n, f) => n + (f.facesTooSmall || 0), 0),
       },
@@ -625,6 +664,19 @@ export function createJobs({
 
   async function signaturesOfCase(job, worker) {
     if (caseSignatures.has(job.id)) return caseSignatures.get(job.id);
+    // Kept for the check (no internet now, or the app opened again): the
+    // signatures only, never the case's photos; deleted with the check.
+    const kept = path.join(dirOf(job.id), TEMPLATE_FILE);
+    if (job.keepsTemplate && fs.existsSync(kept)) {
+      try {
+        const saved = files.readJson(kept);
+        caseSignatures.set(job.id, saved.signatures);
+        job.model ||= saved.model;
+        return saved.signatures;
+      } catch (err) {
+        log(`The kept case signatures could not be read: ${err.message}`);
+      }
+    }
     const client = getClient();
     const report = await client.getCase(job.caseId);
     const photos = [];
@@ -634,6 +686,7 @@ export function createJobs({
     const result = await worker.request('caseSignatures', { photos, card: model.card, detectorPath: finder });
     job.model = { ...result.model, casePhotos: result.signatures.length };
     caseSignatures.set(job.id, result.signatures);
+    if (job.keepsTemplate) files.writeJson(kept, { model: job.model, signatures: result.signatures, at: new Date().toISOString() });
     return result.signatures;
   }
 
@@ -770,7 +823,154 @@ export function createJobs({
     }
   }
 
+  // ---- a live camera (spec scenario 11) ----------------------------------------
+
+  /** Tells the officer at the desk, once a face, that a live watch saw someone close to the case. */
+  function alertOnce(job, k, kind) {
+    job.alerts ||= {};
+    if (job.alerts[k]) return;
+    job.alerts[k] = { at: new Date().toISOString(), kind };
+    const file = job.files[0];
+    const track = tracksOf(file).find((t) => keyOf(0, t.id) === k);
+    if (track) onAlert(job.id, person(job, file, 0, track));
+  }
+
+  /** Sends live faces to Khozo one at a time, in the order they were seen; an answer worth a look alerts the desk. */
+  function liveSender(job, signal) {
+    const queue = [];
+    let running = null;
+    const file = job.files[0];
+    file.searchId ||= `vs_${crypto.randomBytes(9).toString('base64url')}`;
+    async function drain() {
+      while (queue.length && !signal.aborted) {
+        const k = queue.shift();
+        const track = tracksOf(file).find((t) => keyOf(0, t.id) === k);
+        if (!track || (job.answers[k] && job.answers[k].verdict !== 'no_answer')) continue;
+        const jobId = await checkFor(job, signal);
+        if (signal.aborted || !jobId) return;
+        try {
+          await sendFaces({
+            job: { jobId, fileKey: 0 },
+            client: getClient(),
+            caseId: job.caseId,
+            record: { name: file.name, bytes: null, duration: null, sha256: null, tracks: tracksOf(file), facesTooSmall: file.facesTooSmall || 0 },
+            tracks: [{ ...track, id: k }],
+            camera: file.camera,
+            recordedFrom: file.recordedFrom,
+            searchId: file.searchId,
+            readPicture: (t) => files.read(path.join(fileDir(job.id, 0), t.picture)),
+            signal,
+            onAnswers: (answers) => {
+              Object.assign(job.answers, answers);
+              job.waiting = null;
+              const verdict = answers[k]?.verdict;
+              if (['likely', 'possible'].includes(verdict)) alertOnce(job, k, verdict);
+              changed(job);
+            },
+            onWait: (wait) => { job.waiting = wait; changed(job, false); },
+          });
+        } catch (err) {
+          if (err.status === 409 && err.data?.code === 'face_budget') { job.budgetReached = true; job.notice = 'face_budget'; changed(job); return; }
+          if (err.status === 409 && err.data?.code === 'live_ended') return;
+          throw err;
+        }
+      }
+    }
+    return {
+      // A face left in the queue when a send stops (an older Khozo, a stop) goes with the next one.
+      add(k) {
+        queue.push(k);
+        running ||= drain().catch((err) => { job.error = err.message; changed(job); }).finally(() => { running = null; });
+      },
+      done: () => running || Promise.resolve(),
+    };
+  }
+
+  /** Watches the live camera until its end, its stop, or a problem waiting will not fix. */
+  async function runLive(job) {
+    const controller = new AbortController();
+    const worker = startWorker();
+    const started = Date.now();
+    active = { id: job.id, controller, worker, fileIndex: 0 };
+    job.status = 'running';
+    job.error = null;
+    job.interrupted = false;
+    changed(job);
+    const file = job.files[0];
+    file.segments ||= [];
+    const segment = { index: file.segments.length, from: 0, to: null, done: false, tracks: [] };
+    file.segments.push(segment);
+    const sender = liveSender(job, controller.signal);
+    try {
+      if (Date.now() >= Date.parse(job.live.until)) throw Object.assign(new Error('ended'), { ended: true });
+      const sigs = await signaturesOfCase(job, worker);
+      if (!sigs.length) throw new Error('No face was found in the case photos, so the camera cannot be watched for this person.');
+      save(job);
+      await worker.request('watch', {
+        address: job.live.address,
+        until: Date.parse(job.live.until),
+        startedAt: Date.parse(job.live.startedAt),
+        fps: job.settings.fps,
+        maxSide: job.settings.maxSide,
+        scoreMin: model?.detectorScore ?? null,
+        detectorPath: finder,
+        card: model.card,
+        caseSignatures: sigs,
+        line: job.settings.line,
+        idPrefix: `w${segment.index}-`,
+        fileDir: fileDir(job.id, 0),
+        key,
+      }, (event) => {
+        if (event.event === 'close') {
+          const t = event.track;
+          const k = keyOf(0, t.id);
+          const at = segment.tracks.findIndex((x) => x.id === t.id);
+          if (at >= 0) segment.tracks[at] = t; else segment.tracks.push(t);
+          job.scores[k] = t.closeness;
+          job.live.stalled = null;
+          if (job.laptopAnswers && t.closeness >= job.laptopAnswers.line) alertOnce(job, k, 'laptop');
+          changed(job);
+          sender.add(k);
+        } else if (event.event === 'progress') {
+          file.scanTo = event.seconds;
+          file.peopleSeen = event.people;
+          file.facesTooSmall = event.facesTooSmall;
+          job.live.stalled = null;
+          changed(job, false);
+          progressSoon(job);
+        } else if (event.event === 'stall') {
+          job.live.stalled = event.error;
+          changed(job, false);
+        }
+      });
+      segment.done = true;
+      await sender.done();
+      job.status = controller.signal.aborted ? 'paused' : 'done';
+    } catch (err) {
+      if (err.ended || Date.now() >= Date.parse(job.live.until)) job.status = 'done';
+      else if (controller.signal.aborted) job.status = 'paused';
+      else {
+        job.status = 'error';
+        job.error = err.status === 401 ? 'signed_out' : err.message;
+        if (err.status === 401) signedOut();
+      }
+    } finally {
+      worker.kill();
+      segment.done = true;
+      job.waiting = null;
+      job.scanSeconds = (job.scanSeconds || 0) + (Date.now() - started) / 1000;
+      active = null;
+      changed(job);
+      if (jobs.get(job.id) === job) {
+        progressSent.set(job.id, Date.now());
+        syncProgress(job).then(() => changed(job));
+      }
+      next();
+    }
+  }
+
   async function run(job) {
+    if (job.live) return runLive(job);
     const controller = new AbortController();
     const worker = startWorker();
     const started = Date.now();
@@ -796,7 +996,16 @@ export function createJobs({
           }
         }
         if (controller.signal.aborted) break;
-        if (model?.card && job.settings.firstPass && !file.scored) await scoreOne(job, index, worker);
+        if (model?.card && job.settings.firstPass && !file.scored) {
+          try {
+            await scoreOne(job, index, worker);
+          } catch (err) {
+            // No internet for the case's photos and none kept: this video's faces go to Khozo later, without a first pass.
+            if (err.status !== 0) throw err;
+            job.waiting = { reason: 'connection', seconds: 30 };
+            changed(job, false);
+          }
+        }
         if (!file.sent) sending.push(sendOne(job, index, controller.signal));
       }
       active.fileIndex = null;
@@ -844,7 +1053,7 @@ export function createJobs({
      * casesSearched, area }) and no case, a check against open cases. It
      * starts as soon as the laptop is free.
      */
-    create({ report = null, openCases = null, files: chosen, window = null, settings = {} }) {
+    create({ report = null, openCases = null, live = null, files: chosen, window = null, settings = {} }) {
       const id = `job_${new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14)}_${crypto.randomBytes(3).toString('hex')}`;
       const job = {
         id,
@@ -861,7 +1070,21 @@ export function createJobs({
         window,
         // No case on the laptop for a check against open cases, so no first pass here.
         settings: { fps: 2, maxSide: 960, line: 0.25, top: 10, firstPass: Boolean(model?.card) && !openCases, ...settings },
-        files: chosen.map((f) => {
+        // Where Khozo allows it (shared/desktop-policy.js laptopAnswers): the
+        // case's signatures kept encrypted for the check, and a face close on
+        // this laptop shown while Khozo has not answered.
+        ...(() => {
+          const policy = getPolicy() || {};
+          const allowed = Boolean(policy.laptopAnswers && model?.card && !openCases);
+          return allowed ? { keepsTemplate: true, laptopAnswers: { line: Number(policy.laptopLine) || 0.35 } } : { keepsTemplate: false, laptopAnswers: null };
+        })(),
+        // A live camera (spec scenario 11): its address stays in this encrypted record and never goes to Khozo.
+        live: live ? { address: live.address, until: live.until, startedAt: live.startedAt, stalled: null } : null,
+        alerts: {},
+        files: live ? [{
+          path: null, name: 'Live camera', bytes: null, duration: null, camera: chosen[0].camera, lat: chosen[0].lat ?? null, lng: chosen[0].lng ?? null,
+          recordedFrom: live.startedAt, from: 0, to: null, outside: false, live: true, segments: [], scanned: false, scored: true, sent: false, peopleSeen: 0,
+        }] : chosen.map((f) => {
           const span = windowFor(f, window);
           return {
             path: f.path, name: f.name, bytes: f.bytes, duration: f.duration, width: f.width, height: f.height, codec: f.codec,
@@ -912,7 +1135,8 @@ export function createJobs({
       const job = jobs.get(id);
       if (job?.server?.jobId) {
         // Kept until Khozo has it: a laptop offline now closes the check when it is back.
-        pendingCloses.push({ mode: job.mode || 'case', caseId: job.caseId, jobId: job.server.jobId });
+        // With it goes when the case's signatures kept for the check were deleted: now, with the folder.
+        pendingCloses.push({ mode: job.mode || 'case', caseId: job.caseId, jobId: job.server.jobId, ...(job.keepsTemplate ? { templateDeletedAt: new Date().toISOString() } : {}) });
         saveCloses();
         sendCloses();
       }
@@ -1009,6 +1233,13 @@ export function createJobs({
       const file = path.resolve(dir, relative);
       if (!file.startsWith(path.resolve(dir) + path.sep)) throw new Error('Not a picture of this job');
       return files.read(file);
+    },
+
+    /** The whole frame of a person's moment, face marked: kept from a live camera, or read again from the video. */
+    async frame(id, key) {
+      const found = this.personOf(id, key);
+      if (!found) throw new Error('This person is not in the job');
+      return frameBytes(jobs.get(id), Number(key.split(':')[0]), found.file, found.track);
     },
 
     /** The video and the person, for a frame or a clip. */

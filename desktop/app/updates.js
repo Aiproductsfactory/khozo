@@ -25,7 +25,7 @@ export function isNewer(a, b) {
  *   launch(file)      runs the installer and closes the app
  *   onChange()        the state changed; the window asks for it again
  */
-export function createUpdates({ getClient, currentVersion, downloadsDir, launch, onChange = () => {}, log = () => {}, fetchImpl = globalThis.fetch }) {
+export function createUpdates({ getClient, currentVersion, downloadsDir, launch, onChange = () => {}, onPolicy = () => {}, log = () => {}, fetchImpl = globalThis.fetch }) {
   let state = null; // { version, notes, sha256, downloadUrl, stage, progress, error, file }
   const set = (patch) => { state = state ? { ...state, ...patch } : patch; onChange(); };
 
@@ -34,6 +34,8 @@ export function createUpdates({ getClient, currentVersion, downloadsDir, launch,
     async check() {
       let latest;
       try { latest = await getClient()?.desktopVersion(); } catch { return state; }
+      // What Khozo lets this app do (shared/desktop-policy.js), kept by the caller for when there is no internet.
+      if (latest?.policy) onPolicy(latest.policy);
       if (!latest?.version || !isNewer(latest.version, currentVersion)) return state;
       // Already being fetched, or fetched: keep that.
       if (state?.version === latest.version && state.stage !== 'failed') return state;

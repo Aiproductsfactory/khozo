@@ -7,9 +7,8 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import sharp from 'sharp';
 import { VIDEO_SEARCH_BATCH } from '../../shared/video-search.js';
-import { COMPARE_SIDE } from '../../web/src/video/faces.js';
+import { comparisonCopy } from './compare-copy.js';
 
 export const DESKTOP_VERSION = '0.0.1';
 
@@ -71,7 +70,7 @@ export function createClient({ api = 'https://khozo.org/api', token = null, fetc
     videoJobFaces: (id, jobId, form) => call('POST', `/reports/${encodeURIComponent(id)}/video-jobs/${encodeURIComponent(jobId)}/faces`, { form }),
     videoJobProgress: (id, jobId, body) => call('POST', `/reports/${encodeURIComponent(id)}/video-jobs/${encodeURIComponent(jobId)}/progress`, { json: body }),
     videoJobDecision: (id, jobId, form) => call('POST', `/reports/${encodeURIComponent(id)}/video-jobs/${encodeURIComponent(jobId)}/decisions`, { form }),
-    closeVideoJob: (id, jobId) => call('POST', `/reports/${encodeURIComponent(id)}/video-jobs/${encodeURIComponent(jobId)}/close`, { json: {} }),
+    closeVideoJob: (id, jobId, body = {}) => call('POST', `/reports/${encodeURIComponent(id)}/video-jobs/${encodeURIComponent(jobId)}/close`, { json: body }),
     // A check of footage against open cases (shared/routes/reports.js /open-case-checks).
     /** Whether checks against open cases run on this Khozo, and how many cases a narrowing searches. */
     openCaseCount: (filters = {}) => {
@@ -114,7 +113,8 @@ const sleep = (ms, signal) => new Promise((resolve) => {
 async function faceFile(readPicture, track) {
   const at = Math.round(Number(track.time) * 10) / 10;
   const picture = await readPicture(track);
-  const copy = await sharp(picture).resize(COMPARE_SIDE, COMPARE_SIDE).jpeg({ quality: 90 }).toBuffer().catch(() => picture);
+  // The copy the laptop's own first pass signed too (local-match.js), so both look at the same picture.
+  const copy = await comparisonCopy(picture).catch(() => picture);
   return new File([copy], `face-${String(at).replace('.', '_')}s.jpg`, { type: 'image/jpeg' });
 }
 
