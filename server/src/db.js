@@ -73,6 +73,13 @@ const TABLES = {
     photo_file: r.photoFile || null,
   }),
   grievances: (r) => ({ id: r.id, status: r.status || 'open' }),
+  // CCTV checks made on laptops (shared/video-jobs.js).
+  video_jobs: (r) => ({
+    id: r.id,
+    report_id: r.reportId || null,
+    created_by_id: r.createdById || null,
+    status: r.status || 'open',
+  }),
   notifications: (r) => ({
     id: r.id,
     ts: Number(r.ts) || Date.now(),
@@ -155,7 +162,7 @@ export async function hydrate() {
     const { rows } = await pool.query(`select data from public.${table} ${order}`);
     return rows.map((row) => row.data);
   };
-  const [users, reports, foundReports, grievances, activity, audit, notifications] = await Promise.all([
+  const [users, reports, foundReports, grievances, activity, audit, notifications, videoJobs] = await Promise.all([
     read('users'),
     read('reports', 'order by created_at desc'),
     read('found_reports', 'order by created_at desc'),
@@ -164,8 +171,15 @@ export async function hydrate() {
     // store.js keeps the audit log newest-first and reverses it to verify.
     read('audit', 'order by ts desc'),
     read('notifications', 'order by ts desc'),
+    // Comes with server/sql/003_video_jobs.sql; a server started before that
+    // has run starts without CCTV checks rather than not at all.
+    read('video_jobs', 'order by created_at desc').catch((err) => {
+      if (err?.code !== '42P01') throw err;
+      console.warn('[db] public.video_jobs is missing: run node scripts/migrate.mjs. CCTV checks from the desktop app will not be kept.');
+      return [];
+    }),
   ]);
-  return { users, reports, foundReports, grievances, activity, audit, notifications };
+  return { users, reports, foundReports, grievances, activity, audit, notifications, videoJobs };
 }
 
 // --- Photo storage ---------------------------------------------------------

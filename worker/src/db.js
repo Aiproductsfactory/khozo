@@ -57,6 +57,13 @@ const TABLES = {
     photo_file: r.photoFile || null,
   }),
   grievances: (r) => ({ id: r.id, status: r.status || 'open' }),
+  // CCTV checks made on laptops (shared/video-jobs.js).
+  video_jobs: (r) => ({
+    id: r.id,
+    report_id: r.reportId || null,
+    created_by_id: r.createdById || null,
+    status: r.status || 'open',
+  }),
   notifications: (r) => ({
     id: r.id,
     ts: Number(r.ts) || Date.now(),

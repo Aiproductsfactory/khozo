@@ -12,6 +12,7 @@ import {
   listNotifications, markNotificationsRead, addNotification,
   findReport, findFoundReport, updateUser,
   readPhoto, deletePhoto, rewriteActivity,
+  listVideoJobs, updateVideoJob,
 } from '../store.js';
 import { isPostgres } from '../db.js';
 import { authRequired, passwordChangeRequired, publicUser, requireRole } from '../auth.js';
@@ -30,6 +31,8 @@ export default registerDashboardRoutes(Router(), {
   findReport, findFoundReport, addNotification,
   // Push tokens and where an account's alerts go (shared/station-alerts.js).
   updateUser,
+  // CCTV checks from the desktop app: the command centre's figures (GET /video-checks).
+  listVideoJobs, updateVideoJob,
   rankMatches, rankSightingMatches, detectPerson,
   faceIndex: createFaceIndex(process.env),
   isPostgres,

@@ -76,6 +76,11 @@ function buildDeps(env, store, ctx) {
     findGrievance: store.findGrievance,
     addGrievance: store.addGrievance,
     updateGrievance: store.updateGrievance,
+    // CCTV checks from the desktop app (shared/video-jobs.js).
+    listVideoJobs: store.listVideoJobs,
+    findVideoJob: store.findVideoJob,
+    addVideoJob: store.addVideoJob,
+    updateVideoJob: store.updateVideoJob,
     listUsers: store.listUsers,
     findUserById: store.findUserById,
     findUserByEmail: store.findUserByEmail,
@@ -144,6 +149,9 @@ function buildDeps(env, store, ctx) {
       sightingStatusLimit: env.KHOZO_SIGHTING_STATUS_LIMIT,
       bulletinLimit: env.KHOZO_BULLETIN_LIMIT,
       videoSearchLimit: env.KHOZO_VIDEO_SEARCH_LIMIT,
+      // The desktop app's requests a quarter-hour, and the faces one check may send.
+      desktopJobLimit: env.KHOZO_DESKTOP_JOB_LIMIT,
+      desktopJobFaces: env.KHOZO_DESKTOP_JOB_FACES,
       directoryLimit: env.KHOZO_DIRECTORY_LIMIT,
       registerLimit: env.KHOZO_REGISTER_LIMIT,
       loginLimit: env.KHOZO_LOGIN_LIMIT,

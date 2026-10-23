@@ -80,7 +80,8 @@ Set each with `npx wrangler secret put <NAME>` (or as a plain variable in the da
 - **Matching limits:** `KHOZO_MATCH_CANDIDATES` (25 by default: how many cases a sighting is compared with when the gallery is off), `KHOZO_REVERSE_MATCH_CANDIDATES`, `KHOZO_SECOND_OPINION_TOP_N`, `KHOZO_EXTRA_PAIR_BUDGET`, `KHOZO_MATCH_CONCURRENCY`
 - **Alerts:** `EXPO_ACCESS_TOKEN`, `KHOZO_SMS_GATEWAY_URL`, `KHOZO_SMS_API_KEY`
 - **Bot check:** `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET`, `TURNSTILE_HOSTNAMES`
-- **Rate limits:** `KHOZO_FOUND_REPORT_LIMIT`, `KHOZO_UNVERIFIED_FOUND_REPORT_LIMIT`, `KHOZO_LOGIN_LIMIT`, `KHOZO_OTP_LIMIT`, `KHOZO_REGISTER_LIMIT`, `KHOZO_GRIEVANCE_LIMIT`, `KHOZO_GRIEVANCE_STATUS_LIMIT`, `KHOZO_SIGHTING_STATUS_LIMIT`, `KHOZO_CASE_STATUS_LIMIT`, `KHOZO_BULLETIN_LIMIT`, `KHOZO_DIRECTORY_LIMIT`
+- **Rate limits:** `KHOZO_FOUND_REPORT_LIMIT`, `KHOZO_UNVERIFIED_FOUND_REPORT_LIMIT`, `KHOZO_LOGIN_LIMIT`, `KHOZO_OTP_LIMIT`, `KHOZO_REGISTER_LIMIT`, `KHOZO_GRIEVANCE_LIMIT`, `KHOZO_GRIEVANCE_STATUS_LIMIT`, `KHOZO_SIGHTING_STATUS_LIMIT`, `KHOZO_CASE_STATUS_LIMIT`, `KHOZO_BULLETIN_LIMIT`, `KHOZO_DIRECTORY_LIMIT`, `KHOZO_VIDEO_SEARCH_LIMIT`
+- **CCTV checks from Khozo Desktop:** `KHOZO_DESKTOP_JOB_LIMIT` (240 by default: requests one officer's laptop may make in each rate-limit window, for faces, progress and decisions together) and `KHOZO_DESKTOP_JOB_FACES` (5000 by default: faces one check may send to be compared). The checks are kept in the `video_jobs` table (`server/sql/003_video_jobs.sql`): run `node scripts/migrate.mjs` before the first deploy that carries them. Until the table is there, the desktop app sends faces through the browser's route and "Same person" as a case note.
 
 ## 7. Known traps
 

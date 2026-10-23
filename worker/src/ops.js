@@ -282,6 +282,8 @@ export async function runRetention(env, ctx, { now = Date.now(), io = db, create
     addAudit: store.addAudit,
     deletePhoto: store.deletePhoto,
     rewriteActivity: store.rewriteActivity,
+    listVideoJobs: store.listVideoJobs,
+    updateVideoJob: store.updateVideoJob,
     faceIndex: faceIndex || createFaceIndex(env),
   };
   const result = await runRetentionSweep(deps, { now, apply: enforce });

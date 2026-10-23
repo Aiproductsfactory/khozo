@@ -84,6 +84,7 @@ const HYDRATED = {
   reports: 'select data from public.reports order by created_at desc nulls last',
   foundReports: 'select data from public.found_reports order by created_at desc nulls last',
   grievances: 'select data from public.grievances order by created_at desc nulls last',
+  videoJobs: 'select data from public.video_jobs order by created_at desc nulls last',
   activity: 'select data from public.activity order by ts desc',
   audit: 'select data from public.audit order by ts desc',
 };
@@ -124,6 +125,13 @@ const PARTIAL = [
   // up to sixty requests a search, each needing only the officer, the case
   // and the end of the audit chain to append its record to.
   { method: 'POST', pattern: /^\/api\/reports\/[^/]+\/video-search$/, tables: ['users', 'reports', AUDIT_TAIL] },
+  // A CCTV check from the desktop app (POST /api/reports/:id/video-jobs, and
+  // its faces, progress and close): the officer, the case, the checks and the
+  // end of the audit chain. A decision can make a sighting, so it loads all.
+  { method: 'POST', pattern: /^\/api\/reports\/[^/]+\/video-jobs(\/[^/]+\/(faces|progress|close))?$/, tables: ['users', 'reports', 'videoJobs', AUDIT_TAIL] },
+  { method: 'GET', pattern: /^\/api\/reports\/[^/]+\/video-jobs$/, tables: ['users', 'reports', 'videoJobs'] },
+  // The command centre's CCTV checks page: the checks of the cases the desk can see.
+  { method: 'GET', path: '/api/dashboard/video-checks', tables: ['users', 'reports', 'videoJobs'] },
 ];
 
 /** Which tables a request needs hydrated: all of them unless listed above. */
@@ -149,10 +157,20 @@ export async function createRequestStore(env, ctx, io = POSTGRES, { tables: requ
   const tables = requested.filter((name) => name !== AUDIT_TAIL);
   const unknown = tables.filter((name) => !HYDRATED[name]);
   if (unknown.length) throw new Error(`Unknown store table: ${unknown.join(', ')}`);
+  // The CCTV checks' table comes with server/sql/003_video_jobs.sql. A Worker
+  // deployed before that has run reads it as empty and offers no CCTV check
+  // routes (they answer 501, and the desktop app uses the browser's route),
+  // rather than failing every request that loads all tables.
+  const missing = new Set();
   const loaded = await Promise.all(
     [...tables, ...(auditTailOnly ? [AUDIT_TAIL] : [])].map((name) => io
       .query(env, name === AUDIT_TAIL ? AUDIT_TAIL_SQL : HYDRATED[name])
-      .then((r) => r.rows.map((row) => row.data).filter(Boolean)))
+      .then((r) => r.rows.map((row) => row.data).filter(Boolean))
+      .catch((err) => {
+        if (name !== 'videoJobs' || err?.code !== '42P01') throw err; // 42P01: no such table
+        missing.add(name);
+        return [];
+      }))
   );
   const auditTail = auditTailOnly ? loaded[tables.length] : null;
 
@@ -306,6 +324,19 @@ export async function createRequestStore(env, ctx, io = POSTGRES, { tables: requ
       return replace(db.reports, local.id, written);
     },
 
+    // --- CCTV checks from the desktop app (shared/video-jobs.js) ---
+    listVideoJobs: () => db.videoJobs,
+    findVideoJob: (id) => (id ? db.videoJobs.find((j) => j.id === id) || null : null),
+    addVideoJob(job) {
+      db.videoJobs.unshift(job);
+      return markDirty('video_jobs', job);
+    },
+    updateVideoJob(id, patch) {
+      const job = store.findVideoJob(id);
+      if (!job) return null;
+      return markDirty('video_jobs', replace(db.videoJobs, id, { ...job, ...patch }));
+    },
+
     // --- Grievances ---
     listGrievances: () => db.grievances,
     findGrievance: (id) => (id ? db.grievances.find((g) => g.id === id) || null : null),
@@ -422,7 +453,7 @@ export async function createRequestStore(env, ctx, io = POSTGRES, { tables: requ
    * failure cannot leave the hash chain ahead of the data it describes.
    */
   async function flush() {
-    const order = ['users', 'reports', 'found_reports', 'grievances', 'notifications', 'activity', 'audit'];
+    const order = ['users', 'reports', 'found_reports', 'grievances', 'video_jobs', 'notifications', 'activity', 'audit'];
     for (const table of order) {
       const rows = dirty.get(table);
       if (!rows?.size) continue;
@@ -432,5 +463,8 @@ export async function createRequestStore(env, ctx, io = POSTGRES, { tables: requ
     dirty.clear();
   }
 
+  if (missing.has('videoJobs')) {
+    for (const name of ['listVideoJobs', 'findVideoJob', 'addVideoJob', 'updateVideoJob']) store[name] = null;
+  }
   return { store, flush, hasWrites: () => dirty.size > 0 };
 }

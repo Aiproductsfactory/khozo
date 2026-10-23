@@ -18,6 +18,7 @@ import {
   listFoundReports, addFoundReport, findFoundReport, updateFoundReport,
   listUsers, addActivity, addAudit, addNotification, updateUser,
   savePhoto, readPhoto, deletePhoto, photoMimeType, rewriteActivity,
+  listVideoJobs, findVideoJob, addVideoJob, updateVideoJob,
 } from '../store.js';
 import { authRequired, optionalAuth, passwordChangeRequired, requireRole } from '../auth.js';
 import { compareFramesWithCase, rankMatches, rankSightingMatches, detectPerson, matchEngineInfo } from '../match.js';
@@ -76,6 +77,8 @@ export default registerReportRoutes(Router(), {
   rankSightingMatches,
   // Faces from a video, each compared with one case (POST /reports/:id/video-search).
   compareFramesWithCase,
+  // CCTV checks from the desktop app (POST /reports/:id/video-jobs).
+  listVideoJobs, findVideoJob, addVideoJob, updateVideoJob,
   detectPerson,
   matchEngineInfo,
   // The one-to-many index: none unless AARAKSHAK_GALLERY_URL and
@@ -95,6 +98,9 @@ export default registerReportRoutes(Router(), {
     sightingStatusLimit: process.env.KHOZO_SIGHTING_STATUS_LIMIT,
     bulletinLimit: process.env.KHOZO_BULLETIN_LIMIT,
     videoSearchLimit: process.env.KHOZO_VIDEO_SEARCH_LIMIT,
+    // The desktop app's requests a quarter-hour, and the faces one check may send.
+    desktopJobLimit: process.env.KHOZO_DESKTOP_JOB_LIMIT,
+    desktopJobFaces: process.env.KHOZO_DESKTOP_JOB_FACES,
     // The family alert goes through the same gateway as the registration OTP
     // (shared/sms.js); without one, Khozo says so instead of claiming a send.
     smsGatewayUrl: process.env.KHOZO_SMS_GATEWAY_URL,

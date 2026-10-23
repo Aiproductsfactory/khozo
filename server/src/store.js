@@ -25,8 +25,8 @@ export const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
 
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-/** @type {{users:any[], reports:any[], foundReports:any[], grievances:any[], activity:any[], audit:any[], notifications:any[]}} */
-let db = { users: [], reports: [], foundReports: [], grievances: [], activity: [], audit: [], notifications: [] };
+/** @type {{users:any[], reports:any[], foundReports:any[], grievances:any[], activity:any[], audit:any[], notifications:any[], videoJobs:any[]}} */
+let db = { users: [], reports: [], foundReports: [], grievances: [], activity: [], audit: [], notifications: [], videoJobs: [] };
 
 /**
  * Persists the whole in-memory dataset.
@@ -525,6 +525,8 @@ export async function init() {
       grievances: loaded.grievances || [],
       activity: loaded.activity || [],
       audit: loaded.audit || [],
+      notifications: loaded.notifications || [],
+      videoJobs: loaded.videoJobs || [],
     };
     // An empty database is a first boot: seed it, which writes through to Postgres.
     if (!db.users.length) {
@@ -555,6 +557,7 @@ function persistAll() {
     ['activity', db.activity],
     ['audit', db.audit.slice().reverse()], // oldest first: the chain depends on order
     ['notifications', db.notifications],
+    ['video_jobs', db.videoJobs],
   ]) {
     for (const row of rows) enqueueUpsert(table, row);
   }
@@ -572,6 +575,8 @@ function initFromFile() {
       db.grievances ||= [];
       db.activity ||= [];
       db.audit ||= [];
+      db.notifications ||= [];
+      db.videoJobs ||= [];
       ensureStakeholderUsers();
       ensureStakeholderDemoData();
       ensureActivityScopes();
@@ -738,6 +743,22 @@ export function updateFoundReport(id, patch) {
   Object.assign(f, patch);
   persistRow('found_reports', f);
   return f;
+}
+
+// --- CCTV checks from the desktop app (shared/video-jobs.js) ---
+export const listVideoJobs = () => db.videoJobs;
+export const findVideoJob = (id) => db.videoJobs.find((j) => j.id === id) || null;
+export function addVideoJob(job) {
+  db.videoJobs.unshift(job);
+  persistRow('video_jobs', job);
+  return job;
+}
+export function updateVideoJob(id, patch) {
+  const job = findVideoJob(id);
+  if (!job) return null;
+  Object.assign(job, patch);
+  persistRow('video_jobs', job);
+  return job;
 }
 
 // --- Grievances / feedback ---

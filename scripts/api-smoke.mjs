@@ -2131,6 +2131,137 @@ async function videoChecks({ superAdmin, sjpu, cwc, parent, fake }) {
   console.log('Video checks passed');
 }
 
+/**
+ * CCTV checks from the desktop app (shared/video-jobs.js).
+ *
+ *   POST /reports/:id/video-jobs                    starts a check; the same jobKey gives the same check
+ *   POST /reports/:id/video-jobs/:jobId/faces       a batch of faces, compared and audited once per batch name
+ *   POST /reports/:id/video-jobs/:jobId/progress    how far the laptop got
+ *   POST /reports/:id/video-jobs/:jobId/decisions   "same" makes a police sighting waiting for review; "not" is counted
+ *   POST /reports/:id/video-jobs/:jobId/close
+ *   GET  /reports/:id/video-jobs, GET /dashboard/video-checks
+ */
+async function videoJobChecks({ superAdmin, sjpu, cwc, parent, fake }) {
+  const mumbai = { state: 'Maharashtra', district: 'Mumbai' };
+  const caseForm = (fields, photo) => {
+    const form = new FormData();
+    addDeclaration(form, 'Smoke Desktop Declarant');
+    form.set('allowDuplicate', 'true');
+    for (const [key, value] of Object.entries({ ...mumbai, gender: 'Female', age: '11', ...fields })) form.set(key, value);
+    form.set('photoConsent', 'true');
+    if (photo) form.set('photo', photo);
+    return form;
+  };
+  const target = await request('POST', '/reports', {
+    token: sjpu.token,
+    form: caseForm({ childName: 'Desktop Check Smoke', parentPhone: '9876500811' }, facePhotoFile('DESKTOP_TARGET', 'case')),
+  });
+  const id = target.report.id;
+  const files = [{ key: 0, name: 'gate1.mp4', bytes: 73400320, seconds: 36000, cameraPlace: 'Kalupur railway station, gate 1', recordedFrom: '2026-10-20T14:30:05', from: 3600, to: 10800 }];
+  const start = (token, extra = {}) => request('POST', `/reports/${id}/video-jobs`, {
+    token,
+    body: { jobKey: 'job_smoke_1', appVersion: '0.1.0', files: JSON.stringify(files), modelName: 'aarakshak-fr', modelVersion: 'test', firstPassLine: 0.25, firstPassTop: 10, ...extra },
+  });
+
+  // Who may start one, and what it must say.
+  await expectStatus(403, () => start(parent.token), 'a family starts a desktop check');
+  await expectStatus(403, () => start(cwc.token), 'a CWC desk starts a desktop check (not a police role)');
+  await expectStatus(400, () => start(sjpu.token, { jobKey: 'job_smoke_x', files: JSON.stringify([{ key: 0, name: 'x.mp4', cameraPlace: '' }]) }), 'a desktop check that does not say where the camera is');
+  await expectStatus(400, () => start(sjpu.token, { jobKey: '' }), 'a desktop check with no reference');
+  const created = await start(sjpu.token);
+  const jobId = created.job?.id;
+  assert(/^vj_/.test(jobId || '') && created.job.videos?.[0]?.cameraPlace === 'Kalupur railway station, gate 1', `a desktop check should be started with its videos: ${JSON.stringify(created.job)}`);
+  const again = await start(sjpu.token);
+  assert(again.job.id === jobId && again.repeated === true, 'starting the same check again should give back the same check');
+
+  // A batch of faces, answered once however often it is sent.
+  const route = `/reports/${id}/video-jobs/${jobId}`;
+  const facesForm = (photos, fields = {}) => {
+    const form = new FormData();
+    photos.forEach((photo, i) => form.append(i === 0 ? 'photo' : 'extraPhotos', photo));
+    for (const [key, value] of Object.entries({ fileKey: '0', batch: 'b1', times: photos.map((_, i) => String(3700 + i)).join(','), ...fields })) form.set(key, value);
+    return form;
+  };
+  const twoFaces = () => [facePhotoFile('DESKTOP_TARGET', 'sighting'), facePhotoFile('DESKTOP_STRANGER', 'sighting')];
+  const answered = await request('POST', `${route}/faces`, { token: sjpu.token, form: facesForm(twoFaces()) });
+  // Rekognition is not configured in this suite, so the person is "possible" (one engine).
+  assert(answered.results.map((r) => r.verdict).join() === 'possible,unlikely', `each face of a desktop batch should get its answer: ${JSON.stringify(answered.results)}`);
+  const pairsAfter = fake.pairs.length;
+  const repeat = await request('POST', `${route}/faces`, { token: sjpu.token, form: facesForm(twoFaces()) });
+  assert(repeat.repeated === true && repeat.results.map((r) => r.verdict).join() === 'possible,unlikely' && fake.pairs.length === pairsAfter,
+    'the same batch sent again should get the same answers without being compared again');
+  await expectStatus(403, () => request('POST', `${route}/faces`, { token: superAdmin.token, form: facesForm(twoFaces(), { batch: 'b2' }) }), 'faces added to another officer\'s check');
+  await expectStatus(400, () => request('POST', `${route}/faces`, { token: sjpu.token, form: facesForm(twoFaces(), { fileKey: '9', batch: 'b3' }) }), 'faces for a video the check does not hold');
+  await expectStatus(404, () => request('POST', `/reports/${id}/video-jobs/vj_nosuchcheck/faces`, { token: sjpu.token, form: facesForm(twoFaces(), { batch: 'b4' }) }), 'faces for a check that does not exist');
+
+  // How far the laptop got.
+  const progress = await request('POST', `${route}/progress`, {
+    token: sjpu.token,
+    body: { status: 'done', scanSeconds: 900, files: JSON.stringify([{ key: 0, secondsRead: 7200, peopleSeen: 41, facesTooSmall: 3, state: 'done', sha256: 'd'.repeat(64) }]) },
+  });
+  assert(progress.job.hours === 2 && progress.job.peopleSeen === 41 && progress.job.progressStatus === 'done', `the laptop's progress should be kept: ${JSON.stringify(progress.job)}`);
+
+  // An officer's decisions.
+  const decisionForm = (photos, fields) => {
+    const form = new FormData();
+    (photos || []).forEach((photo, i) => form.append(i === 0 ? 'photo' : 'extraPhotos', photo));
+    for (const [key, value] of Object.entries({ fileKey: '0', ...fields })) form.set(key, value);
+    return form;
+  };
+  await expectStatus(400, () => request('POST', `${route}/decisions`, { token: sjpu.token, form: decisionForm(null, { key: 'p_x', decision: 'maybe', t: '3701' }) }), 'a decision that is neither same nor not');
+  const notOne = await request('POST', `${route}/decisions`, { token: sjpu.token, form: decisionForm(null, { key: 'p_stranger', decision: 'not', t: '3701', verdict: 'unlikely' }) });
+  assert(notOne.decision.decision === 'not' && !notOne.decision.sightingId, '"not this person" should be recorded without a sighting');
+  const notAgain = await request('POST', `${route}/decisions`, { token: sjpu.token, form: decisionForm(null, { key: 'p_stranger', decision: 'not', t: '3701', verdict: 'unlikely' }) });
+  assert(notAgain.repeated === true, 'the same decision sent again should change nothing');
+  const same = await request('POST', `${route}/decisions`, {
+    token: sjpu.token,
+    form: decisionForm([facePhotoFile('DESKTOP_TARGET', 'sighting'), facePhotoFile('DESKTOP_FRAME', 'sighting')], {
+      key: 'p_target', decision: 'same', t: '3700', verdict: 'possible', aarakshakScore: '0.91', closeness: '0.88', seenAt: '2026-10-20T15:31:45+05:30',
+    }),
+  });
+  const sightingId = same.decision.sightingId;
+  assert(/^f_/.test(sightingId || ''), `"same person" should make a sighting: ${JSON.stringify(same)}`);
+  const sameAgain = await request('POST', `${route}/decisions`, {
+    token: sjpu.token,
+    form: decisionForm([facePhotoFile('DESKTOP_TARGET', 'sighting')], { key: 'p_target', decision: 'same', t: '3700', verdict: 'possible' }),
+  });
+  assert(sameAgain.repeated === true && sameAgain.decision.sightingId === sightingId, 'the same "same person" sent again should not make a second sighting');
+  const sightings = (await request('GET', '/reports/found/all', { token: superAdmin.token })).foundReports;
+  const sighting = sightings.find((row) => row.id === sightingId);
+  assert(sighting && sighting.matchedReportId === id && sighting.status === 'pending_review' && sighting.foundLocation === 'Kalupur railway station, gate 1'
+    && sighting.fromVideo?.times?.[0] === '1:01:40' && (sighting.extraPhotos || []).length === 1,
+    `the sighting should be linked to the case, waiting for review, at the camera, with the moment and the frame: ${JSON.stringify(sighting && { status: sighting.status, matchedReportId: sighting.matchedReportId, foundLocation: sighting.foundLocation, fromVideo: sighting.fromVideo, extraPhotos: sighting.extraPhotos?.length })}`);
+  assert(sightings.filter((row) => row.videoCheck?.jobId === jobId || row.id === sightingId).length === 1, 'one "same person" should make exactly one sighting');
+  const caseAfter = (await request('GET', `/reports/${id}`, { token: superAdmin.token })).report;
+  assert(caseAfter.status === target.report.status, 'a CCTV check should never mark the case found');
+
+  // The case's checks and the command centre's figures.
+  const listed = await request('GET', `/reports/${id}/video-jobs`, { token: sjpu.token });
+  const view = listed.jobs.find((j) => j.id === jobId);
+  assert(view && view.confirmed === 1 && view.rejected === 1 && view.counts.faces === 2 && view.counts.possible === 1 && view.sightings[0] === sightingId,
+    `the case's checks should show the answers and decisions: ${JSON.stringify(view)}`);
+  await expectStatus(403, () => request('GET', `/reports/${id}/video-jobs`, { token: cwc.token }), 'a CWC desk lists a case\'s CCTV checks');
+  const figures = await request('GET', '/dashboard/video-checks', { token: superAdmin.token });
+  assert(figures.available === true && figures.totals.checks >= 1 && figures.totals.confirmed >= 1 && figures.totals.rejected >= 1 && figures.totals.hours >= 2
+    && figures.byDistrict.some((d) => d.district === 'Mumbai') && figures.byCamera.some((c) => c.cameraPlace === 'Kalupur railway station, gate 1' && c.faces === 2 && c.confirmed === 1)
+    && figures.recent.some((j) => j.id === jobId && j.caseName === 'Desktop Check Smoke'),
+    `the command centre's figures should count the check: ${JSON.stringify({ totals: figures.totals, byCamera: figures.byCamera })}`);
+  await expectStatus(403, () => request('GET', '/dashboard/video-checks', { token: parent.token }), 'a family asks for the CCTV check figures');
+
+  // Everything is audited, and a batch only once.
+  const audit = (await request('GET', '/dashboard/audit', { token: superAdmin.token })).audit;
+  for (const action of ['case.video_job_started', 'case.video_job_finished', 'sighting.video_confirmed', 'case.video_face_rejected']) {
+    assert(audit.some((row) => row.action === action && (row.metadata?.jobId === jobId)), `a desktop check should be audited: ${action}`);
+  }
+  assert(audit.filter((row) => row.action === 'case.video_searched' && row.metadata?.jobId === jobId).length === 1, 'a batch should be audited once, however often it is sent');
+
+  // Closing.
+  const closed = await request('POST', `${route}/close`, { token: sjpu.token, body: {} });
+  assert(closed.job.status === 'closed', 'a check should close');
+  await expectStatus(409, () => request('POST', `${route}/faces`, { token: sjpu.token, form: facesForm(twoFaces(), { batch: 'b9' }) }), 'faces for a closed check');
+  console.log('Desktop CCTV check checks passed');
+}
+
 async function jurisdictionApiChecks({ superAdmin, parent, police, cwc }) {
   const states = await fetch(`${base}/geo/states`);
   const stateBody = await states.json();
@@ -4299,6 +4430,7 @@ async function run() {
   await candidateAndPhotoChecks({ superAdmin, admin, sjpu, cwc, parent, fake: fakeAarakshak });
   await multiPhotoChecks({ superAdmin, sjpu, cwc, parent });
   await videoChecks({ superAdmin, sjpu, cwc, parent, fake: fakeAarakshak });
+  await videoJobChecks({ superAdmin, sjpu, cwc, parent, fake: fakeAarakshak });
   await strictInputChecks({ superAdmin, sjpu });
   await privacyGapChecks({ superAdmin, sjpu, cci: await login('cci@khozo.org') });
   await traffickingChecks({ superAdmin, sjpu, ahtu, cci: await login('cci@khozo.org'), parent });

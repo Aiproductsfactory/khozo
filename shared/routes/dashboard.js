@@ -38,6 +38,7 @@ import { outcomeMeasures } from '../outcomes.js';
 import { photoNeedCounts } from '../photo-need.js';
 import { dismissalApproval } from '../sighting-misuse.js';
 import { anonymiseCase, anonymiseSighting, runRetentionSweep } from '../retention.js';
+import { summariseVideoJobs } from '../video-jobs.js';
 import { campaignSourceOf } from '../campaign-source.js';
 import { MAX_PUSH_DEVICES, STATION_ROLES, alertPhones, isPushToken, pushTokensOf, stationAlertWords, stationDeskOf } from '../station-alerts.js';
 import { BULK_MAX_ROWS, activationLink, isControlRoomWord, isEmail, isPhone, newActivation, parseLocation, roleFromSheet, sheetPhone } from '../bulk-accounts.js';
@@ -57,6 +58,8 @@ export default function registerDashboardRoutes(router, deps) {
     // Optional so a harness need not stub them: push-token and alert-setting
     // routes write the account (shared/station-alerts.js).
     updateUser = null,
+    // CCTV checks made on laptops (shared/video-jobs.js); optional for the same reason.
+    listVideoJobs = null, updateVideoJob = null,
     fetchImpl = fetch,
     settings = {},
   } = deps;
@@ -2126,6 +2129,25 @@ export default function registerDashboardRoutes(router, deps) {
     res.json({ assessed, levels });
   });
 
+  /**
+   * The command centre's figures for CCTV checks made on officers' laptops
+   * (Khozo Desktop): checks, hours of footage, people seen, faces checked,
+   * the engines' answers, and how often an officer agreed or did not, by
+   * district, camera and officer (shared/video-jobs.js). Only the checks of
+   * cases the viewer can see; `days` limits them to the last so many days.
+   */
+  router.get('/video-checks', requireRole('super_admin', 'admin', 'state_nodal', 'crime_bureau', 'police', 'sjpu', 'ahtu', 'dcrb'), (req, res) => {
+    const days = Number(req.query?.days) > 0 ? Math.min(3650, Number(req.query.days)) : null;
+    if (typeof listVideoJobs !== 'function') return res.json({ ...summariseVideoJobs([]), available: false, days });
+    const cases = new Map(scopeReports(req.user, listReports()).map((r) => [r.id, r]));
+    const since = days ? Date.now() - days * 86400000 : null;
+    const jobs = listVideoJobs().filter((j) => cases.has(j.reportId) && (!since || Date.parse(j.createdAt) >= since));
+    const summary = summariseVideoJobs(jobs);
+    // The viewer can open each of these cases, so the list names them.
+    summary.recent = summary.recent.map((job) => ({ ...job, caseName: cases.get(job.reportId)?.childName || null, caseFir: cases.get(job.reportId)?.firNo || null }));
+    res.json({ ...summary, available: true, days });
+  });
+
   router.get('/mis', requireRole(...OPERATIONAL_ROLES), (req, res) => {
     const reports = scopeReports(req.user, listReports());
     const foundReports = scopeFoundReports(req.user, listFoundReports(), listReports());
@@ -2261,6 +2283,8 @@ export default function registerDashboardRoutes(router, deps) {
   const retentionDeps = {
     listReports, listFoundReports, updateReport, updateFoundReport, addAudit,
     deletePhoto, rewriteActivity, faceIndex: deps.faceIndex,
+    // An anonymised case's CCTV checks lose their file names (shared/retention.js).
+    listVideoJobs, updateVideoJob,
   };
 
   // A dry run (the default) says what the retention schedule would do today;

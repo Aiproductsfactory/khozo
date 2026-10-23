@@ -32,6 +32,7 @@
 import { removeCaseFromIndex } from './face-index.js';
 import { anonymisedLabel, anonymisedReportPatch, anonymisedSightingPatch } from './privacy.js';
 import { photoFilesOf } from './photo-set.js';
+import { anonymisedVideoJobPatch } from './video-jobs.js';
 
 const DAY_MS = 86400000;
 const CLOSED_CASE = new Set(['found', 'closed']);
@@ -179,6 +180,7 @@ export async function anonymiseCase(deps, report, { now = Date.now(), approval =
   deps.updateReport(before.id, patch);
   await removeCaseFromIndex(deps.faceIndex, before, deps.updateReport);
   await deleteEveryPhoto(deps, before);
+  anonymiseVideoJobs(deps, before.id, now);
   if (typeof deps.rewriteActivity === 'function') {
     const label = anonymisedLabel('report', before.id);
     // A parent or NGO who registered the case is named as the actor of its
@@ -195,6 +197,20 @@ export async function anonymiseCase(deps, report, { now = Date.now(), approval =
     });
   }
   return patch;
+}
+
+/**
+ * The CCTV checks of an anonymised case keep their figures and lose the file
+ * names and recording times (shared/video-jobs.js). A store that did not
+ * load the checks for this request leaves them to the next sweep.
+ */
+function anonymiseVideoJobs(deps, reportId, now) {
+  if (typeof deps.listVideoJobs !== 'function' || typeof deps.updateVideoJob !== 'function') return;
+  let jobs;
+  try { jobs = deps.listVideoJobs(); } catch { return; }
+  for (const job of jobs.filter((j) => j.reportId === reportId && !j.anonymizedAt)) {
+    deps.updateVideoJob(job.id, anonymisedVideoJobPatch(job, new Date(now).toISOString()));
+  }
 }
 
 /** Deletes the main photo and every extra photo of a record (shared/photo-set.js). */

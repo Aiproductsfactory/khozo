@@ -274,8 +274,8 @@ check('no photo is added to a case anonymised meanwhile', late === null && photo
 // sighting and audit row for it was most of the Worker's CPU, and most of the
 // requests the Free plan's 10 ms limit cut off.
 check('the alert inbox poll needs only the accounts', tablesForRequest('GET', '/api/dashboard/notifications').join() === 'users');
-check('marking alerts read still loads everything', tablesForRequest('POST', '/api/dashboard/notifications/read').length === 6);
-check('every other request still loads everything', tablesForRequest('GET', '/api/dashboard/stats').length === 6);
+check('marking alerts read still loads everything', tablesForRequest('POST', '/api/dashboard/notifications/read').length === 7);
+check('every other request still loads everything', tablesForRequest('GET', '/api/dashboard/stats').length === 7);
 
 const inboxIo = fakeIo({
   ...seed,
@@ -332,9 +332,9 @@ check('it writes nothing', inboxIo.writes.length === 0);
 const PHOTO_TABLES = 'users,reports,foundReports';
 check('a photo needs only the accounts, the cases and the sightings', tablesForRequest('GET', '/api/reports/photo/f_9').join() === PHOTO_TABLES);
 check('only for reading a photo, and only under /photo/',
-  tablesForRequest('POST', '/api/reports/photo/f_9').length === 6
-  && tablesForRequest('GET', '/api/reports/photos').length === 6
-  && tablesForRequest('GET', '/api/reports/found/all').length === 6);
+  tablesForRequest('POST', '/api/reports/photo/f_9').length === 7
+  && tablesForRequest('GET', '/api/reports/photos').length === 7
+  && tablesForRequest('GET', '/api/reports/found/all').length === 7);
 
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00]);
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
@@ -405,7 +405,35 @@ check('serving photos writes nothing', servingIo.writes.length === 0, `${serving
 const VIDEO_TABLES = 'users,reports,auditTail';
 check('a video search needs the accounts, the cases and the end of the audit chain',
   tablesForRequest('POST', '/api/reports/r_1/video-search').join() === VIDEO_TABLES, tablesForRequest('POST', '/api/reports/r_1/video-search').join());
-check('only that route', tablesForRequest('GET', '/api/reports/r_1/video-search').length === 6 && tablesForRequest('POST', '/api/reports/r_1/rematch').length === 6);
+check('only that route', tablesForRequest('GET', '/api/reports/r_1/video-search').length === 7 && tablesForRequest('POST', '/api/reports/r_1/rematch').length === 7);
+
+// --- a CCTV check from the desktop app: the accounts, the cases, the checks and the end of the audit chain ---
+const JOB_TABLES = 'users,reports,videoJobs,auditTail';
+check('starting a desktop check, and its faces, progress and close, need the accounts, the cases, the checks and the end of the audit chain',
+  ['/api/reports/r_1/video-jobs', '/api/reports/r_1/video-jobs/vj_abc123/faces', '/api/reports/r_1/video-jobs/vj_abc123/progress', '/api/reports/r_1/video-jobs/vj_abc123/close']
+    .every((p) => tablesForRequest('POST', p).join() === JOB_TABLES));
+check('a desktop decision, which can make a sighting, loads everything', tablesForRequest('POST', '/api/reports/r_1/video-jobs/vj_abc123/decisions').length === 7);
+check('listing a case\'s checks reads no audit', tablesForRequest('GET', '/api/reports/r_1/video-jobs').join() === 'users,reports,videoJobs');
+check('the command centre\'s CCTV checks page reads the accounts, the cases and the checks', tablesForRequest('GET', '/api/dashboard/video-checks').join() === 'users,reports,videoJobs');
+
+// A Worker deployed before server/sql/003_video_jobs.sql has run.
+{
+  const before = fakeIo({ users: [{ id: 'u_a', role: 'police' }] });
+  const read = before.query;
+  before.query = async (env, sql, params) => {
+    if (/public\.video_jobs/.test(sql)) throw Object.assign(new Error('relation "public.video_jobs" does not exist'), { code: '42P01' });
+    return read(env, sql, params);
+  };
+  let early = null;
+  try { early = await createRequestStore({}, null, before); } catch (err) { early = { error: err.message }; }
+  check('without the checks\' table, every other request is still answered', Boolean(early?.store) && early.store.listUsers?.().length === 1, early?.error);
+  check('… and the CCTV check routes are switched off, not answered from an empty table', early?.store && early.store.listVideoJobs === null && early.store.addVideoJob === null);
+  const broken = fakeIo();
+  broken.query = async () => { throw Object.assign(new Error('connection refused'), { code: 'ECONNREFUSED' }); };
+  let failedLoud = false;
+  try { await createRequestStore({}, null, broken); } catch { failedLoud = true; }
+  check('any other database failure still fails the request', failedLoud);
+}
 
 // A whole (1 x 1) PNG: the route checks that each face picture is an image.
 const TINY_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=', 'base64');
