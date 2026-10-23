@@ -136,6 +136,13 @@ export function CheckCard({ job, showCase = true }) {
           ago: timeAgo(job.updatedAt) || '-',
         })}
         {job.device && <span className="block text-xs text-gray-500">{t('Laptop: {laptop}', { laptop: job.device })}</span>}
+        {job.laptopTemplate && (
+          <span className="block text-xs text-gray-500">
+            {job.laptopTemplate.deletedAt
+              ? t("The case's face signatures were kept on the laptop for the check and deleted {date}", { date: fmtDate(job.laptopTemplate.deletedAt) })
+              : t("The case's face signatures are kept on the laptop, encrypted, until the check is deleted")}
+          </span>
+        )}
       </p>
       {showCase ? (
         <p className="text-gray-600">
@@ -147,6 +154,18 @@ export function CheckCard({ job, showCase = true }) {
         <ul className="list-disc space-y-0.5 pl-5 text-gray-600">
           {(job.videos || []).map((v) => {
             const span = v.window ? (v.window.to ?? v.seconds ?? 0) - (v.window.from || 0) : v.seconds;
+            if (v.live) {
+              return (
+                <li key={v.key}>
+                  {t('{camera}: watched live from {start} until {until}; {read} watched', {
+                    camera: v.cameraPlace || '-',
+                    start: v.recordedFrom ? new Date(v.recordedFrom).toLocaleString(currentLocale(), { dateStyle: 'medium', timeStyle: 'short' }) : '-',
+                    until: job.live?.until ? new Date(job.live.until).toLocaleString(currentLocale(), { dateStyle: 'medium', timeStyle: 'short' }) : '-',
+                    read: lengthOf(t, v.secondsRead),
+                  })}
+                </li>
+              );
+            }
             return (
               <li key={v.key}>
                 {t('{camera}: recording from {start}; {read} of {length} read', {

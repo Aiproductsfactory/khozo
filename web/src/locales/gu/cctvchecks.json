@@ -90,5 +90,13 @@
   "{hours} hours read, {people} people seen, {faces} faces searched among {cases} open cases, {leads} close to a case": "{hours} કલાક વાંચ્યા, {people} લોકો દેખાયા, {faces} ચહેરા {cases} ખુલ્લા કેસોમાં શોધ્યા, {leads} કોઈ કેસની નજીક",
   "The officer sent {confirmed} to a case and did not send {rejected}.": "અધિકારીએ {confirmed} કોઈ કેસને મોકલ્યા અને {rejected} ન મોકલ્યા.",
   "Every decision ({n})": "દરેક નિર્ણય ({n})",
-  "by {officer}, {when}": "{officer} દ્વારા, {when}"
+  "by {officer}, {when}": "{officer} દ્વારા, {when}",
+  "Live camera": "લાઇવ કેમેરા",
+  "Watched live from {start} until {until}": "{start} થી {until} સુધી લાઇવ જોવાયું",
+  "Case face signatures on the laptop": "લેપટોપ પર કેસના ચહેરાના સંકેત",
+  "Kept encrypted for the check, deleted {date}": "તપાસ માટે એન્ક્રિપ્ટ કરીને રખાયા, {date} એ કાઢી નખાયા",
+  "Kept encrypted for the check; not deleted yet": "તપાસ માટે એન્ક્રિપ્ટ કરીને રખાયા; હજુ કાઢી નખાયા નથી",
+  "{camera}: watched live from {start} until {until}; {read} watched": "{camera}: {start} થી {until} સુધી લાઇવ જોવાયું; {read} જોવાયું",
+  "The case's face signatures were kept on the laptop for the check and deleted {date}": "કેસના ચહેરાના સંકેત તપાસ માટે લેપટોપ પર રખાયા અને {date} એ કાઢી નખાયા",
+  "The case's face signatures are kept on the laptop, encrypted, until the check is deleted": "કેસના ચહેરાના સંકેત તપાસ કાઢી નખાય ત્યાં સુધી લેપટોપ પર એન્ક્રિપ્ટ કરીને રખાય છે"
 }

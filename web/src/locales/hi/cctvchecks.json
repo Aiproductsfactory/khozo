@@ -90,5 +90,13 @@
   "{hours} hours read, {people} people seen, {faces} faces searched among {cases} open cases, {leads} close to a case": "{hours} घंटे पढ़े, {people} लोग दिखे, {faces} चेहरे {cases} खुले केसों में खोजे, {leads} किसी केस के करीब",
   "The officer sent {confirmed} to a case and did not send {rejected}.": "अधिकारी ने {confirmed} किसी केस को भेजे और {rejected} नहीं भेजे।",
   "Every decision ({n})": "हर निर्णय ({n})",
-  "by {officer}, {when}": "{officer} द्वारा, {when}"
+  "by {officer}, {when}": "{officer} द्वारा, {when}",
+  "Live camera": "लाइव कैमरा",
+  "Watched live from {start} until {until}": "{start} से {until} तक लाइव देखा गया",
+  "Case face signatures on the laptop": "लैपटॉप पर केस के चेहरे के संकेत",
+  "Kept encrypted for the check, deleted {date}": "जाँच के लिए एन्क्रिप्ट करके रखे गए, {date} को हटाए गए",
+  "Kept encrypted for the check; not deleted yet": "जाँच के लिए एन्क्रिप्ट करके रखे गए; अभी हटाए नहीं गए",
+  "{camera}: watched live from {start} until {until}; {read} watched": "{camera}: {start} से {until} तक लाइव देखा गया; {read} देखा",
+  "The case's face signatures were kept on the laptop for the check and deleted {date}": "केस के चेहरे के संकेत जाँच के लिए लैपटॉप पर रखे गए और {date} को हटाए गए",
+  "The case's face signatures are kept on the laptop, encrypted, until the check is deleted": "केस के चेहरे के संकेत जाँच हटने तक लैपटॉप पर एन्क्रिप्ट करके रखे जाते हैं"
 }

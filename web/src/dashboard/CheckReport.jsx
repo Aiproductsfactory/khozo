@@ -74,7 +74,13 @@ export default function CheckReport() {
           <Row label={t('Check')}>{check.id}</Row>
           <Row label={t('Officer')}>{[check.officer, check.role, check.officerPlace?.district].filter(Boolean).join(' · ')}</Row>
           <Row label={t('Started')}>{when(check.startedAt)}{check.closedAt ? ` · ${t('Closed {date}', { date: when(check.closedAt) })}` : ''}</Row>
-          <Row label={t('Read with')}>{[check.app && `Khozo Desktop ${check.app}`, check.model].filter(Boolean).join(' · ') || '-'}</Row>
+          <Row label={t('Read with')}>{[check.app && `Khozo Desktop ${check.app}`, check.model, check.laptop && t('Laptop: {laptop}', { laptop: check.laptop })].filter(Boolean).join(' · ') || '-'}</Row>
+          {check.live && <Row label={t('Live camera')}>{t('Watched live from {start} until {until}', { start: when(check.live.startedAt), until: when(check.live.until) })}</Row>}
+          {check.caseTemplateOnLaptop && (
+            <Row label={t('Case face signatures on the laptop')}>
+              {check.caseTemplateOnLaptop.deletedAt ? t('Kept encrypted for the check, deleted {date}', { date: when(check.caseTemplateOnLaptop.deletedAt) }) : t('Kept encrypted for the check; not deleted yet')}
+            </Row>
+          )}
           <Row label={t('Found')}>{t('{hours} hours read, {people} people seen, {faces} faces compared, {matches} likely or possible', {
             hours: report.totals.hours, people: report.totals.peopleSeen, faces: report.totals.faces?.faces || 0,
             matches: (report.totals.faces?.likely || 0) + (report.totals.faces?.possible || 0),
