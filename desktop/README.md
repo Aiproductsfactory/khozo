@@ -38,7 +38,9 @@ The desktop is a separate package so that the Worker build never downloads Elect
 
 **While a check runs:**
 
-- It reads the videos one by one, keeping up to five clear pictures of each person, runs the first pass with Aarakshak's model if it is installed (every picture scored, the best counts), and sends the closest people to Khozo, up to three pictures each under one name; Khozo keeps the best answer. This matters on small, blurred faces: on an office camera with faces 20 px wide, one volunteer's clearest single picture scored −0.09 against their own photo and the best of five 0.36, so the check found them (23 Oct 2026). Strangers' scores did not rise.
+- It reads the videos one by one, keeping faces down to 16 px wide when Aarakshak's model is on the laptop (without it, 36 px, or 16 on a small video, as the website), and up to five clear pictures of each person, runs the first pass with Aarakshak's model if it is installed (every picture scored, the best counts), and sends the closest people to Khozo, up to three pictures each under one name; Khozo keeps the best answer.
+- **Small videos** (the shorter side 576 px or less: a DVR's second stream, CIF, D1, VGA) are read more often: two looks a second for HD, more for a smaller frame so the work stays about the same, up to eight (`faces.js lookRate`). The website's "Check CCTV video" follows the same rules, and on a small video checks each person with three pictures.
+- Why: on an office camera at 352 × 288 with faces 16–40 px wide (23 Oct 2026, four volunteers from the team, their own test cases), one volunteer scored −0.09 from their clearest single picture, 0.34 from the best of five at two looks a second, and 0.46 at eight looks a second (the line is 0.35), so the check found them. No stranger scored above 0.18. The other volunteers' case photos were the limit (a face 65 px wide in the photo; one turned well to the side).
 - It saves its progress every 30 seconds. A check stopped by a pause, a crash or a power cut carries on from there.
 - The laptop stays awake.
 

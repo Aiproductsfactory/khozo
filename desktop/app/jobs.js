@@ -25,6 +25,17 @@ import { safeAddress } from '../scanner/live.js';
 export const SEND_LIMIT_WITHOUT_MODEL = 600;
 /** With the first pass, how many pictures of one person go to Khozo: the one that scored best, then the clearest. */
 export const PICTURES_TO_SEND = 3;
+/**
+ * The narrowest face kept, in the video's pixels, with Aarakshak's model on
+ * the laptop: 16, the finder's own floor, in every video. The browser keeps
+ * 36 (MIN_FACE_PX) except in a small video, because every face it keeps is
+ * sent; here the first pass sends only the closest few, and with five
+ * pictures a person a 20 px face is matched well enough to be worth looking
+ * at (23 Oct 2026, an office camera at 352 x 288: a volunteer found at 0.46
+ * who at 36 px was never seen). Without the model, the browser's rule
+ * (faces.js minFaceFor), as everyone found would be sent.
+ */
+export const SMALL_FACE_PX = 16;
 /** A Khozo that kept no checks is asked again after this long: it may have been updated. */
 const OLDER_KHOZO_RECHECK_MS = 6 * 3600 * 1000;
 
@@ -648,7 +659,7 @@ export function createJobs({
     const before = tracksOf(file).length;
     const started = Date.now();
     const result = await worker.request('scan', {
-      file: file.path, from, to: file.to, fps: job.settings.fps, maxSide: job.settings.maxSide,
+      file: file.path, from, to: file.to, fps: job.settings.fps, maxSide: job.settings.maxSide, minFace: job.settings.minFace,
       scoreMin: model?.detectorScore ?? null, detectorPath: finder,
       idPrefix: `s${k}-`, fileDir: fileDir(job.id, index), key, checkpointMs,
     }, (event) => {
@@ -932,6 +943,7 @@ export function createJobs({
         startedAt: Date.parse(job.live.startedAt),
         fps: job.settings.fps,
         maxSide: job.settings.maxSide,
+        minFace: job.settings.minFace,
         scoreMin: model?.detectorScore ?? null,
         detectorPath: finder,
         card: model.card,
@@ -1089,7 +1101,7 @@ export function createJobs({
         status: 'queued',
         window,
         // No case on the laptop for a check against open cases, so no first pass here.
-        settings: { fps: 2, maxSide: 960, line: 0.25, top: 10, firstPass: Boolean(model?.card) && !openCases, ...settings },
+        settings: { fps: 2, maxSide: 960, line: 0.25, top: 10, firstPass: Boolean(model?.card) && !openCases, minFace: model?.card ? SMALL_FACE_PX : undefined, ...settings },
         // Where Khozo allows it (shared/desktop-policy.js laptopAnswers): the
         // case's signatures kept encrypted for the check, and a face close on
         // this laptop shown while Khozo has not answered.

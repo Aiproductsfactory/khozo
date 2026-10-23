@@ -234,6 +234,16 @@ console.log('Parts');
     const first = client.calls.searches[0];
     check('several pictures of one person go to Khozo under the person’s one name', client.calls.searches.length === 1 && first.faces === 4 && first.keys === '0:a,0:a,0:a,0:b', JSON.stringify(first));
     check('… and the person’s answer is the best of their pictures', answers['0:a']?.verdict === 'likely' && answers['0:b']?.verdict === 'unlikely', JSON.stringify(answers));
+    const two = fakeClient();
+    const three = (id) => ({ id, time: 1, quality: 0.9, picture: `${id}1.jpg`, pictures: [1, 2, 3].map((n) => ({ file: `${id}${n}.jpg` })) });
+    await sendFaces({
+      client: two, caseId: 'r_test', job: { jobId: 'vj_x', fileKey: 0 },
+      record: { name: 'v.mp4', bytes: 1, duration: 9, sha256: 'c'.repeat(64), tracks: [], facesTooSmall: 0 },
+      tracks: [three('0:a'), three('0:b')],
+      picturesOf: (t) => t.pictures.map((p) => p.file),
+      readPicture: async () => tiny, camera: 'Test camera', searchId: 'vs_test',
+    });
+    check('… and one person’s pictures are never split across two requests', two.calls.searches.map((s) => s.keys).join(' / ') === '0:a,0:a,0:a / 0:b,0:b,0:b', JSON.stringify(two.calls.searches.map((s) => s.keys)));
   }
 
   check('the desktop’s police roles are Khozo’s', JSON.stringify([...VIDEO_ROLES].sort()) === JSON.stringify([...POLICE_ROLES].sort()));

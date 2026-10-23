@@ -203,10 +203,16 @@ export async function sendFaces({
   job = null,
   onAnswers = () => {}, onWait = () => {}, busyWaitMs = 15000, signal,
 }) {
-  // Each picture to send, with its person: up to VIDEO_SEARCH_BATCH a request.
-  const items = tracks.flatMap((track) => picturesOf(track).map((file) => ({ track, file })));
+  // Each picture to send, with its person: up to VIDEO_SEARCH_BATCH a request,
+  // and a person's pictures always in one request, so that Khozo records the
+  // best of them (a later request would replace an earlier answer).
   const batches = [];
-  for (let i = 0; i < items.length; i += VIDEO_SEARCH_BATCH) batches.push(items.slice(i, i + VIDEO_SEARCH_BATCH));
+  for (const track of tracks) {
+    const mine = picturesOf(track).slice(0, VIDEO_SEARCH_BATCH).map((file) => ({ track, file }));
+    const last = batches.at(-1);
+    if (last && last.length + mine.length <= VIDEO_SEARCH_BATCH) last.push(...mine);
+    else batches.push(mine);
+  }
   const rank = (verdict) => { const i = FRAME_VERDICTS.indexOf(verdict); return i < 0 ? FRAME_VERDICTS.length : i; };
   const formFor = async (faces, index) => {
     const form = new FormData();

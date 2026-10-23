@@ -21,7 +21,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { parseArgs } from 'node:util';
-import { formatVideoTime, MIN_FACE_PX } from '../../web/src/video/faces.js';
+import { formatVideoTime } from '../../web/src/video/faces.js';
 import { loadDetector } from '../scanner/detector.js';
 import { cardFromEnv } from '../scanner/recognizer.js';
 import { markedFrame, parseTime, scanFile } from '../scanner/scan.js';
@@ -75,9 +75,12 @@ const emit = (ev) => { if (json) process.stdout.write(`${JSON.stringify(ev)}\n`)
 const say = (m) => { if (json) emit({ type: 'log', msg: m }); else console.log(m); };
 
 const settings = {
+  // Without --fps, 2 a second for HD and more for a small video (faces.js lookRate); with it, exactly that.
   fps: Number(opts.fps) || 2,
+  exactRate: Boolean(Number(opts.fps)),
   maxSide: Number(opts['max-side']) || 960,
-  minFace: Number(opts['min-face']) || MIN_FACE_PX,
+  // Without --min-face, 36 px, or 16 on a small video (faces.js minFaceFor).
+  minFace: Number(opts['min-face']) || undefined,
   from: parseTime(opts.from) || 0,
   to: parseTime(opts.to),
   gpu: Boolean(opts.gpu),

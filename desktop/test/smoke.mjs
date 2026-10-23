@@ -225,11 +225,14 @@ const video = path.join(tmp, 'test.mp4');
 console.log('Scanning');
 {
   const detector = await loadDetector();
-  const whole = await scanFile(video, { outDir: path.join(tmp, 'scan-whole'), detector });
+  // The test clip is 640 x 360, a small video (faces.js isSmallVideo).
+  const whole = await scanFile(video, { outDir: path.join(tmp, 'scan-whole'), detector, exactRate: true });
   check('the whole video is looked at twice a second', whole.looks >= 39 && whole.looks <= 41 && whole.window.from === 0, `${whole.looks} looks`);
   check('the scan records the file, its fingerprint and its counts', whole.sha256.length === 64 && whole.name === 'test.mp4' && Array.isArray(whole.tracks) && Number.isFinite(whole.facesFound));
-  const part = await scanFile(video, { from: 5, to: 10, outDir: path.join(tmp, 'scan-part'), detector });
+  const part = await scanFile(video, { from: 5, to: 10, outDir: path.join(tmp, 'scan-part'), detector, exactRate: true });
   check('only the chosen window is read', part.looks >= 9 && part.looks <= 11 && part.window.from === 5 && part.window.to === 10, `${part.looks} looks`);
+  const small = await scanFile(video, { outDir: path.join(tmp, 'scan-small'), detector });
+  check('a small video is looked at more often, with smaller faces kept', small.looks >= 88 && small.looks <= 92 && small.settings.fps === 4.5 && small.settings.minFace === 16, `${small.looks} looks, ${JSON.stringify(small.settings)}`);
   await detector.close();
 }
 

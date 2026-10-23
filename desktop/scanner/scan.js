@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import sharp from 'sharp';
 import {
-  CROP_SIDE, MIN_FACE_PX, createTracker, cropBox, faceQuality, scaleFaces, sharpness,
+  CROP_SIDE, createTracker, cropBox, faceQuality, lookRate, minFaceFor, scaleFaces, sharpness,
 } from '../../web/src/video/faces.js';
 import { frameAt, probe, readFrames, sha256File } from './ffmpeg.js';
 
@@ -77,10 +77,13 @@ export function parseTime(value) {
  *
  * Options:
  *   from, to   the window to read, in seconds of the file; the whole file by default
- *   fps        looks a second (2 by default, as the browser's longest videos)
+ *   fps        looks a second at an HD frame (2 by default); a smaller frame
+ *              is looked at more often, up to 8 a second (faces.js lookRate),
+ *              unless `exactRate`
  *   maxSide    the size frames are searched at on their longer side: 960 is
  *              quick; 1280 or 1920 finds the smaller faces of a wall camera
- *   minFace    faces narrower than this, in the video's pixels, are counted but not kept
+ *   minFace    faces narrower than this, in the video's pixels, are counted but
+ *              not kept; by default MIN_FACE_PX, or 16 on a small video (faces.js minFaceFor)
  *   scoreMin   the face finder's threshold (Aarakshak's, from the model's card, or the browser's)
  *   outDir     where face pictures go (`faces/t<id>.jpg`)
  *   savePicture(relativePath, jpeg)   writes a face picture; by default into
@@ -101,7 +104,7 @@ export function parseTime(value) {
  * KEEP_PICTURES of them, clearest first.
  */
 export async function scanFile(file, {
-  from = 0, to = null, fps = 2, maxSide = 960, minFace = MIN_FACE_PX, scoreMin, outDir, detector, onProgress, signal,
+  from = 0, to = null, fps = 2, exactRate = false, maxSide = 960, minFace = null, scoreMin, outDir, detector, onProgress, signal,
   savePicture = null, deletePicture = null, idPrefix = '', onCheckpoint = null, checkpointMs = 30000, keepPictures = KEEP_PICTURES,
 } = {}) {
   const info = await probe(file);
@@ -114,6 +117,8 @@ export async function scanFile(file, {
   const detW = Math.max(32, Math.round((width * scale) / 2) * 2);
   const detH = Math.max(32, Math.round((height * scale) / 2) * 2);
   const back = width / detW;
+  const rate = exactRate ? fps : lookRate(fps, detW, detH);
+  const smallest = minFace ?? minFaceFor(width, height);
 
   let save = savePicture;
   if (!save) {
@@ -123,7 +128,7 @@ export async function scanFile(file, {
   const remove = deletePicture || ((relative) => fs.rmSync(path.join(outDir, relative), { force: true }));
   const idOf = (id) => (idPrefix ? `${idPrefix}${id}` : id);
   const fingerprint = sha256File(file);
-  const tracker = createTracker({ maxGap: Math.max(3, (3 / fps)) });
+  const tracker = createTracker({ maxGap: Math.max(3, (3 / rate)) });
   const pictures = new Map(); // track id -> { file, quality, landmarks }: the clearest picture
   const kept = new Map(); // track id -> [{ file, quality, landmarks, time }], clearest first, at most keepPictures
   let saved = 0;
@@ -150,14 +155,14 @@ export async function scanFile(file, {
     }))
     .sort((a, b) => a.time - b.time);
 
-  await readFrames(file, { from: start, to: end, fps, width, height, signal }, async (rgba, t) => {
+  await readFrames(file, { from: start, to: end, fps: rate, width, height, signal }, async (rgba, t) => {
     const det = scale < 1 ? await image(rgba, width, height).resize(detW, detH, { fit: 'fill' }).raw().toBuffer() : rgba;
     const found = scaleFaces(await detector.detect(det, detW, detH, scoreMin ?? undefined), back);
     looks += 1;
     const usable = [];
     for (const face of found) {
       faceCount += 1;
-      if (face.w < minFace) { tooSmall += 1; continue; }
+      if (face.w < smallest) { tooSmall += 1; continue; }
       const inDet = { x: face.x / back, y: face.y / back, w: face.w / back, h: face.h / back };
       usable.push({ ...face, quality: faceQuality(face, faceSharpness(det, detW, detH, inDet)) });
     }
@@ -194,7 +199,7 @@ export async function scanFile(file, {
     ...info,
     sha256: await fingerprint,
     window: { from: start, to: end },
-    settings: { fps, maxSide, minFace, searchedAt: `${detW}x${detH}` },
+    settings: { fps: rate, usualFps: fps, maxSide, minFace: smallest, searchedAt: `${detW}x${detH}` },
     looks,
     facesFound: faceCount,
     facesTooSmall: tooSmall,
