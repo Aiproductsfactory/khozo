@@ -122,6 +122,8 @@ details summary { cursor: pointer; font-weight: 600; margin: 10px 0; }
 .filters label { display: block; font-weight: 600; }
 .filters label > select, .filters label > input, .filters label > .row { margin-top: 4px; }
 .filters .row input { flex: 1; min-width: 0; }
+.filters label.wide { grid-column: span 2; }
+.filters .row input[type=date] { min-width: 160px; }
 .group .hit { margin: 10px 0 0; }
 .group.outside { border-left: 6px solid var(--amber); }
 .together .grid { grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); }

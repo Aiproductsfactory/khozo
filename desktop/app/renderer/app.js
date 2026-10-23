@@ -241,7 +241,7 @@ function renderFilters() {
     <label>${esc(t('open.age'))}<span class="row"><input type="number" min="0" max="120" data-input="f-ageFrom" value="${esc(f.ageFrom)}" placeholder="${esc(t('open.ageFrom'))}" aria-label="${esc(t('open.ageFrom'))}" style="width:90px">
       <span>–</span><input type="number" min="0" max="120" data-input="f-ageTo" value="${esc(f.ageTo)}" placeholder="${esc(t('open.ageTo'))}" aria-label="${esc(t('open.ageTo'))}" style="width:90px"></span></label>
     <label>${esc(t('open.district'))}<input type="text" data-input="f-district" value="${esc(f.district)}"></label>
-    <label>${esc(t('open.missing'))}<span class="row"><input type="date" data-input="f-missingFrom" value="${esc(f.missingFrom)}" aria-label="${esc(t('open.missingFrom'))}">
+    <label class="wide">${esc(t('open.missing'))}<span class="row"><input type="date" data-input="f-missingFrom" value="${esc(f.missingFrom)}" aria-label="${esc(t('open.missingFrom'))}">
       <span>–</span><input type="date" data-input="f-missingTo" value="${esc(f.missingTo)}" aria-label="${esc(t('open.missingTo'))}"></span></label>
   </div>
   <div id="case-count" style="margin-top:10px"></div>`;
