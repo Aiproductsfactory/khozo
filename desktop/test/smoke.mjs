@@ -232,7 +232,7 @@ console.log('Scanning');
   const part = await scanFile(video, { from: 5, to: 10, outDir: path.join(tmp, 'scan-part'), detector, exactRate: true });
   check('only the chosen window is read', part.looks >= 9 && part.looks <= 11 && part.window.from === 5 && part.window.to === 10, `${part.looks} looks`);
   const small = await scanFile(video, { outDir: path.join(tmp, 'scan-small'), detector });
-  check('a small video is looked at more often, with smaller faces kept', small.looks >= 88 && small.looks <= 92 && small.settings.fps === 4.5 && small.settings.minFace === 16, `${small.looks} looks, ${JSON.stringify(small.settings)}`);
+  check('a small video is looked at more often, enlarged, with smaller faces kept', small.looks >= 88 && small.looks <= 92 && small.settings.fps === 4.5 && small.settings.minFace === 12 && small.settings.searchedAt === '1280x720', `${small.looks} looks, ${JSON.stringify(small.settings)}`);
   await detector.close();
 }
 

@@ -12,7 +12,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import sharp from 'sharp';
 import {
-  CROP_SIDE, createTracker, cropBox, faceQuality, lookRate, minFaceFor, scaleFaces, sharpness,
+  CROP_SIDE, SMALL_FACE_SCORE_MIN, SMALL_VIDEO_ENLARGE, createTracker, cropBox, faceQuality, isSmallVideo, lookRate, minFaceFor,
+  scaleFaces, sharpness,
 } from '../../web/src/video/faces.js';
 import { frameAt, probe, readFrames, sha256File } from './ffmpeg.js';
 
@@ -81,7 +82,9 @@ export function parseTime(value) {
  *              is looked at more often, up to 8 a second (faces.js lookRate),
  *              unless `exactRate`
  *   maxSide    the size frames are searched at on their longer side: 960 is
- *              quick; 1280 or 1920 finds the smaller faces of a wall camera
+ *              quick; 1280 or 1920 finds the smaller faces of a wall camera.
+ *              A small video's frames are enlarged instead (faces.js
+ *              SMALL_VIDEO_ENLARGE), and its faces found at Aarakshak's line
  *   minFace    faces narrower than this, in the video's pixels, are counted but
  *              not kept; by default MIN_FACE_PX, or 16 on a small video (faces.js minFaceFor)
  *   scoreMin   the face finder's threshold (Aarakshak's, from the model's card, or the browser's)
@@ -113,12 +116,16 @@ export async function scanFile(file, {
   const start = Math.max(0, Math.min(from || 0, info.duration || from || 0));
   const end = to != null ? Math.min(to, info.duration || to) : info.duration || null;
 
-  const scale = Math.min(1, maxSide / Math.max(width, height));
+  const small = isSmallVideo(width, height);
+  const shrink = Math.min(1, maxSide / Math.max(width, height));
+  const scale = small ? SMALL_VIDEO_ENLARGE : shrink;
   const detW = Math.max(32, Math.round((width * scale) / 2) * 2);
   const detH = Math.max(32, Math.round((height * scale) / 2) * 2);
   const back = width / detW;
-  const rate = exactRate ? fps : lookRate(fps, detW, detH);
+  // The look rate goes by the frame's own size, before any enlarging.
+  const rate = exactRate ? fps : lookRate(fps, Math.round(width * shrink), Math.round(height * shrink));
   const smallest = minFace ?? minFaceFor(width, height);
+  const finderLine = scoreMin ?? (small ? SMALL_FACE_SCORE_MIN : undefined);
 
   let save = savePicture;
   if (!save) {
@@ -156,8 +163,8 @@ export async function scanFile(file, {
     .sort((a, b) => a.time - b.time);
 
   await readFrames(file, { from: start, to: end, fps: rate, width, height, signal }, async (rgba, t) => {
-    const det = scale < 1 ? await image(rgba, width, height).resize(detW, detH, { fit: 'fill' }).raw().toBuffer() : rgba;
-    const found = scaleFaces(await detector.detect(det, detW, detH, scoreMin ?? undefined), back);
+    const det = scale !== 1 ? await image(rgba, width, height).resize(detW, detH, { fit: 'fill' }).raw().toBuffer() : rgba;
+    const found = scaleFaces(await detector.detect(det, detW, detH, finderLine), back);
     looks += 1;
     const usable = [];
     for (const face of found) {
@@ -199,7 +206,7 @@ export async function scanFile(file, {
     ...info,
     sha256: await fingerprint,
     window: { from: start, to: end },
-    settings: { fps: rate, usualFps: fps, maxSide, minFace: smallest, searchedAt: `${detW}x${detH}` },
+    settings: { fps: rate, usualFps: fps, maxSide, minFace: smallest, small, searchedAt: `${detW}x${detH}` },
     looks,
     facesFound: faceCount,
     facesTooSmall: tooSmall,

@@ -14,7 +14,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { formatVideoTime } from '../../web/src/video/faces.js';
-import { FRAME_VERDICTS } from '../../shared/video-search.js';
+import { FRAME_VERDICTS, isSmallVideo } from '../../shared/video-search.js';
 import { sendFaces, sendOpenCaseFaces } from '../scanner/khozo.js';
 import { chooseToSend } from '../scanner/local-match.js';
 import { clockTime, VERDICT_WORDS } from '../scanner/review.js';
@@ -25,6 +25,14 @@ import { safeAddress } from '../scanner/live.js';
 export const SEND_LIMIT_WITHOUT_MODEL = 600;
 /** With the first pass, how many pictures of one person go to Khozo: the one that scored best, then the clearest. */
 export const PICTURES_TO_SEND = 3;
+/**
+ * With the first pass, how many of the closest people in a small video go to
+ * Khozo (10 in any other). There Aarakshak's model on the laptop ranks the
+ * person among the closest but scores them low (an office camera at 352 x 288,
+ * 23 Oct 2026: 0.10 where Rekognition gave 94), so a wider net goes to both of
+ * Khozo's engines.
+ */
+export const SMALL_VIDEO_TOP = 30;
 /**
  * The narrowest face kept, in the video's pixels, with Aarakshak's model on
  * the laptop: 16, the finder's own floor, in every video. The browser keeps
@@ -659,7 +667,9 @@ export function createJobs({
     const before = tracksOf(file).length;
     const started = Date.now();
     const result = await worker.request('scan', {
-      file: file.path, from, to: file.to, fps: job.settings.fps, maxSide: job.settings.maxSide, minFace: job.settings.minFace,
+      // A small video keeps the scanner's own smallest face (faces.js minFaceFor), smaller than SMALL_FACE_PX.
+      file: file.path, from, to: file.to, fps: job.settings.fps, maxSide: job.settings.maxSide,
+      minFace: isSmallVideo(file.width, file.height) ? undefined : job.settings.minFace,
       scoreMin: model?.detectorScore ?? null, detectorPath: finder,
       idPrefix: `s${k}-`, fileDir: fileDir(job.id, index), key, checkpointMs,
     }, (event) => {
@@ -799,7 +809,9 @@ export function createJobs({
     const tracks = tracksOf(file).map((t) => ({ ...t, id: keyOf(index, t.id) }));
     let candidates;
     if (file.scored && Object.keys(job.scores).length) {
-      candidates = chooseToSend(tracks, job.scores, { line: job.settings.line, top: job.settings.top });
+      // In a small video the laptop's own scores are weak (faces.js), so more of the closest go to both of Khozo's engines.
+      const top = isSmallVideo(file.width, file.height) ? Math.max(job.settings.top, SMALL_VIDEO_TOP) : job.settings.top;
+      candidates = chooseToSend(tracks, job.scores, { line: job.settings.line, top });
     } else {
       candidates = [...tracks].sort((a, b) => b.quality - a.quality).slice(0, SEND_LIMIT_WITHOUT_MODEL);
       if (tracks.length > SEND_LIMIT_WITHOUT_MODEL) job.notice = 'send_limit';
@@ -820,7 +832,7 @@ export function createJobs({
           job: jobId ? { jobId, fileKey: index } : null,
           client: getClient(),
           caseId: job.caseId,
-          record: { name: file.name, bytes: file.bytes, duration: file.duration, sha256: file.sha256, tracks, facesTooSmall: file.facesTooSmall },
+          record: { name: file.name, bytes: file.bytes, duration: file.duration, sha256: file.sha256, tracks, facesTooSmall: file.facesTooSmall, small: isSmallVideo(file.width, file.height) },
           tracks: toSend,
           camera: file.camera,
           recordedFrom: file.recordedFrom,

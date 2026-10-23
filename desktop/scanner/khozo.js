@@ -7,7 +7,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { FRAME_VERDICTS, VIDEO_SEARCH_BATCH } from '../../shared/video-search.js';
+import { FRAME_VERDICTS, VIDEO_SEARCH_BATCH, isSmallVideo } from '../../shared/video-search.js';
 import { comparisonCopy } from './compare-copy.js';
 
 export const DESKTOP_VERSION = '0.0.1';
@@ -230,6 +230,8 @@ export async function sendFaces({
     form.append('facesFound', String(record.tracks?.length ?? faces.length));
     form.append('facesTooSmall', String(record.facesTooSmall || 0));
     form.append('times', faces.map(({ track }) => Number(track.time).toFixed(1)).join(','));
+    // Faces from a small video are put to both face engines (shared/match-pipeline.js).
+    form.append('smallVideo', (record.small ?? isSmallVideo(record.width, record.height)) ? '1' : '0');
     return form;
   };
   // One request, waited through Khozo's limit and lost connections.
