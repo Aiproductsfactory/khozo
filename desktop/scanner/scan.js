@@ -71,6 +71,7 @@ export function parseTime(value) {
  *   maxSide    the size frames are searched at on their longer side: 960 is
  *              quick; 1280 or 1920 finds the smaller faces of a wall camera
  *   minFace    faces narrower than this, in the video's pixels, are counted but not kept
+ *   scoreMin   the face finder's threshold (Aarakshak's, from the model's card, or the browser's)
  *   outDir     where face pictures go (`faces/t<id>.jpg`)
  *   detector   from loadDetector()
  *   onProgress({ t, from, to, looks, people })   every few looks
@@ -81,7 +82,7 @@ export function parseTime(value) {
  * its clearest picture and that picture's file.
  */
 export async function scanFile(file, {
-  from = 0, to = null, fps = 2, maxSide = 960, minFace = MIN_FACE_PX, outDir, detector, onProgress, signal,
+  from = 0, to = null, fps = 2, maxSide = 960, minFace = MIN_FACE_PX, scoreMin, outDir, detector, onProgress, signal,
 } = {}) {
   const info = await probe(file);
   const { width, height } = info;
@@ -106,7 +107,7 @@ export async function scanFile(file, {
 
   await readFrames(file, { from: start, to: end, fps, width, height, signal }, async (rgba, t) => {
     const det = scale < 1 ? await image(rgba, width, height).resize(detW, detH, { fit: 'fill' }).raw().toBuffer() : rgba;
-    const found = scaleFaces(await detector.detect(det, detW, detH), back);
+    const found = scaleFaces(await detector.detect(det, detW, detH, scoreMin ?? undefined), back);
     looks += 1;
     const usable = [];
     for (const face of found) {

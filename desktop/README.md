@@ -18,7 +18,7 @@ The scanner reuses the browser's own code: `web/src/video/faces.js` (face boxes,
 ```sh
 cd desktop
 npm install        # once, with internet: FFmpeg, the ONNX runtime and sharp
-npm test           # 38 checks, no real case or face needed
+npm test           # 49 checks, no real case or face needed
 ```
 
 The scanner is a separate package so that the Worker build never downloads FFmpeg.
@@ -68,16 +68,35 @@ Aarakshak recognises faces with ArcFace on a ResNet100 backbone. With **the same
 
 Passers-by's faces then stay on the laptop. Khozo's answer, from Aarakshak's cloud and AWS, is still the one that is recorded.
 
-The model is Aarakshak's and is **not** in this repository. When Aarakshak delivers it, put the `.onnx` file anywhere outside the repository and set `KHOZO_FACE_MODEL` to its path. Beside it, put a card with the same name and `.json` at the end:
+### How the laptop makes the same signatures
+
+Each step follows the way Aarakshak makes a signature, so the laptop's scores are Aarakshak's scores:
+
+1. Find faces with YuNet on the whole picture, at its own size. Khozo's `web/src/video/yunet-2026may.onnx` is the same YuNet network, built to take any picture size.
+2. Take the face with the largest box.
+3. Line it up the way OpenCV's `estimateAffinePartial2D` does with LMEDS, onto the ArcFace five-point template, in 112 x 112. That includes OpenCV's random numbers (`scanner/align.js`, checked against OpenCV's own answers in the tests).
+4. Run the recognition model, then the adapter if the card names one (`scanner/npz.js` reads its `.npz` file).
+5. Score: the cosine of two signatures.
+
+Checked on the demo clip against Aarakshak's own scoring: the largest gap was under 0.002.
+
+### Setting it up
+
+The model files are Aarakshak's and are **not** in this repository; never copy them in (the folder's `.gitignore` refuses `.onnx` files). Write a card outside the repository, with the paths and settings Aarakshak runs in production, and set `KHOZO_FACE_MODEL` to its path:
 
 ```json
-{ "name": "aarakshak-fr", "version": "1.82", "provider": "Aarakshak",
-  "input": { "size": 112, "channels": "rgb", "mean": 127.5, "std": 127.5, "layout": "nchw" } }
+{ "name": "aarakshak-fr", "version": "<model and adapter version>", "provider": "Aarakshak",
+  "model": "<path to the recognition model .onnx>",
+  "adapter": "<path to the adapter .npz>", "fusionBaseWeight": 0,
+  "detectorScore": 0.6,
+  "input": { "size": 112, "channels": "bgr", "mean": 0, "std": 1, "layout": "nchw" } }
 ```
 
-The card's name and version are recorded with every score. The `input` block must say exactly how Aarakshak prepares a face. Faces are lined up with the standard five-point ArcFace template (`scanner/align.js`). If Aarakshak lines faces up differently, change `align.js` to match.
+- **Name and version:** recorded with every score. Change the version whenever Aarakshak's model or adapter changes.
+- **`detector` (optional):** points at a different YuNet file. Leave it out to use Khozo's copy.
+- **With the card set, both tools use these settings:** `scan.mjs` finds faces with the card's threshold, and `compare.mjs` runs the first pass.
 
-**Do not use ArcFace weights from anywhere else.** InsightFace's public ResNet100 weights may be used only for non-commercial research. Their scores would also not match Aarakshak's, even with the same architecture.
+**Do not use ArcFace weights from anywhere else.** InsightFace's public weights may be used only for non-commercial research, and other weights give different scores.
 
 For the case's own signature, the case's photos are read into memory and never saved. The signatures are dropped when the run ends.
 

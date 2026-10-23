@@ -123,11 +123,12 @@ async function main() {
   console.log(`Case ${caseId}: ${report.status}`);
 
   let recognizer = await loadRecognizer({ gpu: Boolean(opts.gpu) });
+  let detector = null;
   let caseSigs = [];
   if (recognizer) {
-    const detector = await loadDetector({ gpu: Boolean(opts.gpu) });
+    // The face finder Aarakshak uses, when the card names it.
+    detector = await loadDetector({ gpu: Boolean(opts.gpu), modelPath: recognizer.detectorPath || undefined });
     caseSigs = await caseSignatures({ client, report, detector, recognizer });
-    await detector.close();
     if (caseSigs.length) {
       run.model = { name: recognizer.name, version: recognizer.version, provider: recognizer.provider, line, top };
       console.log(`Comparing on this laptop first with ${recognizer.name} ${recognizer.version}, using ${caseSigs.length} case photo${caseSigs.length === 1 ? '' : 's'}`);
@@ -150,7 +151,7 @@ async function main() {
       for (const track of record.tracks) {
         if (controller.signal.aborted) break;
         if (fileRun.scores[track.id] == null) {
-          const signature = await trackSignature({ dir: record.outDir, track, recognizer });
+          const signature = await trackSignature({ dir: record.outDir, track, detector, recognizer });
           if (signature) fileRun.scores[track.id] = closeness(signature, caseSigs);
         }
         done += 1;
@@ -205,6 +206,7 @@ async function main() {
   }
   console.log(`\nReview sheet: ${reviewPath}`);
   if (recognizer) await recognizer.close();
+  if (detector) await detector.close();
 }
 
 main().catch((err) => {

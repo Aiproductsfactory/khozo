@@ -23,6 +23,7 @@ import process from 'node:process';
 import { parseArgs } from 'node:util';
 import { formatVideoTime, MIN_FACE_PX } from '../../web/src/video/faces.js';
 import { loadDetector } from '../scanner/detector.js';
+import { cardFromEnv } from '../scanner/recognizer.js';
 import { markedFrame, parseTime, scanFile } from '../scanner/scan.js';
 
 const USAGE = 'Usage: node desktop/bin/scan.mjs <video or folder>... [--out <dir>] [--from 10:00:00] [--to 12:00:00] [--fps 2] [--max-side 960] [--min-face 36] [--gpu] [--frames] [--json]';
@@ -92,7 +93,14 @@ fs.mkdirSync(outDir, { recursive: true });
 const controller = new AbortController();
 process.on('SIGINT', () => { say('Stopping; what was found so far is kept.'); controller.abort(); });
 
-const detector = await loadDetector({ gpu: settings.gpu });
+// With Aarakshak's model card set, faces are found with Aarakshak's own YuNet
+// and threshold, so a face found here is a face Aarakshak would find.
+const card = cardFromEnv();
+if (card?.detectorPath) {
+  settings.detector = `${card.name} ${card.version}`;
+  settings.scoreMin = card.detectorScore ?? undefined;
+}
+const detector = await loadDetector({ gpu: settings.gpu, modelPath: card?.detectorPath || undefined });
 const manifest = { scannedAt: new Date().toISOString(), outDir, settings, files: [] };
 const t0 = Date.now();
 

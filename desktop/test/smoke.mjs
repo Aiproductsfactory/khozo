@@ -25,8 +25,9 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
-import { ARCFACE_POINTS, alignFace, similarityTransform } from '../scanner/align.js';
-import { cosine, loadRecognizer, modelInput, normalise, readModelCard } from '../scanner/recognizer.js';
+import { ARCFACE_POINTS, alignFace, robustSimilarity, similarityTransform } from '../scanner/align.js';
+import { applyAdapter, cosine, fuse, loadAdapter, loadRecognizer, modelInput, normalise, readModelCard } from '../scanner/recognizer.js';
+import { readNpz } from '../scanner/npz.js';
 import { ffmpegPath, probe, readFrames, sha256File } from '../scanner/ffmpeg.js';
 import { loadDetector } from '../scanner/detector.js';
 import { parseTime, scanFile } from '../scanner/scan.js';
@@ -87,6 +88,22 @@ console.log('Lining faces up');
   check('each of the five points is read from where the face had it', lined.length === 112 * 112 * 3 && off.every((d) => d <= 3), off.map((d) => d.toFixed(1)).join(' '));
   const outside = alignFace(pixels, W, H, 3, ARCFACE_POINTS.map(([x, y]) => [x - 300, y - 300]));
   check('what falls outside the picture is black', outside[0] === 0 && outside[1] === 0 && outside[2] === 0);
+
+  // OpenCV's own answers (cv2.estimateAffinePartial2D, LMEDS, OpenCV 4.13),
+  // which Aarakshak lines faces up with: a clean face, the same face with its
+  // nose pushed aside (OpenCV leaves the nose out), and the five points of a
+  // real photograph where OpenCV keeps three of them.
+  const opencv = [
+    ['a clean face', [[151.90704345703125, 174.07113647460938], [236.476318359375, 173.60336303710938], [194.46047973632812, 222.1678466796875], [159.71832275390625, 271.6772155761719], [229.7517547607422, 271.28985595703125]], [0.41666665561671345, -1.775469778366532e-8, -24.999994153989505, -20.833337887047005]],
+    ['a nose pushed aside', [[151.90704345703125, 174.07113647460938], [236.476318359375, 173.60336303710938], [224.46047973632812, 222.1678466796875], [159.71832275390625, 271.6772155761719], [229.7517547607422, 271.28985595703125]], [0.41666665572929934, -1.774752985088035e-8, -24.99999423930228, -20.833338799739252]],
+    ['a photograph whose mouth corners disagree', [[496, 353], [605, 359], [548, 417], [493, 454], [596, 459]], [0.3243495286052236, 0.018292685266638676, -129.2177378963587, -53.69722550230627]],
+  ];
+  for (const [name, points, [a, minusB, tx, ty]] of opencv) {
+    const m = robustSimilarity(points, ARCFACE_POINTS);
+    check(`${name} is lined up exactly as OpenCV lines it up`, near(m.a, a, 1e-9) && near(-m.b, minusB, 1e-9) && near(m.tx, tx, 1e-7) && near(m.ty, ty, 1e-7), JSON.stringify(m));
+  }
+  const lsq = similarityTransform([[496, 353], [605, 359], [548, 417], [493, 454], [596, 459]], ARCFACE_POINTS);
+  check('a plain least-squares fit would line that photograph up differently', Math.abs(lsq.a - 0.3243495286052236) > 0.01);
 }
 
 // ---- The model's card and input ----------------------------------------------------
@@ -107,6 +124,61 @@ console.log('The face model');
   check('a red face reaches a blue-green-red model in its last plane', near(input[0], -1) && near(input[8], 1, 1e-6) && near(input[11], 1, 1e-6));
   check('signatures are compared by their cosine', near(cosine(normalise([1, 0]), normalise([1, 1])), Math.SQRT1_2) && near(cosine([2, 0], [5, 0]), 1));
   check('without a model, nothing is loaded and every face goes to Khozo', (await loadRecognizer({ modelPath: '' })) === null);
+
+  // A card given itself names its model, adapter and face finder, beside it.
+  const cardPath = path.join(tmp, 'aarakshak.json');
+  fs.writeFileSync(cardPath, JSON.stringify({ name: 'aarakshak-fr', version: 'test', model: 'r100.onnx', adapter: 'adapter.npz', fusionBaseWeight: 0, detector: 'yunet.onnx', detectorScore: 0.6, input: { channels: 'bgr', mean: 0, std: 1 } }));
+  const given = readModelCard(cardPath);
+  check('a card names its model, adapter and face finder, beside it', given.modelPath === path.join(tmp, 'r100.onnx') && given.adapterPath === path.join(tmp, 'adapter.npz') && given.detectorPath === path.join(tmp, 'yunet.onnx') && given.detectorScore === 0.6 && given.fusionBaseWeight === 0 && given.mean.join() === '0,0,0');
+  fs.writeFileSync(cardPath, JSON.stringify({ name: 'x', version: '1', model: 'r100.onnx', fusionBaseWeight: 0.5 }));
+  let noAdapter = false;
+  try { readModelCard(cardPath); } catch { noAdapter = true; }
+  check('joining signatures without an adapter is refused', noAdapter);
+}
+
+// ---- Aarakshak's adapter ----------------------------------------------------------
+
+console.log('The adapter');
+{
+  // .npy arrays in a zip, as NumPy's savez writes them (stored, zip64 sizes).
+  const npy = (shape, values) => {
+    let header = `{'descr': '<f4', 'fortran_order': False, 'shape': (${shape.join(', ')}${shape.length === 1 ? ',' : ''}), }`;
+    header += ' '.repeat(63 - ((10 + header.length) % 64)) + '\n';
+    const head = Buffer.alloc(10);
+    head[0] = 0x93; head.write('NUMPY', 1, 'latin1'); head[6] = 1; head[7] = 0; head.writeUInt16LE(header.length, 8);
+    const body = Buffer.alloc(values.length * 4);
+    values.forEach((v, i) => body.writeFloatLE(v, i * 4));
+    return Buffer.concat([head, Buffer.from(header, 'latin1'), body]);
+  };
+  const zip = (files) => {
+    const locals = []; const central = []; let offset = 0;
+    for (const [name, data] of files) {
+      const n = Buffer.from(name);
+      const extra = Buffer.alloc(20); extra.writeUInt16LE(1, 0); extra.writeUInt16LE(16, 2); extra.writeBigUInt64LE(BigInt(data.length), 4); extra.writeBigUInt64LE(BigInt(data.length), 12);
+      const local = Buffer.alloc(30); local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(45, 4); local.writeUInt32LE(0xffffffff, 18); local.writeUInt32LE(0xffffffff, 22); local.writeUInt16LE(n.length, 26); local.writeUInt16LE(extra.length, 28);
+      locals.push(local, n, extra, data);
+      const cextra = Buffer.alloc(20); cextra.writeUInt16LE(1, 0); cextra.writeUInt16LE(16, 2); cextra.writeBigUInt64LE(BigInt(data.length), 4); cextra.writeBigUInt64LE(BigInt(data.length), 12);
+      const entry = Buffer.alloc(46); entry.writeUInt32LE(0x02014b50, 0); entry.writeUInt16LE(45, 4); entry.writeUInt16LE(45, 6); entry.writeUInt32LE(0xffffffff, 20); entry.writeUInt32LE(0xffffffff, 24); entry.writeUInt16LE(n.length, 28); entry.writeUInt16LE(cextra.length, 30); entry.writeUInt32LE(offset, 42);
+      central.push(entry, n, cextra);
+      offset += 30 + n.length + extra.length + data.length;
+    }
+    const dir = Buffer.concat(central);
+    const end = Buffer.alloc(22); end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(files.length, 8); end.writeUInt16LE(files.length, 10); end.writeUInt32LE(dir.length, 12); end.writeUInt32LE(offset, 16);
+    return Buffer.concat([...locals, dir, end]);
+  };
+  const npzPath = path.join(tmp, 'adapter.npz');
+  fs.writeFileSync(npzPath, zip([['weight.npy', npy([3, 3], [1, 0, 0, 0, 1, 0, 0, 0, 1])], ['bias.npy', npy([3], [0, 0, 0.5])]]));
+  const arrays = readNpz(npzPath);
+  check('NumPy’s zip of arrays is read, with zip64 sizes', arrays.weight.shape.join('x') === '3x3' && arrays.weight.data[4] === 1 && arrays.bias.data[2] === 0.5);
+  const adapter = loadAdapter(npzPath, 3);
+  const adapted = applyAdapter(normalise([1, 0, 0]), adapter);
+  check('the adapter is weight times signature plus bias, made length 1', near(adapted[0], 1 / Math.sqrt(1.25)) && near(adapted[2], 0.5 / Math.sqrt(1.25)));
+  let wrongShape = false;
+  try { loadAdapter(npzPath, 512); } catch { wrongShape = true; }
+  check('an adapter of the wrong size is refused', wrongShape);
+  const a = [0.2, 0.9, 0.1]; const b = [0.7, 0.1, 0.4];
+  check('joined with no weight on the plain signature, the score is the adapted one’s', near(cosine(fuse([1, 0, 0], a, 0), fuse([0, 1, 0], b, 0)), cosine(a, b)) && fuse([1, 0, 0], a, 0).length === 6);
+  check('joined half and half, both count', near(cosine(fuse([1, 0, 0], a, 0.5), fuse([1, 0, 0], a, 0.5)), 1));
 }
 
 // ---- Choosing whom to send after the first pass -------------------------------------
