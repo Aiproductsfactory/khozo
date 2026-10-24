@@ -182,6 +182,10 @@ export async function loadRecognizer({ modelPath = process.env.KHOZO_FACE_MODEL,
     executionProviders: gpu ? ['dml', 'cpu'] : ['cpu'],
     graphOptimizationLevel: 'all',
     intraOpNumThreads: Math.max(1, Math.min(4, os.cpus().length - 1)),
+    // Values too small for ordinary floating point slow a processor badly. InsightFace's
+    // models, fed -1 to 1, make many deep inside: treated as zero, antelopev2 ran in half
+    // the time on the same laptop with the same signatures (cosine 1.000000, 24 Oct 2026).
+    extra: { session: { set_denormal_as_zero: '1' } },
   });
   const adapter = card.adapterPath ? loadAdapter(card.adapterPath) : null;
   const input = session.inputNames[0];

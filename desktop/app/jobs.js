@@ -516,6 +516,8 @@ export function createJobs({
       lastTime: track.lastTime,
       clock: clockTime(file.recordedFrom, track.time, { timeStyle: 'medium' }),
       verdict: verdictOf(job, k),
+      // Which of Khozo's engines answered about this face, so a card can say why it was not matched.
+      engines: job.answers[k]?.engines || [],
       closeness: job.scores[k] ?? null,
       quality: track.quality,
       decision: job.decisions[k] || null,

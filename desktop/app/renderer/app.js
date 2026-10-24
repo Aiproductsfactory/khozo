@@ -683,6 +683,14 @@ function decidedText(decision) {
 /** The engines flagged this face ("To look at first"). */
 const flagged = (p) => ['likely', 'possible', 'not_agreed', 'laptop'].includes(p.verdict);
 
+/** Why a face is not among those to look at first: what Khozo's engines did with it. */
+function enginesText(p) {
+  if (p.verdict === 'unlikely') return t((p.engines || []).includes('rekognition') ? 'engines.unlikelyBoth' : 'engines.unlikelyOne');
+  if (p.verdict === 'no_face') return t('engines.noFace');
+  if (p.verdict === 'no_answer') return t('engines.noAnswer');
+  return t('engines.notSent');
+}
+
 /** The officer's two buttons for a face, or what they decided. */
 function decisionBlock(p) {
   const decision = p.decision;
@@ -704,6 +712,7 @@ function personCard(job, p) {
     </div>
     <div style="flex:1">
       <div class="verdict">${esc(flagged(p) ? verdictWords(p.verdict) : t('verdict.notMatched'))}</div>
+      ${flagged(p) ? '' : `<p class="small quiet">${esc(enginesText(p))}</p>`}
       <p>${esc(t('person.seen', { camera: p.camera, when }))}</p>
       ${p.closeness != null ? `<details class="small quiet"><summary>${esc(t('person.details'))}</summary>${esc(t('person.closeness', { score: p.closeness.toFixed(2) }))}</details>` : ''}
       <div class="row" style="margin-top:10px">
@@ -833,7 +842,7 @@ async function openPerson(key) {
         <figure><img src="${esc(p.picture)}" alt=""><figcaption>${esc(t('person.videoFace'))}</figcaption></figure>
       </div>
     </div>
-    ${S.job.mode === 'open_cases' ? '' : `<div id="clip-decide" data-key="${esc(key)}">${flagged(p) ? '' : `<p class="small quiet">${esc(t('player.notMatched'))}</p>`}${decisionBlock(p)}</div>`}
+    ${S.job.mode === 'open_cases' ? '' : `<div id="clip-decide" data-key="${esc(key)}">${flagged(p) ? '' : `<p class="small quiet">${esc(t('player.notMatched'))} ${esc(enginesText(p))}</p>`}${decisionBlock(p)}</div>`}
   </div></div>`;
   const clip = await k.clip({ id: S.job.id, key });
   const note = document.getElementById('clip-note');
