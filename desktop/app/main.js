@@ -46,13 +46,13 @@ function log(message) {
 
 // ---- the face model ------------------------------------------------------------
 
-/** Aarakshak's model, when it was installed with the app (resources/model) or named by KHOZO_FACE_MODEL. */
+/** The face model, when it was installed with the app (resources/model) or named by KHOZO_FACE_MODEL: Aarakshak's, or another whose card says how to run it. */
 function findModel() {
   const card = [path.join(resources, 'model', 'card.json'), process.env.KHOZO_FACE_MODEL].find((p) => p && fs.existsSync(p));
   if (!card) return null;
   try {
     const c = readModelCard(card);
-    return { card, name: c.name, version: c.version, provider: c.provider, detectorPath: c.detectorPath || null, detectorScore: c.detectorScore };
+    return { card, name: c.name, version: c.version, provider: c.provider, detectorPath: c.detectorPath || null, detectorScore: c.detectorScore, lines: c.lines || null };
   } catch (err) {
     log(`Face model not used: ${err.message}`);
     return null;
@@ -323,7 +323,7 @@ function registerBridge() {
     user: session?.user || null,
     canCheck: Boolean(session && VIDEO_ROLES.includes(session.user.role)),
     // Officers see whose model it is, not its internal version (that is in the log).
-    model: model ? { label: model.provider || 'Aarakshak' } : null,
+    model: model ? { label: model.provider || model.name } : null,
     language: settings.language,
     update: updates?.view() || null,
     policy: session ? policy : {},
@@ -451,7 +451,7 @@ function registerBridge() {
    */
   async function createLiveWatch(j, caseId, live) {
     if (!policy.liveWatch) throw new Error('Watching a live camera is not switched on in Khozo.');
-    if (!model) throw new Error('Watching a live camera needs Aarakshak\'s face model on this laptop.');
+    if (!model) throw new Error('Watching a live camera needs a face model on this laptop.');
     const report = await client.getCase(caseId);
     if (!canSearchCase(report)) throw new Error('This case cannot be checked: it is found, closed, or still waiting to be verified.');
     const camera = String(live.camera || '').trim().slice(0, 200);

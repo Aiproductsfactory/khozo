@@ -6,7 +6,7 @@
 // person seen is searched among the open cases on Khozo.
 //
 // A job reads each video in turn (the scan worker), compares everyone seen
-// with the case on the laptop when Aarakshak's model is here, and sends the
+// with the case on the laptop when a face model is here, and sends the
 // closest to Khozo while the next video is read. Everything is saved as it
 // goes, encrypted (secure-store.js): a job stopped by the officer, a crash or
 // a power cut carries on from its last saved point.
@@ -21,20 +21,20 @@ import { clockTime, VERDICT_WORDS } from '../scanner/review.js';
 import { parseTime } from '../scanner/scan.js';
 import { safeAddress } from '../scanner/live.js';
 
-/** Without Aarakshak's model on the laptop, at most this many people a video are sent, clearest first. */
+/** Without a face model on the laptop, at most this many people a video are sent, clearest first. */
 export const SEND_LIMIT_WITHOUT_MODEL = 600;
 /** With the first pass, how many pictures of one person go to Khozo: the one that scored best, then the clearest. */
 export const PICTURES_TO_SEND = 3;
 /**
  * With the first pass, how many of the closest people in a small video go to
- * Khozo (10 in any other). There Aarakshak's model on the laptop ranks the
+ * Khozo (10 in any other). There the face model on the laptop ranks the
  * person among the closest but scores them low (an office camera at 352 x 288,
  * 23 Oct 2026: 0.10 where Rekognition gave 94), so a wider net goes to both of
  * Khozo's engines.
  */
 export const SMALL_VIDEO_TOP = 30;
 /**
- * The narrowest face kept, in the video's pixels, with Aarakshak's model on
+ * The narrowest face kept, in the video's pixels, with a face model on
  * the laptop: 16, the finder's own floor, in every video. The browser keeps
  * 36 (MIN_FACE_PX) except in a small video, because every face it keeps is
  * sent; here the first pass sends only the closest few, and with five
@@ -136,7 +136,8 @@ const sleep = (ms, signal) => new Promise((resolve) => {
  *   key            the same key, handed to the scan worker
  *   startWorker()  -> { request(type, task, onEvent) -> Promise, kill() }
  *   getClient()    -> the signed-in Khozo client
- *   model          { card, detectorPath, detectorScore, name, version } or null
+ *   model          { card, detectorPath, detectorScore, name, version, lines } or null;
+ *                  `lines` (recognizer.js) are the model's own score lines, else Aarakshak's
  *   detectorPath   the YuNet file to find faces with (the app's own copy)
  *   officer        { id, name }
  *   appVersion     recorded with the check on Khozo
@@ -1124,14 +1125,15 @@ export function createJobs({
         status: 'queued',
         window,
         // No case on the laptop for a check against open cases, so no first pass here.
-        settings: { fps: 2, maxSide: 960, line: 0.25, top: 10, firstPass: Boolean(model?.card) && !openCases, minFace: model?.card ? SMALL_FACE_PX : undefined, ...settings },
+        settings: { fps: 2, maxSide: 960, line: model?.lines?.send ?? 0.25, top: 10, firstPass: Boolean(model?.card) && !openCases, minFace: model?.card ? SMALL_FACE_PX : undefined, ...settings },
         // Where Khozo allows it (shared/desktop-policy.js laptopAnswers): the
         // case's signatures kept encrypted for the check, and a face close on
         // this laptop shown while Khozo has not answered.
         ...(() => {
           const policy = getPolicy() || {};
           const allowed = Boolean(policy.laptopAnswers && model?.card && !openCases);
-          return allowed ? { keepsTemplate: true, laptopAnswers: { line: Number(policy.laptopLine) || 0.35 } } : { keepsTemplate: false, laptopAnswers: null };
+          // Khozo's laptop line is on Aarakshak's scale; a card for another model carries its own.
+          return allowed ? { keepsTemplate: true, laptopAnswers: { line: model?.lines?.laptop ?? (Number(policy.laptopLine) || 0.35) } } : { keepsTemplate: false, laptopAnswers: null };
         })(),
         // A live camera (spec scenario 11): its address stays in this encrypted record and never goes to Khozo.
         live: live ? { address: live.address, until: live.until, startedAt: live.startedAt, stalled: null } : null,

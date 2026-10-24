@@ -147,18 +147,20 @@ node bin/compare.mjs D:/scans/case-123 --case r_AbCdEf12 --camera "Kalupur railw
 
 **The review sheet.** `review-<case>.html` shows the faces to look at first, then everyone seen in slices of 15 minutes.
 
-## The first pass with Aarakshak's model
+## The first pass with a face model on the laptop
 
-Aarakshak recognises faces with ArcFace on a ResNet100 backbone. With **the same model and the same weights** on the laptop, everyone seen is compared with the case on the laptop first, and only the closest people are sent to Khozo:
+With a face model on the laptop, everyone seen is compared with the case on the laptop first, and only the closest people are sent to Khozo:
 
-- everyone at or above `--line` (0.25 by default, below Aarakshak's match line of 0.35);
-- the `--top` closest (10 by default), whatever their score.
+- everyone at or above `--line` (0.25 by default, below Aarakshak's match line of 0.35; a model's card may set its own `lines.send`);
+- the `--top` closest (10 by default, 30 in a small video), whatever their score.
 
 Passers-by's faces then stay on the laptop. Khozo's answer, from Aarakshak's cloud and AWS, is still the one that is recorded.
 
-### How the laptop makes the same signatures
+The model is whatever the card names. It can be Aarakshak's own model, or a stronger one used under a research licence: on an office camera with faces 12 to 40 px wide (23 October 2026, four volunteers), InsightFace's ArcFace models ranked the right person first for all four cases where Aarakshak's model did for three, with wider gaps to strangers. A model other than Aarakshak's scores on its own scale, so its card gives its own lines, and the laptop's scores are then not Aarakshak's.
 
-Each step follows the way Aarakshak makes a signature, so the laptop's scores are Aarakshak's scores:
+### How the laptop makes the same signatures as Aarakshak
+
+With Aarakshak's card, each step follows the way Aarakshak makes a signature, so the laptop's scores are Aarakshak's scores:
 
 1. Find faces with YuNet on the whole picture, at its own size. Khozo's `web/src/video/yunet-2026may.onnx` is the same YuNet network, built to take any picture size.
 2. Take the face with the largest box.
@@ -170,7 +172,7 @@ Checked on the demo clip against Aarakshak's own scoring: the largest gap was un
 
 ### Setting it up
 
-The model files are Aarakshak's and are **not** in this repository; never copy them in (the folder's `.gitignore` refuses `.onnx` files). Write a card outside the repository, with the paths and settings Aarakshak runs in production, and set `KHOZO_FACE_MODEL` to its path:
+Model files are **not** in this repository; never copy them in (the folder's `.gitignore` refuses `.onnx` files). Write a card outside the repository and set `KHOZO_FACE_MODEL` to its path. Aarakshak's card, with the paths and settings Aarakshak runs in production:
 
 ```json
 { "name": "aarakshak-fr", "version": "<model and adapter version>", "provider": "Aarakshak",
@@ -180,11 +182,21 @@ The model files are Aarakshak's and are **not** in this repository; never copy t
   "input": { "size": 112, "channels": "bgr", "mean": 0, "std": 1, "layout": "nchw" } }
 ```
 
-- **Name and version:** recorded with every score. Change the version whenever Aarakshak's model or adapter changes.
+A card for an InsightFace ArcFace model (no adapter; RGB, 127.5 mean and scale), with its own lines:
+
+```json
+{ "name": "insightface-antelopev2-r100", "version": "antelopev2 glintr100", "provider": "InsightFace, non-commercial research licence",
+  "model": "<path to glintr100.onnx>", "detectorScore": 0.6,
+  "lines": { "send": 0.3, "laptop": 0.45 },
+  "input": { "size": 112, "channels": "rgb", "mean": 127.5, "std": 127.5, "layout": "nchw" } }
+```
+
+- **Name, version and provider:** recorded with every score, and the provider is shown in the app. Change the version whenever the model or adapter changes.
+- **`lines` (optional):** the model's own score lines: `send` for the first pass, `laptop` for the laptop's own answer when Khozo has not answered. Without them the app uses Aarakshak's (0.25 and Khozo's laptop line, 0.35).
 - **`detector` (optional):** points at a different YuNet file. Leave it out to use Khozo's copy.
 - **With the card set, both tools use these settings:** `scan.mjs` finds faces with the card's threshold, and `compare.mjs` runs the first pass.
 
-**Do not use ArcFace weights from anywhere else.** InsightFace's public weights may be used only for non-commercial research, and other weights give different scores.
+**Licences.** InsightFace's pretrained weights (buffalo_l, antelopev2) may be used for **non-commercial research only**. An installer holding one is for the research programme, given out privately, and never for a commercial deployment. Weights from anywhere else give different scores: measure before changing the card.
 
 For the case's own signature, the case's photos are read into memory and never saved. The signatures are dropped when the run ends.
 

@@ -29,7 +29,7 @@ const numberIn = (value, fallback, lo, hi) => {
 
 /** The longest a live watch may run before it must be started again, unless the settings say otherwise. */
 export const LIVE_WATCH_HOURS = 12;
-/** Aarakshak's own match line: the laptop calls a face close at or above it. */
+/** Aarakshak's own match line: the laptop calls a face close at or above it. A laptop running another model uses its card's own line (desktop/scanner/recognizer.js). */
 export const LAPTOP_LINE = 0.35;
 /** After a live watch's end, faces still on their way are taken for this long. */
 export const LIVE_GRACE_MS = 10 * 60 * 1000;

@@ -32,6 +32,7 @@ const three = (value, fallback) => {
  *     "model": "recognition.onnx",
  *     "adapter": "adapter.npz", "fusionBaseWeight": 0,
  *     "detector": "yunet.onnx", "detectorScore": 0.6,
+ *     "lines": { "send": 0.25, "laptop": 0.35 },     (optional: score lines on this model's own scale)
  *     "input": { "size": 112, "channels": "bgr", "mean": 0, "std": 1, "layout": "nchw" } }
  *
  * Paths are relative to the card. `model` is needed only when the card is
@@ -44,6 +45,26 @@ const three = (value, fallback) => {
  * and version are required: a score is no use later without knowing which
  * model made it.
  */
+/**
+ * A card's score lines, on the model's own scale, or null: `send`, the
+ * closeness at which the first pass sends a face to Khozo whatever its rank,
+ * and `laptop`, at which the laptop calls a face close when Khozo has not
+ * answered. Aarakshak's lines are the app's defaults; a card for a model that
+ * scores on another scale gives its own.
+ */
+function linesOf(lines, cardPath) {
+  if (lines == null) return null;
+  if (typeof lines !== 'object') throw new Error(`"lines" must give send and laptop between 0 and 1 (${cardPath})`);
+  const out = {};
+  for (const key of ['send', 'laptop']) {
+    if (lines[key] == null) continue;
+    const n = Number(lines[key]);
+    if (!(n > 0 && n < 1)) throw new Error(`lines.${key} must be between 0 and 1 (${cardPath})`);
+    out[key] = n;
+  }
+  return out;
+}
+
 export function readModelCard(file) {
   const given = /\.json$/i.test(file);
   const cardPath = given ? file : `${file.replace(/\.onnx$/i, '')}.json`;
@@ -70,6 +91,7 @@ export function readModelCard(file) {
     fusionBaseWeight: fusion,
     detectorPath: near(card.detector),
     detectorScore: card.detectorScore == null ? null : Number(card.detectorScore),
+    lines: linesOf(card.lines, cardPath),
     size: Number(input.size) || 112,
     channels,
     layout,

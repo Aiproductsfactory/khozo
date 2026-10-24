@@ -130,6 +130,15 @@ console.log('The face model');
   fs.writeFileSync(cardPath, JSON.stringify({ name: 'aarakshak-fr', version: 'test', model: 'r100.onnx', adapter: 'adapter.npz', fusionBaseWeight: 0, detector: 'yunet.onnx', detectorScore: 0.6, input: { channels: 'bgr', mean: 0, std: 1 } }));
   const given = readModelCard(cardPath);
   check('a card names its model, adapter and face finder, beside it', given.modelPath === path.join(tmp, 'r100.onnx') && given.adapterPath === path.join(tmp, 'adapter.npz') && given.detectorPath === path.join(tmp, 'yunet.onnx') && given.detectorScore === 0.6 && given.fusionBaseWeight === 0 && given.mean.join() === '0,0,0');
+  check('a card without lines leaves the app its defaults', given.lines === null);
+  // Another model scores on its own scale: its card carries its own lines.
+  fs.writeFileSync(cardPath, JSON.stringify({ name: 'other', version: '1', model: 'r50.onnx', lines: { send: 0.3, laptop: 0.45 } }));
+  const other = readModelCard(cardPath);
+  check('a card may give its own send and laptop lines', other.lines?.send === 0.3 && other.lines?.laptop === 0.45 && other.mean.join() === '127.5,127.5,127.5');
+  fs.writeFileSync(cardPath, JSON.stringify({ name: 'other', version: '1', model: 'r50.onnx', lines: { laptop: 1.5 } }));
+  let badLine = false;
+  try { readModelCard(cardPath); } catch { badLine = true; }
+  check('a line outside 0 to 1 is refused', badLine);
   fs.writeFileSync(cardPath, JSON.stringify({ name: 'x', version: '1', model: 'r100.onnx', fusionBaseWeight: 0.5 }));
   let noAdapter = false;
   try { readModelCard(cardPath); } catch { noAdapter = true; }

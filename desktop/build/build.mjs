@@ -6,7 +6,7 @@
  *                                          with the code they share with khozo.org
  *   dist/preload.cjs, dist/renderer/       the bridge and the screens
  *   build/resources/yunet.onnx            Khozo's face finder (the same network Aarakshak uses)
- *   build/resources/model/                Aarakshak's model, only when KHOZO_FACE_MODEL names its card
+ *   build/resources/model/                the face model, only when KHOZO_FACE_MODEL names its card
  *
  *   node build/build.mjs            (KHOZO_FACE_MODEL=<card.json> to include the model)
  *
@@ -73,6 +73,7 @@ if (process.env.KHOZO_FACE_MODEL) {
     ...(card.adapterPath ? { adapter: 'adapter.npz' } : {}),
     ...(card.fusionBaseWeight != null ? { fusionBaseWeight: card.fusionBaseWeight } : {}),
     ...(card.detectorScore != null ? { detectorScore: card.detectorScore } : {}),
+    ...(card.lines ? { lines: card.lines } : {}),
     input: { size: card.size, channels: card.channels, mean: card.mean, std: card.std, layout: card.layout },
   }, null, 2));
   console.log(`Face model included: ${card.name} ${card.version}`);

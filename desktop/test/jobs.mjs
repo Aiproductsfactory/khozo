@@ -626,7 +626,7 @@ console.log('Answers on the laptop when Khozo has not answered');
   const plain = createJobs({ root: plainRoot, files, key, startWorker, getClient: () => client, officer, getPolicy: () => ({ laptopAnswers: true, laptopLine: 0.4 }) });
   const id = plain.create({ report: { id: 'r_test', childName: 'Test Person' }, window: { mode: 'video', from: '1:00:00' }, files: [{ path: video, name: 'test.mp4', bytes: 1, duration: 40, width: 640, height: 360, camera: 'Test camera' }] });
   await untilDone(plain, id);
-  check('without Aarakshak\'s model on the laptop there are no laptop answers, whatever Khozo allows', plain.get(id).keepsTemplate === false && plain.get(id).laptopAnswers === null);
+  check('without a face model on the laptop there are no laptop answers, whatever Khozo allows', plain.get(id).keepsTemplate === false && plain.get(id).laptopAnswers === null);
   check('a stream address shows without its password', safeAddress('rtsp://admin:secret@192.168.1.64:554/ch1') === 'rtsp://***@192.168.1.64:554/ch1' && isStreamAddress('rtsp://cam/1') && !isStreamAddress('C:\\video.mp4'));
 }
 
@@ -635,7 +635,7 @@ if (process.env.KHOZO_SMOKE_VIDEO && process.env.KHOZO_FACE_MODEL) {
   const clip = process.env.KHOZO_SMOKE_VIDEO;
   const card = process.env.KHOZO_FACE_MODEL;
   const c = readModelCard(card);
-  const model = { card, name: c.name, version: c.version, provider: c.provider, detectorPath: c.detectorPath || null, detectorScore: c.detectorScore };
+  const model = { card, name: c.name, version: c.version, provider: c.provider, detectorPath: c.detectorPath || null, detectorScore: c.detectorScore, lines: c.lines || null };
   // The case photo: the clearest person in the clip, found by reading it once.
   const scanDir = path.join(tmp, 'live-scan');
   const detector = await loadDetector({ modelPath: model.detectorPath || undefined });
@@ -643,6 +643,19 @@ if (process.env.KHOZO_SMOKE_VIDEO && process.env.KHOZO_FACE_MODEL) {
   await detector.close();
   const best = [...record.tracks].sort((a, b) => b.quality - a.quality)[0];
   const casePhoto = fs.readFileSync(path.join(scanDir, best.picture));
+
+  // A model that scores on its own scale: its card's lines are the first pass's and the laptop's.
+  {
+    const k = crypto.randomBytes(32);
+    const files = secureFiles(k);
+    const client = fakeClient();
+    client.photo = async () => casePhoto;
+    const own = createJobs({ root: path.join(tmp, 'jobs-lines'), files, key: k, startWorker, getClient: () => client, officer: { id: 'u1', name: 'PSI Test' }, model: { ...model, lines: { send: 0.3, laptop: 0.45 } }, getPolicy: () => ({ laptopAnswers: true, laptopLine: 0.35 }) });
+    const id = own.create({ report: { id: 'r_test', childName: 'Test Person' }, files: [{ path: clip, name: path.basename(clip), bytes: fs.statSync(clip).size, duration: 24, width: 1280, height: 720, camera: 'Test camera' }] });
+    await untilDone(own, id);
+    const start = client.calls.started.find((x) => x.body.jobKey === id);
+    check('a model card\'s own lines are used for the first pass and for the laptop\'s answers', Number(start?.body.firstPassLine) === 0.3 && own.get(id).laptopAnswers?.line === 0.45, JSON.stringify({ line: start?.body.firstPassLine, laptop: own.get(id).laptopAnswers }));
+  }
 
   const runWatch = async ({ name, policy, goOffline = false }) => {
     const key = crypto.randomBytes(32);
