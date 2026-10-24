@@ -666,20 +666,36 @@ function renderGroups(job) {
       </section>`)).join('');
 }
 
-function personCard(job, p) {
-  const decision = p.decision;
-  let decided = '';
+/** What the officer decided about a face, and whether Khozo has it yet. */
+function decidedText(decision) {
   if (decision?.decision === 'same') {
-    decided = decision.saved === false && !decision.error
+    return decision.saved === false && !decision.error
       ? `<p class="quiet" role="status">${esc(t('person.sending'))}</p>`
       : decision.saved === false && decision.offline
         ? `<p class="quiet" role="status">${esc(t('person.waitingToSend'))}</p>`
         : decision.saved === false
           ? `<p class="error">${esc(t('person.addFailed', { error: decision.error }))}</p>`
         : `<p class="decided same">✓ ${esc(t(decision.via === 'note' ? 'person.added' : 'person.sighting'))}</p>`;
-  } else if (decision?.decision === 'not') {
-    decided = `<p class="decided not">${esc(t('person.markedNot'))}</p>`;
   }
+  return decision?.decision === 'not' ? `<p class="decided not">${esc(t('person.markedNot'))}</p>` : '';
+}
+
+/** The engines flagged this face ("To look at first"). */
+const flagged = (p) => ['likely', 'possible', 'not_agreed', 'laptop'].includes(p.verdict);
+
+/** The officer's two buttons for a face, or what they decided. */
+function decisionBlock(p) {
+  const decision = p.decision;
+  const decided = decidedText(decision);
+  return `<div class="row" style="margin-top:10px">
+      ${decision?.decision === 'same' && decision.saved !== false ? '' : `<button class="btn green" data-act="same" data-key="${esc(p.key)}">${esc(t(flagged(p) ? 'person.same' : 'person.sendForReview'))}</button>`}
+      ${decision?.decision ? '' : `<button class="btn" data-act="not" data-key="${esc(p.key)}">${esc(t('person.not'))}</button>`}
+    </div>${decided}`;
+}
+
+function personCard(job, p) {
+  const decision = p.decision;
+  const decided = decidedText(decision);
   const when = p.clock ? `${p.clock} (${t('person.into', { t: videoTime(p.time) })})` : t('person.into', { t: videoTime(p.time) });
   return `<article class="hit ${esc(p.verdict)}">
     <div class="pair">
@@ -687,13 +703,13 @@ function personCard(job, p) {
       <figure><img src="${esc(p.picture)}" alt="" loading="lazy"><figcaption>${esc(t('person.videoFace'))}</figcaption></figure>
     </div>
     <div style="flex:1">
-      <div class="verdict">${esc(verdictWords(p.verdict))}</div>
+      <div class="verdict">${esc(flagged(p) ? verdictWords(p.verdict) : t('verdict.notMatched'))}</div>
       <p>${esc(t('person.seen', { camera: p.camera, when }))}</p>
       ${p.closeness != null ? `<details class="small quiet"><summary>${esc(t('person.details'))}</summary>${esc(t('person.closeness', { score: p.closeness.toFixed(2) }))}</details>` : ''}
       <div class="row" style="margin-top:10px">
         ${p.live ? '' : `<button class="btn primary" data-act="play" data-key="${esc(p.key)}">▶ ${esc(t('person.play'))}</button>`}
         <button class="btn" data-act="frame" data-key="${esc(p.key)}">${esc(t('person.frame'))}</button>
-        ${decision?.decision === 'same' && decision.saved !== false ? '' : `<button class="btn green" data-act="same" data-key="${esc(p.key)}">${esc(t('person.same'))}</button>`}
+        ${decision?.decision === 'same' && decision.saved !== false ? '' : `<button class="btn green" data-act="same" data-key="${esc(p.key)}">${esc(t(flagged(p) ? 'person.same' : 'person.sendForReview'))}</button>`}
         ${decision?.decision ? '' : `<button class="btn" data-act="not" data-key="${esc(p.key)}">${esc(t('person.not'))}</button>`}
       </div>
       ${decided}
@@ -704,10 +720,15 @@ function personCard(job, p) {
 
 function renderFirst(job) {
   if (job.mode === 'open_cases') return renderGroups(job);
-  if (job.toCheck.length) return job.toCheck.map((p) => personCard(job, p)).join('');
   const finished = job.status === 'done';
+  // The closest faces the engines did not match, for the officer's own eyes, once the check is done.
+  const closest = finished && job.closest?.length
+    ? `<h3>${esc(t('job.closestTitle'))}</h3><p class="small quiet">${esc(t('job.closestNote'))}</p>${job.closest.map((p) => personCard(job, p)).join('')}`
+    : '';
+  if (job.toCheck.length) return job.toCheck.map((p) => personCard(job, p)).join('') + closest;
   // Scenario 8: no close face, perhaps an old photo or a poor camera. Everyone seen is the way through.
   return `<p class="quiet">${esc(finished ? t('job.noneFound') : t('job.noneYet'))}</p>
+    ${closest}
     ${finished ? `<p><button class="btn" data-act="tab" data-tab="everyone">${esc(t('job.seeEveryone'))}</button></p>` : ''}`;
 }
 
@@ -812,6 +833,7 @@ async function openPerson(key) {
         <figure><img src="${esc(p.picture)}" alt=""><figcaption>${esc(t('person.videoFace'))}</figcaption></figure>
       </div>
     </div>
+    ${S.job.mode === 'open_cases' ? '' : `<div id="clip-decide" data-key="${esc(key)}">${flagged(p) ? '' : `<p class="small quiet">${esc(t('player.notMatched'))}</p>`}${decisionBlock(p)}</div>`}
   </div></div>`;
   const clip = await k.clip({ id: S.job.id, key });
   const note = document.getElementById('clip-note');
@@ -822,6 +844,13 @@ async function openPerson(key) {
   }
   note.textContent = t('player.at', { t: videoTime(clip.at) });
   document.getElementById('clip-box').innerHTML = `<video src="${esc(clip.url)}" controls autoplay muted playsinline></video>`;
+}
+
+/** The clip window's buttons, after the officer decided there. */
+function refreshClipDecision() {
+  const box = document.getElementById('clip-decide');
+  const p = box && personByKey(box.dataset.key);
+  if (p) box.innerHTML = decisionBlock(p);
 }
 
 function openFrame(key) {
@@ -961,17 +990,20 @@ const actions = {
   async play(el) { await openPerson(el.dataset.key); },
   frame(el) { openFrame(el.dataset.key); },
   async same(el) {
-    if (!window.confirm(t('person.sameConfirm'))) return;
+    const p = personByKey(el.dataset.key);
+    if (!window.confirm(t(p && !flagged(p) ? 'person.sendConfirm' : 'person.sameConfirm'))) return;
     el.disabled = true;
     await k.decide({ id: S.job.id, key: el.dataset.key, decision: 'same' });
     S.job = await k.getJob(S.job.id);
     renderJob(false);
+    refreshClipDecision();
   },
   async not(el) {
     el.disabled = true;
     await k.decide({ id: S.job.id, key: el.dataset.key, decision: 'not' });
     S.job = await k.getJob(S.job.id);
     renderJob(false);
+    refreshClipDecision();
   },
   'close-modal'(el, e) {
     if (e.target !== el && el.classList.contains('modal')) return;

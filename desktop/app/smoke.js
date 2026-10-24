@@ -73,7 +73,8 @@ export async function runSmoke({ win, out, signIn, jobs, getCase, probe, log }) 
       await run(`window.__khozo.showJob(${JSON.stringify(id)})`);
       await shot('05-results');
       const shown = await run("({ chip: document.getElementById('job-chip')?.textContent.trim(), first: document.getElementById('tab-first')?.textContent, cards: document.querySelectorAll('.hit').length })");
-      step('the results page shows the finished check and its faces', /Finished/.test(shown.chip || '') && (shown.first || '').includes(`(${job.toCheck.length})`) && shown.cards === job.toCheck.length, JSON.stringify(shown));
+      // The cards: the faces to look at first, then the closest faces the engines did not match.
+      step('the results page shows the finished check and its faces', /Finished/.test(shown.chip || '') && (shown.first || '').includes(`(${job.toCheck.length})`) && shown.cards === job.toCheck.length + (job.closest || []).length, JSON.stringify(shown));
       await pictures('results');
       await run("window.__khozo.tab('everyone')");
       await shot('06-everyone');
@@ -92,6 +93,20 @@ export async function runSmoke({ win, out, signIn, jobs, getCase, probe, log }) 
         await shot('08-frame');
         const frame = await run("(() => { const i = document.querySelector('#frame-img'); return i ? { done: i.complete, w: i.naturalWidth } : null; })()");
         step('the full picture shows', Boolean(frame && frame.w > 0), JSON.stringify(frame));
+        await run('window.__khozo.closePerson()');
+      }
+      // The closest faces the engines did not match: shown, and each can be sent for review from its clip.
+      report.job.closest = (job.closest || []).map((p) => ({ key: p.key, verdict: p.verdict, closeness: p.closeness, time: p.time }));
+      const near = job.closest?.[0];
+      if (near) {
+        const listed = await run("document.querySelectorAll('.hit').length");
+        step('the closest faces the engines did not match are listed too', listed === job.toCheck.length + job.closest.length, `${listed} cards`);
+        await run(`window.__khozo.openPerson(${JSON.stringify(near.key)})`);
+        await wait(4000);
+        await shot('09-closest-clip');
+        const buttons = await run("[...document.querySelectorAll('#clip-decide button')].map((b) => b.textContent.trim())");
+        step('a face the engines did not match can be sent for review from its clip', buttons.some((b) => /send for review/i.test(b)) && buttons.some((b) => /Not this person/.test(b)), JSON.stringify(buttons));
+        await run('window.__khozo.closePerson()');
       }
       if (process.env.KHOZO_SMOKE_KEEP !== '1') jobs().remove(id);
     }

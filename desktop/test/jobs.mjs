@@ -611,6 +611,9 @@ console.log('Answers on the laptop when Khozo has not answered');
   files.writeJson(path.join(root, 'job_laptop', 'job.bin'), kept);
   const after = createJobs({ root, files, key, startWorker, getClient: () => client, officer }).get('job_laptop');
   check('Khozo\'s answer takes the laptop\'s place', after.toCheck.length === 0 && after.counts.laptop === 0);
+  check('the faces the engines did not match are still shown, closest first, for the officer to look at',
+    after.closest.map((p) => p.key).join() === '0:s0-1,0:s0-2' && after.closest.every((p) => !['likely', 'possible', 'not_agreed', 'laptop'].includes(p.verdict)),
+    JSON.stringify(after.closest.map((p) => [p.key, p.verdict, p.closeness])));
   const decided = await jobs.decide('job_laptop', '0:s0-1', 'not');
   const start = client.calls.started.find((c) => c.body.jobKey === 'job_laptop');
   check('Khozo is told the laptop keeps the case\'s signatures for the check', start?.body.keepsTemplate === 'yes' && decided.saved === true);

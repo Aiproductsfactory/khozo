@@ -53,6 +53,12 @@ const TEMPLATE_FILE = 'case.bin';
 const OPEN_VERDICTS = ['likely', 'possible', 'not_agreed'];
 /** "Look at these first", in order: Khozo's answers, then a face close on this laptop that Khozo has not answered yet. */
 const FIRST_ORDER = ['likely', 'possible', 'not_agreed', 'laptop'];
+/**
+ * How many of the faces closest to the case on this laptop are shown for the
+ * officer to look at when the face engines did not match them: an officer
+ * can know a person the engines miss, and can send the face for review.
+ */
+export const CLOSEST_SHOWN = 5;
 /** Seen together (spec F14): the people on the same camera within this many seconds of a confirmed moment. */
 export const TOGETHER_SECONDS = 10;
 const YEAR_MS = 365.25 * 86400000;
@@ -643,6 +649,11 @@ export function createJobs({
         tooSmall: job.files.reduce((n, f) => n + (f.facesTooSmall || 0), 0),
       },
       toCheck,
+      // The closest faces the engines did not match (CLOSEST_SHOWN), never an answer of their own.
+      closest: openCases ? [] : people
+        .filter((p) => !FIRST_ORDER.includes(p.verdict) && p.closeness != null)
+        .sort((a, b) => b.closeness - a.closeness)
+        .slice(0, CLOSEST_SHOWN),
       everyone: people.sort((a, b) => a.fileIndex - b.fileIndex || a.time - b.time),
     };
   }
