@@ -15,9 +15,10 @@
  * example 2026-10-20T14:30:00; with several files, give it once a file as
  * "<file name>=<start>". Answers then read in clock time.
  *
- * With Aarakshak's recognition model on this laptop (KHOZO_FACE_MODEL, see
- * desktop/README.md), everyone seen is compared with the case here first and
- * only the closest are sent: those at or above --line, and the --top closest.
+ * With a face model on this laptop (KHOZO_FACE_MODEL, see desktop/README.md),
+ * everyone seen is compared with the case here first and only the closest are
+ * sent: those at or above --line (the card's own `lines.send`, else 0.25), and
+ * the --top closest.
  * Without it, everyone is sent, clearest first, as the browser does.
  *
  * Faces are sent to POST /reports/:id/video-search, five a request; Khozo
@@ -81,7 +82,8 @@ const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 const caseId = opts.case.trim();
 const camera = opts.camera.trim();
 const api = opts.api || process.env.KHOZO_API || 'https://khozo.org/api';
-const line = opts.line != null ? Number(opts.line) : 0.25;
+const lineGiven = opts.line != null ? Number(opts.line) : null;
+let line = lineGiven ?? 0.25;
 const top = opts.top != null ? Number(opts.top) : 10;
 const maxFaces = opts['max-faces'] != null ? Number(opts['max-faces']) : 0;
 
@@ -123,6 +125,8 @@ async function main() {
   console.log(`Case ${caseId}: ${report.status}`);
 
   let recognizer = await loadRecognizer({ gpu: Boolean(opts.gpu) });
+  // A model other than Aarakshak's scores on its own scale: its card's send line, unless --line was given.
+  if (lineGiven == null && recognizer?.lines?.send != null) line = recognizer.lines.send;
   let detector = null;
   let caseSigs = [];
   if (recognizer) {

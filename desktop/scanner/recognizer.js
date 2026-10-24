@@ -194,6 +194,7 @@ export async function loadRecognizer({ modelPath = process.env.KHOZO_FACE_MODEL,
     size: card.size,
     detectorPath: card.detectorPath,
     detectorScore: card.detectorScore,
+    lines: card.lines,
     async embed(rgb) {
       const out = await session.run({ [input]: new ort.Tensor('float32', modelInput(rgb, card), dims) });
       const base = normalise(out[output].data);

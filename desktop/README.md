@@ -210,4 +210,6 @@ These figures are from 23 October 2026, on an Intel Core i7-10750H with 16 GB of
 | 1080p, 10 minutes | normal (960) | 1 min 31 s | 6.6 | about 1 h 30 min |
 | 1080p, 10 minutes | far faces (1920) | 2 min 46 s | 3.6 | about 2 h 50 min |
 
+The first pass comes after the scan and depends on the model: on the same laptop (24 October 2026), signing the pictures of 66 people, up to five each, and comparing them with a case took about 2.5 minutes with InsightFace's ResNet100 (antelopev2), about 2.5 times what a ResNet50 takes.
+
 Use `--gpu` to try DirectML on Windows laptops with a graphics card.

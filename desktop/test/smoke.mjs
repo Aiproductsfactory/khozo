@@ -11,7 +11,7 @@
  *   the one-at-a-time fallback; then a second run that sends nothing again,
  *   and a closed case that stops the run.
  *
- * With KHOZO_FACE_MODEL set to Aarakshak's model, the model is loaded and a
+ * With KHOZO_FACE_MODEL set to a face model's card, the model is loaded and a
  * face's signature is checked to be stable.
  *
  *   cd desktop && npm test
@@ -333,10 +333,10 @@ console.log('Comparing with a case');
   server.close();
 }
 
-// ---- Aarakshak's model, when it is on this laptop -------------------------------------
+// ---- The face model, when one is on this laptop ---------------------------------------
 
 if (process.env.KHOZO_FACE_MODEL) {
-  console.log('Aarakshak’s face model');
+  console.log('The face model on this laptop');
   const recognizer = await loadRecognizer();
   const face = new Uint8Array(recognizer.size * recognizer.size * 3).map((_, i) => (i * 37) % 256);
   const a = await recognizer.embed(face);
@@ -344,7 +344,7 @@ if (process.env.KHOZO_FACE_MODEL) {
   check(`${recognizer.name} ${recognizer.version} gives a stable signature`, a.length >= 128 && cosine(a, b) > 0.9999, `${a.length} numbers`);
   await recognizer.close();
 } else {
-  console.log('  (Aarakshak’s face model not checked: KHOZO_FACE_MODEL is not set)');
+  console.log('  (no face model checked: KHOZO_FACE_MODEL is not set)');
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });
