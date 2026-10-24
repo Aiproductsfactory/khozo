@@ -3848,6 +3848,18 @@ export default function registerReportRoutes(router, deps) {
   const VIDEO_CASE_PHOTOS = 3;
 
   /**
+   * What the face engines said, in a CCTV sighting's note: an officer may send
+   * a face the engines did not match, and the review desk and a court should
+   * know that the match is the officer's own.
+   */
+  const ENGINE_WORDS = {
+    likely: 'Both face engines also found it likely to be the same person.',
+    possible: 'One face engine also found it possibly the same person.',
+    not_agreed: 'The two face engines did not agree.',
+    none: 'The face engines did not match this face: the officer matched it by eye.',
+  };
+
+  /**
    * The case's photos a face from a video is compared with, read into memory:
    * the lead photo first, then the others with one face, VIDEO_CASE_PHOTOS at
    * most. A face in CCTV may match a family's second photo, closer or from
@@ -4457,7 +4469,7 @@ export default function registerReportRoutes(router, deps) {
         const when = seenAt ? new Date(seenAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'medium' }) : null;
         const fr = await addVideoSighting(req, {
           id, r, job, file, t, seenAt, verdict, aarakshak, rekognition, closeness, casePhoto: recorded?.photo ?? null, point, extras: extras.extras,
-          note: `Seen on a CCTV camera at ${file.cameraPlace}${when ? `, ${when}` : ''}, ${videoTimeText(t)} into the video${file.name ? ` "${file.name}"` : ''}. An officer looked at the face and the video on Khozo Desktop and marked it as the same person. A lead, not an identification.`,
+          note: `Seen on a CCTV camera at ${file.cameraPlace}${when ? `, ${when}` : ''}, ${videoTimeText(t)} into the video${file.name ? ` "${file.name}"` : ''}. An officer looked at the face and the video on Khozo Desktop and marked it as the same person. ${ENGINE_WORDS[verdict] || ENGINE_WORDS.none} A lead, not an identification.`,
           activity: 'Marked a face from a CCTV check as the missing person',
           audit: {
             action: 'sighting.video_confirmed',

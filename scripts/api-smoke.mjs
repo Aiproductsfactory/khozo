@@ -2276,6 +2276,8 @@ async function videoJobChecks({ superAdmin, sjpu, cwc, parent, fake }) {
     && sighting.fromVideo?.times?.[0] === '1:01:40' && (sighting.extraPhotos || []).length === 1 && sighting.lat === 23.026 && sighting.lng === 72.6011,
     `the sighting should be linked to the case, waiting for review, at the camera, with the moment and the frame: ${JSON.stringify(sighting && { status: sighting.status, matchedReportId: sighting.matchedReportId, foundLocation: sighting.foundLocation, fromVideo: sighting.fromVideo, extraPhotos: sighting.extraPhotos?.length, lat: sighting.lat, lng: sighting.lng })}`);
   assert(sightings.filter((row) => row.videoCheck?.jobId === jobId || row.id === sightingId).length === 1, 'one "same person" should make exactly one sighting');
+  assert(/One face engine also found it possibly the same person\. A lead, not an identification\.$/.test(sighting.note || ''),
+    `the sighting's note should say what the face engines found: ${sighting.note}`);
   const caseAfter = (await request('GET', `/reports/${id}`, { token: superAdmin.token })).report;
   assert(caseAfter.status === target.report.status, 'a CCTV check should never mark the case found');
 
