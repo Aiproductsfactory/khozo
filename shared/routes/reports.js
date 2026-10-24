@@ -4277,9 +4277,12 @@ export default function registerReportRoutes(router, deps) {
     const casePhotos = await videoCasePhotos(r);
     if (!casePhotos.length) return res.status(409).json({ error: 'The case photo could not be read' });
 
-    // Faces from a small video are put to both engines (compareWithCasePhotos).
+    // The laptop has already narrowed the video to its closest people, so both
+    // engines are asked about every face it sends, whatever the video's size:
+    // where Rekognition sees the person and Aarakshak does not, the officer
+    // gets "did not agree" rather than nothing, as on the office camera.
     const smallVideo = String(b.smallVideo || '') === '1';
-    const { results, engines } = await compareWithCasePhotos(casePhotos, pictures.map((picture, i) => ({ id: i, buffer: picture.buffer })), { askBoth: smallVideo });
+    const { results, engines } = await compareWithCasePhotos(casePhotos, pictures.map((picture, i) => ({ id: i, buffer: picture.buffer })), { askBoth: true });
     if (!engines?.aarakshak && !engines?.rekognition) {
       return res.status(503).json({ error: 'No face engine is set up, so the faces could not be compared' });
     }
