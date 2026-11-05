@@ -24,15 +24,15 @@ const SECTIONS = [
     title: msg('What the public never sees'),
     items: [
       msg('The name or photo of any missing person. There is no public gallery and no public search.'),
-      msg('Whether a photo you sent matched anyone.'),
+      msg('Whether a photo you uploaded matched anyone.'),
       msg('Where a traced woman or adult is.'),
-      msg('Who sent a report.'),
+      msg('Who made a report.'),
     ],
   },
   {
     id: 'sighting',
-    title: msg('When you send a sighting'),
-    lead: msg('No account or login is needed. We use what you send to compare the face with missing persons, send the report to the right office, and call you only if an officer needs more detail.'),
+    title: msg('When you upload a sighting'),
+    lead: msg('No account or login is needed. We use what you upload to compare the face with missing persons, send the report to the right office, and call you only if an officer needs more detail.'),
     items: [
       msg('The photo, if you add one. Its location data and phone details are removed before it is stored.'),
       msg('The place: from the photo, from your phone’s location, or what you type.'),
@@ -59,7 +59,7 @@ const SECTIONS = [
       msg('An account holds your name, email, phone, a scrambled form of your password, and your role and office.'),
       msg('Every action an officer takes in Khozo is recorded under that officer’s name.'),
       msg('A complaint holds your name (if you give it), phone, email, district and what happened, so that we can answer it.'),
-      msg('When you visit, your internet address is held for a short time to stop misuse. When it is switched on, Cloudflare also checks that a person, not a computer program, is sending a report.'),
+      msg('When you visit, your internet address is held for a short time to stop misuse. When it is switched on, Cloudflare also checks that a person, not a computer program, is making a report.'),
     ],
   },
   {
@@ -68,7 +68,7 @@ const SECTIONS = [
     items: [
       msg('Aarakshak, an Indian face-recognition service, compares a sighting photo with the photos of open cases, and a new case photo with recent sightings. During the trial, Amazon Web Services (Mumbai region) gives a second check.'),
       msg('A match is only a suggestion. An officer checks the person face to face before anything is decided, and before any family is told.'),
-      msg('If you have a video instead of a photo, Khozo finds the faces in it on your own phone, and you choose the pictures to send. The video itself is never sent.'),
+      msg('If you have a video instead of a photo, Khozo finds the faces in it on your own phone, and you choose the pictures to upload. The video itself is never uploaded.'),
       msg('The police may search a camera recording for one missing person. The recording stays on the police computer. Each face in it is compared with that person’s photo only and is not kept, and every search is recorded.'),
       msg('Khozo is used only to find missing persons: never for advertising, selling data, watching people or training computer models.'),
     ],

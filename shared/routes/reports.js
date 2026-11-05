@@ -3909,7 +3909,7 @@ export default function registerReportRoutes(router, deps) {
     if (record.error) return res.status(400).json({ error: record.error });
 
     const files = [req.file, ...(Array.isArray(req.extraFiles) ? req.extraFiles : [])].filter((f) => f?.buffer?.length);
-    if (!files.length) return res.status(400).json({ error: 'Send at least one face picture' });
+    if (!files.length) return res.status(400).json({ error: 'Upload at least one face picture' });
     if (files.length > VIDEO_SEARCH_BATCH) {
       return res.status(400).json({ error: `Send at most ${VIDEO_SEARCH_BATCH} face pictures at a time` });
     }
@@ -4252,7 +4252,7 @@ export default function registerReportRoutes(router, deps) {
     }
 
     const pictures = [req.file, ...(Array.isArray(req.extraFiles) ? req.extraFiles : [])].filter((f) => f?.buffer?.length);
-    if (!pictures.length) return res.status(400).json({ error: 'Send at least one face picture' });
+    if (!pictures.length) return res.status(400).json({ error: 'Upload at least one face picture' });
     if (pictures.length > VIDEO_SEARCH_BATCH) return res.status(400).json({ error: `Send at most ${VIDEO_SEARCH_BATCH} face pictures at a time` });
     for (const picture of pictures) {
       const error = validateImageFile(picture, 'Face picture');

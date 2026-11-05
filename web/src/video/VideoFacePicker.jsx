@@ -18,7 +18,7 @@ import { readVideoLocation, releaseTracks, scanVideo, trackFile } from './videoS
  */
 const COPY = {
   sighting: {
-    intro: msg('Have a video instead of a photo? Choose it here. Khozo finds the faces in it on your phone, and you pick the clearest pictures of the person. The video stays on your phone. Only the pictures you pick are sent.'),
+    intro: msg('Have a video instead of a photo? Choose it here. Khozo finds the faces in it on your phone, and you pick the clearest pictures of the person. The video stays on your phone. Only the pictures you pick are uploaded.'),
     pick: msg('Tap the pictures of the person you saw. You can choose up to {n}.'),
   },
   case: {

@@ -77,7 +77,7 @@ function Hero({ openCases, ctaRef }) {
             {t('Seen a child, woman or person who seems lost?')}
           </h1>
           <p className="mt-5 max-w-xl text-lg leading-relaxed text-gray-600">
-            {t('Send a photo — free, no login. Khozo never shows you who they are; a police officer checks every report.')}
+            {t('Upload a photo — free, no login. Khozo never shows you who they are; a police officer checks every report.')}
           </p>
           <div ref={ctaRef} className="mt-8 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-5">
             {/* Utilities rather than .btn-primary: that class is unlayered CSS and would override the larger size. */}
@@ -85,7 +85,7 @@ function Hero({ openCases, ctaRef }) {
               to="/report"
               className="inline-flex items-center justify-center gap-2 rounded-xl bg-khozo px-6 py-3.5 text-base font-semibold text-white transition hover:bg-khozo-dark focus:outline-none focus-visible:ring-2 focus-visible:ring-khozo focus-visible:ring-offset-2"
             >
-              <Icon.camera className="h-5 w-5" /> {t('Send a photo')}
+              <Icon.camera className="h-5 w-5" /> {t('Upload a photo')}
             </Link>
             <Link to="/track-sighting" className="inline-flex min-h-11 items-center justify-center font-medium text-gray-600 hover:text-ink sm:justify-start">
               {t('Track a report I made')}
@@ -129,8 +129,8 @@ const PATHS = [
   {
     href: '/report',
     title: msg('I saw someone who seems lost'),
-    body: msg('Send a photo, or only a description and the place. It takes a minute.'),
-    cta: msg('Send a report'),
+    body: msg('Upload a photo, or only a description and the place. It takes a minute.'),
+    cta: msg('Make a report'),
     primary: true,
   },
   {
@@ -141,7 +141,7 @@ const PATHS = [
   },
   {
     href: '/track-sighting',
-    title: msg('I sent a report'),
+    title: msg('I made a report'),
     body: msg('Check what has happened to it with your receipt number.'),
     cta: msg('Track a report'),
   },
@@ -204,7 +204,7 @@ function Paths() {
 const STEPS = [
   {
     icon: 'send',
-    title: msg('You send a photo and the place'),
+    title: msg('You upload a photo and the place'),
     body: msg('Your phone adds the location, so the desk for that area is told. You get a receipt number to track it.'),
   },
   {
@@ -281,7 +281,7 @@ function Journey() {
       <div className="mx-auto max-w-6xl px-5 py-16 sm:py-20">
         <div className="max-w-2xl">
           <Kicker>{t('How Khozo works')}</Kicker>
-          <h2 id="how-title" className="mt-2 text-2xl font-bold tracking-tight text-ink sm:text-3xl">{t('What happens after you send a photo')}</h2>
+          <h2 id="how-title" className="mt-2 text-2xl font-bold tracking-tight text-ink sm:text-3xl">{t('What happens after you upload a photo')}</h2>
         </div>
 
         {/* Your step, then the band of what only authorised officials see. */}
@@ -627,7 +627,7 @@ function GetApp() {
         <div>
           <h2 className="text-xl font-bold text-ink">{t('Khozo on your phone')}</h2>
           <p className="mt-1.5 max-w-xl text-gray-600">
-            {t('Add Khozo to your home screen from this website. It opens like an app, works on a weak signal, and a report made with no signal is sent when the signal returns. Nothing to download from an app store.')}
+            {t('Add Khozo to your home screen from this website. It opens like an app, works on a weak signal, and a report made with no signal is uploaded when the signal returns. Nothing to download from an app store.')}
           </p>
           <p className="mt-2 max-w-xl text-sm text-gray-500">
             {t('In Chrome on Android: open the ⋮ menu and choose “Install app” or “Add to Home screen”. On iPhone: tap Share, then “Add to Home Screen”.')}
@@ -669,7 +669,7 @@ function StickyReport({ ctaRef, footerRef }) {
   return (
     <div className="safe-bottom animate-rise fixed inset-x-0 bottom-0 z-30 border-t border-black/5 bg-white/95 px-4 pt-3 backdrop-blur sm:hidden">
       <Link to="/report" className="btn-primary mb-3 w-full">
-        <Icon.camera className="h-5 w-5 shrink-0" /> {t('Send a photo')}
+        <Icon.camera className="h-5 w-5 shrink-0" /> {t('Upload a photo')}
       </Link>
     </div>
   );
@@ -679,7 +679,7 @@ function StickyReport({ ctaRef, footerRef }) {
 
 export default function Landing() {
   usePageMeta({
-    description: msg('Seen a child, woman or person who may be missing? Send a photo from your phone in under a minute — free, no login. A police officer checks every report before any family is contacted.'),
+    description: msg('Seen a child, woman or person who may be missing? Upload a photo from your phone in under a minute — free, no login. A police officer checks every report before any family is contacted.'),
   });
   const { hash } = useLocation();
   const ctaRef = useRef(null);

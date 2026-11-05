@@ -182,7 +182,7 @@ export function SectionTitle({ kicker, title, children }) {
  * registered a case logs in to see that case alone.
  */
 const PUBLIC_ACTIONS = [
-  { to: '/report', label: msg('Send a photo'), hint: msg('Seen someone who seems lost? Free, no login.'), primary: true },
+  { to: '/report', label: msg('Upload a photo'), hint: msg('Seen someone who seems lost? Free, no login.'), primary: true },
   { to: '/track-sighting', label: msg('Track a report I made'), hint: msg('Use the receipt number you were given.') },
   { to: '/track-case', label: msg('Track my case'), hint: msg('Use the Case ID given when the case was registered.') },
   { to: '/login', label: msg('Parents: log in'), hint: msg('See the case you registered, and only that case.') },

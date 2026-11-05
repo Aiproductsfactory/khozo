@@ -109,7 +109,7 @@ const PHOTO_ADVICE = {
   },
 };
 
-const STEP_NAMES = [msg('Photo'), msg('Details'), msg('Sent')];
+const STEP_NAMES = [msg('Photo'), msg('Details'), msg('Uploaded')];
 
 // The age a reporter can enter, matching the server's limits for the category.
 const SEEN_AGE_LIMITS = {
@@ -177,7 +177,7 @@ function buildSightingFormData(form, file, extraFiles = []) {
 
 export default function Capture() {
   const t = useT();
-  usePageMeta({ title: msg('Report a sighting'), description: msg('Seen a child, woman or person who seems lost? Send a photo or a description from your phone. Free, no login, and checked by a police officer.') });
+  usePageMeta({ title: msg('Report a sighting'), description: msg('Seen a child, woman or person who seems lost? Upload a photo or a description from your phone. Free, no login, and checked by a police officer.') });
   const [step, setStep] = useState(1);
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -258,7 +258,7 @@ export default function Capture() {
   // (shared/routes/reports.js): a photo needs the consent box, and a report
   // without one needs a place or a note to act on.
   const blocked = reasonMissing || (file
-    ? (form.photoConsent ? null : msg('Tick the box above to send the photo.'))
+    ? (form.photoConsent ? null : msg('Tick the box above to upload the photo.'))
     : (String(form.note || '').trim() || String(form.foundLocation || '').trim() ? null : msg('Add the place or a note so an officer can act on it.')));
 
   // A guessed age outside the new range is dropped rather than sent and
@@ -630,7 +630,7 @@ export default function Capture() {
               <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
                 <span>
                   <span className="block font-semibold text-ink">{t('Advanced options')}</span>
-                  <span className="mt-0.5 block text-sm text-gray-500">{t('Send pictures from a video instead of a photo')}</span>
+                  <span className="mt-0.5 block text-sm text-gray-500">{t('Upload pictures from a video instead of a photo')}</span>
                 </span>
                 <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5 shrink-0 text-gray-400 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="m6 9 6 6 6-6" />
@@ -663,7 +663,7 @@ export default function Capture() {
             )}
             <p className="mt-6 flex items-start gap-2.5 text-sm text-gray-600">
               <PublicIcon.shield className="mt-0.5 h-5 w-5 shrink-0 text-khozo-dark" />
-              <span>{t('Send a photo — free, no login. Khozo never shows you who they are; a police officer checks every report.')}</span>
+              <span>{t('Upload a photo — free, no login. Khozo never shows you who they are; a police officer checks every report.')}</span>
             </p>
             <p className="mt-3 flex items-start gap-2.5 rounded-xl bg-red-50/70 px-3 py-2.5 text-sm text-red-900 ring-1 ring-red-100">
               <PublicIcon.phone className="mt-0.5 h-4 w-4 shrink-0" />
@@ -694,8 +694,8 @@ export default function Capture() {
                   {preparing
                     ? t('Preparing the photo…')
                     : file.size && originalSize && file.size < originalSize
-                      ? t('Photo made smaller for sending: {from} → {to}', { from: formatBytes(originalSize), to: formatBytes(file.size) })
-                      : t('Photo ready to send ({size})', { size: formatBytes(file.size) })}
+                      ? t('Photo made smaller for uploading: {from} → {to}', { from: formatBytes(originalSize), to: formatBytes(file.size) })
+                      : t('Photo ready to upload ({size})', { size: formatBytes(file.size) })}
                 </span>
                 <button type="button" className="font-semibold text-khozo hover:underline" onClick={() => fileRef.current?.click()}>
                   {t('Change photo')}
@@ -704,7 +704,7 @@ export default function Capture() {
             )}
             {file && photoSource === 'video' && form.videoFrames && (
               <p className="border-b border-black/5 px-4 py-2 text-xs text-gray-600 sm:px-6">
-                {t('Pictures from your video, at {times}. The video itself is not sent.', { times: form.videoFrames })}
+                {t('Pictures from your video, at {times}. The video itself is not uploaded.', { times: form.videoFrames })}
               </p>
             )}
             {file && advice && PHOTO_ADVICE[advice] && (
@@ -766,7 +766,7 @@ export default function Capture() {
                     </div>
                   </>
                 ) : (
-                  <p className="text-xs text-gray-500">{t('{n} photos will be sent.', { n: MAX_SIGHTING_PHOTOS })}</p>
+                  <p className="text-xs text-gray-500">{t('{n} photos will be uploaded.', { n: MAX_SIGHTING_PHOTOS })}</p>
                 )}
               </div>
             )}
@@ -930,12 +930,12 @@ export default function Capture() {
               */}
               <div className="safe-bottom sticky bottom-0 z-10 -mx-4 -mb-4 rounded-b-2xl border-t border-black/5 bg-white/95 px-4 pt-3 backdrop-blur sm:static sm:mx-0 sm:mb-0 sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none">
                 {progress != null && (
-                  <div className="mb-2" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress * 100)} aria-label={t('Sending your report')}>
+                  <div className="mb-2" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress * 100)} aria-label={t('Uploading your report')}>
                     <div className="h-2 overflow-hidden rounded-full bg-gray-200">
                       <div className="h-full rounded-full bg-khozo transition-[width]" style={{ width: `${Math.round(progress * 100)}%` }} />
                     </div>
                     <p className="mt-1 text-xs text-gray-500">
-                      {progress < 1 ? t('Sending photo… {pct}%', { pct: Math.round(progress * 100) }) : t('Checking the photo…')}
+                      {progress < 1 ? t('Uploading photo… {pct}%', { pct: Math.round(progress * 100) }) : t('Checking the photo…')}
                     </p>
                   </div>
                 )}
@@ -947,7 +947,7 @@ export default function Capture() {
                 <div className="flex gap-3 pb-3 sm:justify-between sm:pb-0">
                   <button className="btn-ghost" onClick={() => setStep(1)} disabled={busy}>{t('Back')}</button>
                   <button className="btn-primary flex-1 sm:flex-none sm:px-8" onClick={submit} disabled={busy || preparingAny || Boolean(blocked)}>
-                    {busy ? t('Submitting...') : preparingAny ? t('Preparing the photo…') : t('Send report')}
+                    {busy ? t('Submitting...') : preparingAny ? t('Preparing the photo…') : t('Upload on Khozo')}
                   </button>
                 </div>
               </div>
@@ -1002,7 +1002,7 @@ export default function Capture() {
 
             {/* Spreading the word, never the photograph just sent. */}
             <div className="card p-5 sm:p-6">
-              <h2 className="font-bold text-ink">{t('Help more people know where to send a photo')}</h2>
+              <h2 className="font-bold text-ink">{t('Help more people know where to upload a photo')}</h2>
               <p className="mt-1.5 text-sm text-gray-600">{t('Share the link to this form, never the photo you took.')}</p>
               <ShareKhozo compact className="mt-4" />
             </div>

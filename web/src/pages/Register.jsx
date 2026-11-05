@@ -100,7 +100,7 @@ export default function Register() {
               <p className="font-semibold text-ink">{t('You do not need an account to:')}</p>
               <ul className="mt-2 space-y-2">
                 <li>
-                  <Link to="/report" className="font-semibold text-khozo-dark underline">{t('Send a photo')}</Link>
+                  <Link to="/report" className="font-semibold text-khozo-dark underline">{t('Upload a photo')}</Link>
                   <span className="block text-gray-500">{t('Seen someone who seems lost? Free, no login.')}</span>
                 </li>
                 <li>

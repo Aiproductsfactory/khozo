@@ -227,7 +227,7 @@ export function PublicHeader() {
           )}
           {!onReport && (
             <Link to="/report" className="btn-primary hidden sm:inline-flex">
-              <PublicIcon.camera className="h-4 w-4 shrink-0" /> {t('Send a photo')}
+              <PublicIcon.camera className="h-4 w-4 shrink-0" /> {t('Upload a photo')}
             </Link>
           )}
           <button
@@ -267,7 +267,7 @@ export function PublicHeader() {
             </div>
             <div className="px-5 pt-2">
               <Link to="/report" className="btn-primary w-full">
-                <PublicIcon.camera className="h-5 w-5 shrink-0" /> {t('Send a photo')}
+                <PublicIcon.camera className="h-5 w-5 shrink-0" /> {t('Upload a photo')}
               </Link>
               {/*
                 The officer's way in, where the eye lands when the menu opens.
@@ -374,7 +374,7 @@ export function ShareKhozo({ className = '', compact = false }) {
   const [copied, setCopied] = useState(false);
   const origin = typeof window !== 'undefined' ? window.location.origin : SITE;
   const url = `${origin}/report`;
-  const text = t('If you see a child, woman or anyone who seems lost, send a photo to Khozo. It is free, needs no login, and a police officer checks every report before anyone is contacted: {url}', { url });
+  const text = t('If you see a child, woman or anyone who seems lost, upload a photo on Khozo. It is free, needs no login, and a police officer checks every report before anyone is contacted: {url}', { url });
   const canShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
 
   const copy = async () => {
@@ -393,7 +393,7 @@ export function ShareKhozo({ className = '', compact = false }) {
         <>
           <h2 id="share-title" className="text-2xl font-bold tracking-tight text-ink sm:text-3xl">{t('Share Khozo, not a photo')}</h2>
           <p className="mt-3 max-w-2xl text-gray-600">
-            {t('Please do not post photos of a child or person you think is missing on WhatsApp groups or social media. It can lead the wrong people to them. Send the photo to Khozo, where only officers see it — and share this link so more people know where to send theirs.')}
+            {t('Please do not post photos of a child or person you think is missing on WhatsApp groups or social media. It can lead the wrong people to them. Upload the photo on Khozo, where only officers see it — and share this link so more people know where to upload theirs.')}
           </p>
         </>
       )}

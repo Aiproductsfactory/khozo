@@ -157,7 +157,7 @@ export default function TrackCase() {
         )}
 
         <p className="mt-8 text-sm text-gray-500">
-          {t('Sent a sighting instead?')}{' '}
+          {t('Uploaded a sighting instead?')}{' '}
           <Link to="/track-sighting" className="font-semibold text-khozo hover:underline">{t('Track a report I made')}</Link>
         </p>
       </main>
