@@ -18,7 +18,7 @@
 
 export const HUMAN_CHECK_ACTION = 'sighting';
 export const HUMAN_CHECK_FIELD = 'cf-turnstile-response';
-export const HUMAN_CHECK_FAILED = 'Could not confirm this report was sent by a person. Please try sending it again.';
+export const HUMAN_CHECK_FAILED = 'Could not confirm this report was made by a person. Please try uploading it again.';
 
 const SITEVERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
 // Siteverify errors that are about the deployment, not the sender: refusing

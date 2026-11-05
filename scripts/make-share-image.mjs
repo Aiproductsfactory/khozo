@@ -49,7 +49,7 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" v
     <tspan x="600" y="324">may be missing?</tspan>
   </text>
   <text text-anchor="middle" font-family="${SANS}" font-size="28" fill="#ffffff" fill-opacity="0.78">
-    <tspan x="600" y="390">Send a photo from your phone in under a minute.</tspan>
+    <tspan x="600" y="390">Upload a photo from your phone in under a minute.</tspan>
     <tspan x="600" y="430">An officer checks every report before a family is contacted.</tspan>
   </text>
 

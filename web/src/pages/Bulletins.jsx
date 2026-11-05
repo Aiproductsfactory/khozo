@@ -23,7 +23,7 @@ const SUMMARY_FIELDS = [
 ];
 
 const RULES = [
-  msg('Anyone can send a sighting. Khozo never tells the sender who anyone is, or whether their photo matched anyone.'),
+  msg('Anyone can upload a sighting. Khozo never tells the person who uploaded it who anyone is, or whether their photo matched anyone.'),
   msg('An authorised officer checks every possible match before any family is contacted.'),
   msg('A woman or adult who is traced is asked first; their family is told only with their consent.'),
 ];
@@ -56,7 +56,7 @@ export default function Bulletins() {
         <p className="text-xs font-semibold uppercase tracking-wide text-khozo">{t('Privacy rule')}</p>
         <h1 className="mt-1 text-3xl font-bold text-ink">{t('Khozo has no public gallery')}</h1>
         <p className="mt-3 text-gray-600">
-          {t('Names and photos of missing persons are never shown to the public. If you have seen someone who seems lost, send a photo: it is compared with missing cases, and only authorised officers see who matched.')}
+          {t('Names and photos of missing persons are never shown to the public. If you have seen someone who seems lost, upload a photo: it is compared with missing cases, and only authorised officers see who matched.')}
         </p>
 
         <ul className="mt-6 space-y-2 text-sm text-gray-600">

@@ -131,7 +131,7 @@ export default function Login() {
             <PublicIcon.camera className="h-5 w-5 shrink-0 text-khozo" />
             <span className="min-w-0 flex-1 text-sm">
               <span className="block font-semibold text-ink">{t('Seen someone who seems lost?')}</span>
-              <span className="block text-gray-500">{t('You do not need an account to send a photo.')}</span>
+              <span className="block text-gray-500">{t('You do not need an account to upload a photo.')}</span>
             </span>
             <PublicIcon.arrow className="h-4 w-4 shrink-0 text-gray-400" />
           </Link>

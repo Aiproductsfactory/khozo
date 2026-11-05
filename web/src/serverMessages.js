@@ -50,7 +50,7 @@ export const SERVER_MESSAGES = [
   msg('This case has no photo to compare with'),
   msg('Searching a video is not available here'),
   msg('This search has no reference. Start the search again.'),
-  msg('Send at least one face picture'),
+  msg('Upload at least one face picture'),
   msg('The case photo could not be read'),
   msg('No face engine is set up, so the faces could not be compared'),
 

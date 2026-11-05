@@ -2,7 +2,7 @@
   "id": "/",
   "name": "Khozo — Help a missing child return home",
   "short_name": "Khozo",
-  "description": "Seen a child who may be missing? Send a photo in under a minute — free, no login. Works on a weak signal: a report made offline is sent when the phone reconnects.",
+  "description": "Seen a child who may be missing? Upload a photo in under a minute — free, no login. Works on a weak signal: a report made offline is uploaded when the phone reconnects.",
   "start_url": "/report",
   "scope": "/",
   "display": "standalone",

@@ -40,7 +40,7 @@ function StageTrack({ stage }) {
 }
 
 export default function TrackSighting() {
-  usePageMeta({ title: msg('Track a report'), description: msg('Check what has happened to a sighting you sent to Khozo, with your receipt number.') });
+  usePageMeta({ title: msg('Track a report'), description: msg('Check what has happened to a sighting you uploaded on Khozo, with your receipt number.') });
   const t = useT();
   const [search] = useSearchParams();
   const [receipt, setReceipt] = useState(() => search.get('receipt') || '');
@@ -95,7 +95,7 @@ export default function TrackSighting() {
           <p className="text-xs font-semibold uppercase tracking-wide text-khozo">{t('Receipt lookup')}</p>
           <h1 className="mt-1 text-3xl font-bold text-ink">{t('Track a report I made')}</h1>
           <p className="mt-2 max-w-2xl text-sm text-gray-500">
-            {t('Enter the receipt number you were given after sending a sighting. Khozo shows only whether your report has been received, is under review, or is closed — never who anyone is, or whether your photo matched anyone.')}
+            {t('Enter the receipt number you were given after uploading a sighting. Khozo shows only whether your report has been received, is under review, or is closed — never who anyone is, or whether your photo matched anyone.')}
           </p>
         </div>
 
@@ -159,7 +159,7 @@ export default function TrackSighting() {
         */}
         {mine.length > 0 && (
           <section className="mt-6 rounded-xl bg-white p-4 ring-1 ring-black/5 sm:p-5">
-            <h2 className="text-base font-semibold text-ink">{t('Reports sent from this phone')}</h2>
+            <h2 className="text-base font-semibold text-ink">{t('Reports uploaded from this phone')}</h2>
             <p className="mt-1 text-sm text-gray-500">{t('Only the receipt numbers are kept, on this phone alone.')}</p>
             <ul className="mt-3 divide-y divide-black/5">
               {mine.map((r) => (
@@ -168,7 +168,7 @@ export default function TrackSighting() {
                     <div className="min-w-0">
                       <p className="truncate font-mono text-sm font-semibold text-ink">{r.id}</p>
                       <p className="text-sm text-gray-500">
-                        {t('Sent {date}', { date: fmtDate(r.at) })} · {categoryLabel(r.personCategory)}
+                        {t('Uploaded {date}', { date: fmtDate(r.at) })} · {categoryLabel(r.personCategory)}
                       </p>
                     </div>
                     <button type="button" className="btn-primary shrink-0" disabled={busy} onClick={() => check(r.id)}>
